@@ -1,0 +1,190 @@
+package service
+
+import (
+	"context"
+
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
+)
+
+// Guard resolves feature flags and limits for a tenant's active subscription.
+type Guard struct {
+	subscriptions domain.SubscriptionRepository
+	packages      domain.PackageRepository
+}
+
+// NewGuard creates the feature guard.
+func NewGuard(subscriptions domain.SubscriptionRepository, packages domain.PackageRepository) *Guard {
+	return &Guard{subscriptions: subscriptions, packages: packages}
+}
+
+type planContext struct {
+	subscription *domain.Subscription
+	features     map[string]domain.PackageFeature
+}
+
+func (g *Guard) planFor(ctx context.Context, tenantID int64) (*planContext, error) {
+	subscription, found, err := g.subscriptions.GetActiveForTenant(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if !found || subscription == nil {
+		return nil, nil
+	}
+	features, err := g.packages.FeaturesFor(ctx, subscription.PackageID)
+	if err != nil {
+		return nil, err
+	}
+	byKey := make(map[string]domain.PackageFeature, len(features))
+	for _, feature := range features {
+		byKey[feature.FeatureKey] = feature
+	}
+	return &planContext{subscription: subscription, features: byKey}, nil
+}
+
+// HasActiveSubscription reports whether the tenant has a live plan.
+func (g *Guard) HasActiveSubscription(ctx context.Context, tenantID int64) (bool, error) {
+	plan, err := g.planFor(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	return plan != nil, nil
+}
+
+// Can reports whether the tenant's plan grants a feature.
+func (g *Guard) Can(ctx context.Context, tenantID int64, feature domain.Feature) (bool, error) {
+	plan, err := g.planFor(ctx, tenantID)
+	if err != nil {
+		return false, err
+	}
+	if plan == nil {
+		return false, nil
+	}
+	if value, ok := plan.subscription.Overrides[string(feature)]; ok {
+		return overrideAllows(value), nil
+	}
+	definition, ok := plan.features[string(feature)]
+	if !ok {
+		return false, nil
+	}
+	return definition.IsEnabled, nil
+}
+
+// Require returns a 402 error unless the plan grants the feature.
+func (g *Guard) Require(ctx context.Context, tenantID int64, feature domain.Feature) error {
+	plan, err := g.planFor(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if plan == nil {
+		return apperr.New(apperr.SubscriptionRequired, "An active subscription is required.").
+			WithMeta(map[string]any{"feature_key": string(feature)})
+	}
+	allowed, err := g.Can(ctx, tenantID, feature)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return apperr.New(apperr.FeatureNotAvailable, "This feature is not available on the current plan.").
+			WithMeta(map[string]any{"feature_key": string(feature)})
+	}
+	return nil
+}
+
+// Limit resolves the numeric limit for a feature (0 = blocked, -1 = unlimited).
+func (g *Guard) Limit(ctx context.Context, tenantID int64, feature domain.Feature) (int64, error) {
+	plan, err := g.planFor(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	if plan == nil {
+		return 0, nil
+	}
+	if value, ok := plan.subscription.Overrides[string(feature)]; ok {
+		if number, ok := overrideNumber(value); ok {
+			return number, nil
+		}
+		if enabled, isBool := value.(bool); isBool && enabled {
+			return -1, nil
+		}
+	}
+	if definition, ok := plan.features[string(feature)]; ok {
+		return definition.LimitValue, nil
+	}
+	return 0, nil
+}
+
+// WithinLimit reports whether current usage is below the feature limit.
+func (g *Guard) WithinLimit(ctx context.Context, tenantID int64, feature domain.Feature, current int64) (bool, error) {
+	limit, err := g.Limit(ctx, tenantID, feature)
+	if err != nil {
+		return false, err
+	}
+	if limit == -1 {
+		return true, nil
+	}
+	return current < limit, nil
+}
+
+// RequireWithinLimit returns a 402 error when the plan limit is exhausted.
+func (g *Guard) RequireWithinLimit(ctx context.Context, tenantID int64, feature domain.Feature, current int64) error {
+	plan, err := g.planFor(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	if plan == nil {
+		return apperr.New(apperr.SubscriptionRequired, "An active subscription is required.").
+			WithMeta(map[string]any{"feature_key": string(feature)})
+	}
+
+	limit, err := g.Limit(ctx, tenantID, feature)
+	if err != nil {
+		return err
+	}
+	if limit == -1 || current < limit {
+		return nil
+	}
+	return apperr.New(apperr.UsageLimitExceeded, "The plan limit for this feature has been reached.").
+		WithMeta(map[string]any{
+			"feature_key": string(feature),
+			"limit":       limit,
+			"current":     current,
+		})
+}
+
+// RequireWithinLimitByName adapts string feature names for resource services.
+func (g *Guard) RequireWithinLimitByName(ctx context.Context, tenantID int64, feature string, current int64) error {
+	typed := domain.Feature(feature)
+	if !typed.IsKnown() {
+		return apperr.Newf(apperr.InvalidInput, "Unknown feature %q.", feature)
+	}
+	return g.RequireWithinLimit(ctx, tenantID, typed, current)
+}
+
+func overrideAllows(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case float64:
+		return typed > 0
+	case int:
+		return typed > 0
+	case int64:
+		return typed > 0
+	default:
+		return false
+	}
+}
+
+func overrideNumber(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return int64(typed), true
+	case int:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	default:
+		return 0, false
+	}
+}

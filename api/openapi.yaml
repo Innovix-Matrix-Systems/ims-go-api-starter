@@ -1,0 +1,3721 @@
+openapi: 3.0.3
+
+info:
+  title: IMS Go API Starter
+  version: 1.0.0
+  description: |
+    Canonical HTTP contract for the IMS Go API Starter. It is the source of
+    truth for the API surface: success envelopes, pagination, the
+    RFC 9457 `application/problem+json` error model, and the bearer security scheme.
+
+    ## Conventions
+    - Success responses are wrapped: `{"data": ...}` for resources, `{"message": ...}` for
+      message-only results, and `204 No Content` (empty body) for deletions/logout.
+    - List endpoints return `{"data": [...], "links": {...}, "meta": {...}}`.
+    - Every error is `application/problem+json` (RFC 9457) carrying `type`, `title`,
+      `status`, `detail`, `error_code`, `timestamp`; `trace_id` (5xx), `errors` (422),
+      `meta` (feature limits) and `retry_after` (429) appear when applicable.
+    - Timestamps are RFC 3339 UTC. Money is in minor units (paisa), currency `BDT`.
+    - IDs are 64-bit integers.
+
+    ## Tenancy & impersonation
+    Authenticated routes are resolved to a tenant/branch from the caller's identity.
+    Impersonators may send the optional headers `X-Acting-Tenant` and `X-Acting-Branch`;
+    sends on tenant-resolved write routes without acting headers are rejected with 403.
+    Public tenant resolution accepts `X-Tenant-Code` (+ optional `X-Branch-Id`).
+    Request locale is negotiated from `Accept-Language` (`en`, `bn`).
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: System
+    description: Service metadata and transport demo endpoints.
+  - name: Auth
+    description: Login, OTP verification and logout.
+  - name: Users
+    description: Tenant users, profiles and background import/export.
+  - name: Branches
+  - name: Roles & Permissions
+  - name: Tenants
+  - name: Billing
+    description: Packages, subscriptions, payments and manual approvals.
+  - name: Notifications
+  - name: Files
+  - name: Data Processing
+  - name: Settings
+    description: Grouped settings with global and tenant targets.
+  - name: Feature Flags
+    description: Boolean feature flags with global, tenant and user targets.
+  - name: Ops
+    description: Liveness, health, docs and metrics.
+
+security:
+  - bearerAuth: []
+
+# Shared response objects, aliased throughout `paths`. Kept here (before use)
+# because YAML aliases must reference an anchor defined earlier in the document.
+x-shared-responses:
+  badRequest: &badRequest
+    description: Malformed request.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  unauthorized: &unauthorized
+    description: Missing, invalid or expired bearer token.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  forbidden: &forbidden
+    description: Authenticated but not permitted, or tenant context missing.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  notFound: &notFound
+    description: Resource not found.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  paymentRequired: &paymentRequired
+    description: Feature not available or usage limit exceeded for the plan.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  conflict: &conflict
+    description: Conflicting state.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  validationFailed: &validationFailed
+    description: Validation failed; `errors` carries field messages.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  requestTooLarge: &requestTooLarge
+    description: Payload exceeds the configured limit.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  unsupportedMedia: &unsupportedMedia
+    description: Unsupported request content type.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  tooManyRequests: &tooManyRequests
+    description: Rate limit exceeded; see `retry_after`.
+    headers:
+      Retry-After:
+        schema: {type: integer}
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  serviceUnavailable: &serviceUnavailable
+    description: A dependency or gateway is unavailable.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+  internalError: &internalError
+    description: Unexpected error; the response carries a `trace_id`.
+    content:
+      application/problem+json:
+        schema: {$ref: "#/components/schemas/Problem"}
+
+paths:
+  /up:
+    get:
+      tags: [Ops]
+      summary: Liveness probe
+      operationId: liveness
+      security: []
+      responses:
+        "200":
+          description: Process is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: {type: string, example: ok}
+
+  /api/health:
+    get:
+      tags: [Ops]
+      summary: Health checks
+      operationId: health
+      security: []
+      parameters:
+        - name: fresh
+          in: query
+          description: Run checks live instead of returning the cached result.
+          schema: {type: string, enum: ["1"]}
+      responses:
+        "200":
+          description: Health results (cached up to the configured TTL).
+          headers:
+            Cache-Control:
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/HealthResults"}
+
+  /docs:
+    get:
+      tags: [Ops]
+      summary: Scalar API reference UI (config-gated)
+      operationId: docsUI
+      security: []
+      responses:
+        "200":
+          description: HTML documentation page.
+          content:
+            text/html:
+              schema: {type: string}
+        "404": *notFound
+
+  /docs/openapi.yaml:
+    get:
+      tags: [Ops]
+      summary: Raw OpenAPI document (config-gated)
+      operationId: docsSpec
+      security: []
+      responses:
+        "200":
+          description: The embedded OpenAPI specification.
+          content:
+            application/yaml:
+              schema: {type: string}
+        "404": *notFound
+
+  /metrics:
+    get:
+      tags: [Ops]
+      summary: Prometheus metrics (config-gated)
+      operationId: metrics
+      security: []
+      responses:
+        "200":
+          description: Prometheus exposition format.
+          content:
+            text/plain:
+              schema: {type: string}
+        "404": *notFound
+
+  /api/v1/system/info:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [System]
+      summary: Service information
+      operationId: systemInfo
+      security: []
+      responses:
+        "200":
+          description: Build/runtime information.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SystemInfoEnvelope"}
+
+  /api/v1/system/echo:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [System]
+      summary: Echo a message (validation demo)
+      operationId: systemEcho
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: {type: string, minLength: 2, maxLength: 255}
+      responses:
+        "200":
+          description: The trimmed message and its length.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/EchoEnvelope"}
+        "422": *validationFailed
+
+  /api/v1/login:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Auth]
+      summary: Authenticate with email and password
+      operationId: authLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/LoginRequest"}
+      responses:
+        "200":
+          description: |
+            `status` is `AUTH_SUCCESS` with a `token`, or `OTP_REQUIRED` with a null token
+            when OTP is enabled.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LoginEnvelope"}
+        "401": *unauthorized
+        "422": *validationFailed
+        "429": *tooManyRequests
+
+  /api/v1/verify-otp:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Auth]
+      summary: Complete login by verifying an OTP
+      operationId: authVerifyOTP
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/VerifyOTPRequest"}
+      responses:
+        "200":
+          description: Login result with an issued token.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LoginEnvelope"}
+        "401": *unauthorized
+        "422": *validationFailed
+        "429": *tooManyRequests
+
+  /api/v1/logout:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Auth]
+      summary: Revoke the token for one device
+      operationId: authLogout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device]
+              properties:
+                device: {type: string, maxLength: 100}
+      responses:
+        "204": {description: Token revoked.}
+        "401": *unauthorized
+        "422": *validationFailed
+
+  /api/v1/user:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Users]
+      summary: List users
+      operationId: listUsers
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - $ref: "#/components/parameters/Search"
+        - $ref: "#/components/parameters/OrderByUser"
+        - $ref: "#/components/parameters/OrderDirection"
+      responses:
+        "200":
+          description: Paginated users.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "429": *tooManyRequests
+        "500": *internalError
+    post:
+      tags: [Users]
+      summary: Create a user in the resolved tenant
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/UserUpsertRequest"}
+      responses:
+        "201":
+          description: Created user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "402": *paymentRequired
+        "422": *validationFailed
+        "429": *tooManyRequests
+
+  /api/v1/user/profile:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Users]
+      summary: Get the authenticated user's profile
+      operationId: getUserProfile
+      responses:
+        "200":
+          description: The caller's user record.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+
+  /api/v1/user/profile/update:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Update the authenticated user's profile
+      operationId: updateUserProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: {type: string, maxLength: 100, nullable: true}
+                last_name: {type: string, maxLength: 100, nullable: true}
+                name: {type: string, minLength: 2, maxLength: 255, nullable: true}
+                phone: {type: string, maxLength: 50, nullable: true}
+      responses:
+        "200":
+          description: Updated profile.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "422": *validationFailed
+
+  /api/v1/user/profile/update-avatar:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Update a user's avatar
+      description: |
+        Multipart upload that replaces the avatar of the user identified by the
+        required `id` form field. Updating your own avatar needs no extra
+        permission; updating another user requires `user.update`.
+      operationId: updateUserAvatar
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [id, avatar]
+              properties:
+                id:
+                  type: integer
+                  format: int64
+                  minimum: 1
+                  description: User ID whose avatar to update.
+                  example: 1
+                avatar:
+                  type: string
+                  format: binary
+                  description: Avatar image (max 5MB).
+      responses:
+        "200":
+          description: Updated profile.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "415": *unsupportedMedia
+        "422": *validationFailed
+
+  /api/v1/user/profile/change-password:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Change the authenticated user's password
+      operationId: changeUserProfilePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, password]
+              properties:
+                current_password: {type: string}
+                password: {type: string, minLength: 6, maxLength: 72}
+      responses:
+        "200":
+          description: Password changed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "401": *unauthorized
+        "422": *validationFailed
+
+  /api/v1/user/assign-role:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Assign roles to a user
+      operationId: assignUserRoles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AssignRoleRequest"}
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/user/change-password:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Set another user's password (admin)
+      operationId: changeUserPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ChangePasswordRequest"}
+      responses:
+        "200":
+          description: Password changed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/user/switch-branch/{id}:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    patch:
+      tags: [Users]
+      summary: Switch a user's active branch
+      operationId: switchUserBranch
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/user/import-background:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Queue a background user import (CSV/XLSX upload)
+      operationId: importUsersBackground
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: The queued processing job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackgroundJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "413": *requestTooLarge
+        "415": *unsupportedMedia
+        "503": *serviceUnavailable
+
+  /api/v1/user/export-background:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Queue a background user export
+      operationId: exportUsersBackground
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ExportFiltersRequest"}
+      responses:
+        "200":
+          description: The queued processing job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackgroundJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /api/v1/user/import-template:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Download the CSV user-import template
+      operationId: downloadUserImportTemplate
+      responses:
+        "200":
+          description: CSV template.
+          content:
+            text/csv:
+              schema: {type: string}
+        "401": *unauthorized
+        "403": *forbidden
+        "503": *serviceUnavailable
+
+  /api/v1/user/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Users]
+      summary: Get a user
+      operationId: getUser
+      responses:
+        "200":
+          description: The user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    patch:
+      tags: [Users]
+      summary: Update a user (email is immutable)
+      operationId: updateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/UserUpsertRequest"}
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Users]
+      summary: Delete (soft) a user
+      operationId: deleteUser
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/internal/user:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Create an internal user
+      operationId: createInternalUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/InternalUserUpsertRequest"}
+      responses:
+        "201":
+          description: Created user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/internal/user/{id}:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    patch:
+      tags: [Users]
+      summary: Update an internal user
+      operationId: updateInternalUser
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/InternalUserUpsertRequest"}
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Users]
+      summary: Delete (soft) an internal user
+      operationId: deleteInternalUser
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/internal/user/export-background:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Queue a background internal user export
+      operationId: exportInternalUsersBackground
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ExportFiltersRequest"}
+      responses:
+        "200":
+          description: The queued processing job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackgroundJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /api/v1/internal/user/import-background:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Users]
+      summary: Queue a background internal user import
+      operationId: importInternalUsersBackground
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: The queued processing job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BackgroundJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "413": *requestTooLarge
+        "415": *unsupportedMedia
+        "503": *serviceUnavailable
+
+  /api/v1/internal/user/assign-role:
+    post:
+      tags: [Users]
+      summary: Assign roles to an internal user
+      operationId: assignInternalUserRoles
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AssignRoleRequest"}
+      responses:
+        "200":
+          description: The updated user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/internal/user/change-password:
+    patch:
+      tags: [Users]
+      summary: Set an internal user's password
+      operationId: changeInternalUserPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ChangePasswordRequest"}
+      responses:
+        "200":
+          description: Password changed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/internal/user/{id}/update-avatar:
+    post:
+      tags: [Users]
+      summary: Replace an internal user's avatar
+      description: Multipart upload (`avatar`) that replaces the avatar of the user in the path.
+      operationId: updateInternalUserAvatar
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Updated user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "415": *unsupportedMedia
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /api/v1/internal/user/profile/update-avatar:
+    post:
+      tags: [Users]
+      summary: Replace the caller's avatar (internal)
+      operationId: updateInternalProfileAvatar
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [avatar]
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Updated user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "415": *unsupportedMedia
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /api/v1/internal/user/profile/update:
+    patch:
+      tags: [Users]
+      summary: Update the caller's profile (internal)
+      operationId: updateInternalProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name: {type: string, maxLength: 100, nullable: true}
+                last_name: {type: string, maxLength: 100, nullable: true}
+                name: {type: string, minLength: 2, maxLength: 255, nullable: true}
+                phone: {type: string, maxLength: 50, nullable: true}
+      responses:
+        "200":
+          description: Updated profile.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/UserEnvelope"}
+        "401": *unauthorized
+        "422": *validationFailed
+
+  /api/v1/internal/user/profile/change-password:
+    patch:
+      tags: [Users]
+      summary: Change the caller's password (internal)
+      operationId: changeInternalProfilePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, password]
+              properties:
+                current_password: {type: string}
+                password: {type: string, minLength: 6, maxLength: 72}
+      responses:
+        "200":
+          description: Password changed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "401": *unauthorized
+        "422": *validationFailed
+
+  /api/v1/internal/user/export:
+    post:
+      tags: [Users]
+      summary: Export internal users (xlsx download)
+      operationId: exportInternalUsers
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ExportFiltersRequest"}
+      responses:
+        "200":
+          description: Excel workbook with the matching users.
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: {type: string, format: binary}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /api/v1/internal/user/import:
+    post:
+      tags: [Users]
+      summary: Import internal users (synchronous)
+      operationId: importInternalUsers
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Import summary with per-row errors.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ImportResult"}
+        "401": *unauthorized
+        "403": *forbidden
+        "413": *requestTooLarge
+        "415": *unsupportedMedia
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /api/v1/branch:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Branches]
+      summary: List branches in the resolved tenant
+      operationId: listBranches
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - $ref: "#/components/parameters/Search"
+      responses:
+        "200":
+          description: Paginated branches.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BranchPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "429": *tooManyRequests
+    post:
+      tags: [Branches]
+      summary: Create a branch
+      operationId: createBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BranchUpsertRequest"}
+      responses:
+        "201":
+          description: Created branch.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BranchEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "402": *paymentRequired
+        "422": *validationFailed
+
+  /api/v1/branch/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Branches]
+      summary: Get a branch
+      operationId: getBranch
+      responses:
+        "200":
+          description: The branch.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BranchEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    patch:
+      tags: [Branches]
+      summary: Update a branch
+      operationId: updateBranch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/BranchUpsertRequest"}
+      responses:
+        "200":
+          description: The updated branch.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/BranchEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Branches]
+      summary: Delete (soft) a branch
+      operationId: deleteBranch
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/role:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Roles & Permissions]
+      summary: List tenant roles
+      operationId: listRoles
+      responses:
+        "200":
+          description: Roles (not paginated).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoleArrayEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [Roles & Permissions]
+      summary: Create a tenant role
+      operationId: createRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RoleUpsertRequest"}
+      responses:
+        "201":
+          description: Created role.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoleEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/role/assign-permission:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Roles & Permissions]
+      summary: Assign permissions to a tenant role
+      operationId: assignRolePermissions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RolePermissionAssignRequest"}
+      responses:
+        "200":
+          description: Permissions assigned.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/role/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Roles & Permissions]
+      summary: Get a role
+      operationId: getRole
+      responses:
+        "200":
+          description: The role.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoleEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    patch:
+      tags: [Roles & Permissions]
+      summary: Update a role
+      operationId: updateRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RoleUpsertRequest"}
+      responses:
+        "200":
+          description: The updated role.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoleEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Roles & Permissions]
+      summary: Delete a role
+      operationId: deleteRole
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/internal/roles:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Roles & Permissions]
+      summary: Create an internal role
+      operationId: createInternalRole
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RoleInternalRequest"}
+      responses:
+        "201":
+          description: Created role.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoleEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/internal/roles/{id}:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    patch:
+      tags: [Roles & Permissions]
+      summary: Update an internal role
+      operationId: updateInternalRole
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RoleInternalRequest"}
+      responses:
+        "200":
+          description: The updated role.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/RoleEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/internal/role/assign-permission:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Roles & Permissions]
+      summary: Assign permissions to an internal role
+      operationId: assignInternalRolePermissions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RolePermissionAssignRequest"}
+      responses:
+        "200":
+          description: Permissions assigned.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/permission:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Roles & Permissions]
+      summary: List the permission catalog
+      operationId: listPermissions
+      responses:
+        "200":
+          description: Permissions (not paginated).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PermissionArrayEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [Roles & Permissions]
+      summary: Create a custom permission
+      operationId: createPermission
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PermissionInsertRequest"}
+      responses:
+        "201":
+          description: Created permission.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PermissionEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/permission/user:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Roles & Permissions]
+      summary: List the caller's effective permissions (via roles)
+      operationId: listUserPermissions
+      responses:
+        "200":
+          description: Effective permissions.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PermissionArrayEnvelope"}
+        "401": *unauthorized
+
+  /api/v1/permission/{id}:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    delete:
+      tags: [Roles & Permissions]
+      summary: Delete a custom permission
+      operationId: deletePermission
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/tenant:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Tenants]
+      summary: List tenants
+      operationId: listTenants
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - $ref: "#/components/parameters/Search"
+      responses:
+        "200":
+          description: Paginated tenants.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TenantPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [Tenants]
+      summary: Create a tenant
+      operationId: createTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TenantUpsertRequest"}
+      responses:
+        "201":
+          description: Created tenant.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TenantEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/tenant/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Tenants]
+      summary: Get a tenant
+      operationId: getTenant
+      responses:
+        "200":
+          description: The tenant.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TenantEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    patch:
+      tags: [Tenants]
+      summary: Update a tenant
+      operationId: updateTenant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/TenantUpsertRequest"}
+      responses:
+        "200":
+          description: The updated tenant.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/TenantEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Tenants]
+      summary: Delete (soft) a tenant
+      operationId: deleteTenant
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/public/packages:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: List publicly available packages
+      operationId: listPublicPackages
+      security: []
+      responses:
+        "200":
+          description: Active packages.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PackageArrayEnvelope"}
+
+  /api/v1/packages:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: List all packages (system)
+      operationId: listPackages
+      responses:
+        "200":
+          description: All packages.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PackageArrayEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [Billing]
+      summary: Create a package (system)
+      operationId: createPackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PackageInsertRequest"}
+      responses:
+        "201":
+          description: Created package.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PackageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/packages/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: Get a package (system)
+      operationId: getPackage
+      responses:
+        "200":
+          description: The package.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PackageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    patch:
+      tags: [Billing]
+      summary: Update a package (system)
+      operationId: updatePackage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/PackageInsertRequest"}
+      responses:
+        "200":
+          description: The updated package.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PackageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Billing]
+      summary: Delete a package (system)
+      operationId: deletePackage
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/billing/{gateway}/callback:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: Payment gateway callback (public)
+      operationId: billingCallback
+      security: []
+      parameters:
+        - name: gateway
+          in: path
+          required: true
+          schema: {type: string, enum: [bkash, nagad]}
+        - name: paymentID
+          in: query
+          required: true
+          description: Gateway payment reference.
+          schema: {type: string}
+      responses:
+        "200":
+          description: Callback processed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "404": *notFound
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /api/v1/billing/subscription/status:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: Current subscription status for the resolved tenant
+      operationId: billingSubscriptionStatus
+      responses:
+        "200":
+          description: Subscription status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubscriptionStatusEnvelope"}
+        "401": *unauthorized
+
+  /api/v1/billing/payments:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: List the resolved tenant's payments
+      operationId: listTenantPayments
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Paginated payments.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PaymentPageEnvelope"}
+        "401": *unauthorized
+
+  /api/v1/billing/subscribe:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Billing]
+      summary: Subscribe the resolved tenant to a package
+      operationId: billingSubscribe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SubscribeRequest"}
+      responses:
+        "201":
+          description: The created subscription and its payment.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubscribeEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /api/v1/billing/internal/subscriptions:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: List subscriptions (system)
+      operationId: listSubscriptions
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Paginated subscriptions.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubscriptionPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+
+  /api/v1/billing/internal/subscriptions/{id}/cancel:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Billing]
+      summary: Cancel a subscription (system)
+      operationId: cancelSubscription
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {type: string, maxLength: 500, nullable: true}
+      responses:
+        "200":
+          description: The cancelled subscription.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubscriptionEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/billing/internal/subscriptions/{id}/overrides:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Billing]
+      summary: Set per-tenant feature overrides
+      operationId: setSubscriptionOverrides
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [overrides]
+              properties:
+                overrides:
+                  type: object
+                  additionalProperties: true
+      responses:
+        "200":
+          description: The updated subscription.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SubscriptionEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/billing/internal/payments:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: List all payments (system)
+      operationId: listAllPayments
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Paginated payments.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PaymentPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [Billing]
+      summary: Record a manual payment (cash/bank)
+      operationId: recordPayment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RecordPaymentRequest"}
+      responses:
+        "201":
+          description: The recorded payment.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PaymentEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/billing/internal/payment-approvals:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Billing]
+      summary: List manual payment approvals (system)
+      operationId: listPaymentApprovals
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Paginated approvals.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ApprovalPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+
+  /api/v1/billing/internal/payment-approvals/{id}/approve:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Billing]
+      summary: Approve a manual payment (activates the subscription)
+      operationId: approvePayment
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ReviewRequest"}
+      responses:
+        "200":
+          description: The reviewed approval.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ApprovalEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/billing/internal/payment-approvals/{id}/reject:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Billing]
+      summary: Reject a manual payment (cancels the subscription)
+      operationId: rejectPayment
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ReviewRequest"}
+      responses:
+        "200":
+          description: The reviewed approval.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ApprovalEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/notification/feed:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Notifications]
+      summary: Cursor-paginated notification feed for the caller
+      operationId: notificationFeed
+      parameters:
+        - name: limit
+          in: query
+          description: Items per page (max 100).
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: cursor
+          in: query
+          description: Opaque cursor from the previous page.
+          schema: {type: string}
+        - name: unread_only
+          in: query
+          description: Only return unread notifications.
+          schema: {type: boolean}
+        - name: priority
+          in: query
+          schema: {type: string, enum: [INFO, WARNING, CRITICAL]}
+      responses:
+        "200":
+          description: Feed page.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NotificationFeedEnvelope"}
+        "401": *unauthorized
+
+  /api/v1/notification/read-all:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications as read for the caller
+      operationId: markAllNotificationsRead
+      responses:
+        "204": {description: Marked read.}
+        "401": *unauthorized
+
+  /api/v1/notification/{id}/read:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Notifications]
+      summary: Mark one notification as read for the caller
+      operationId: markNotificationRead
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      responses:
+        "204": {description: Marked read.}
+        "401": *unauthorized
+        "404": *notFound
+
+  /api/v1/internal/notification/feed:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Notifications]
+      summary: Notification feed (internal/acting)
+      operationId: internalNotificationFeed
+      parameters:
+        - name: limit
+          in: query
+          description: Items per page (max 100).
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: cursor
+          in: query
+          description: Opaque cursor from the previous page.
+          schema: {type: string}
+        - name: unread_only
+          in: query
+          description: Only return unread notifications.
+          schema: {type: boolean}
+        - name: priority
+          in: query
+          schema: {type: string, enum: [INFO, WARNING, CRITICAL]}
+      responses:
+        "200":
+          description: Feed page.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NotificationFeedEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+
+  /api/v1/internal/notification/read-all:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Notifications]
+      summary: Mark all notifications read (internal/acting)
+      operationId: internalMarkAllNotificationsRead
+      responses:
+        "204": {description: Marked read.}
+        "401": *unauthorized
+        "403": *forbidden
+
+  /api/v1/internal/notification/{id}/read:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Notifications]
+      summary: Mark one notification read (internal/acting)
+      operationId: internalMarkNotificationRead
+      parameters:
+        - $ref: "#/components/parameters/PathID"
+      responses:
+        "204": {description: Marked read.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/internal/notification:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Notifications]
+      summary: List notifications (admin)
+      operationId: listNotifications
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Paginated notifications.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NotificationPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [Notifications]
+      summary: Create a notification and fan it out
+      operationId: createNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationUpsertRequest"}
+      responses:
+        "201":
+          description: Created notification.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NotificationEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/internal/notification/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Notifications]
+      summary: Get a notification (admin)
+      operationId: getNotification
+      responses:
+        "200":
+          description: The notification.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NotificationEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    patch:
+      tags: [Notifications]
+      summary: Replace a notification (full replacement)
+      operationId: updateNotification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/NotificationUpsertRequest"}
+      responses:
+        "200":
+          description: The updated notification.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/NotificationEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Notifications]
+      summary: Delete a notification
+      operationId: deleteNotification
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/files:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Files]
+      summary: List files visible to the caller
+      operationId: listFiles
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: type
+          in: query
+          schema: {type: string, enum: [image, video, document, other]}
+        - name: attached
+          in: query
+          schema: {type: string, enum: ["true", "false"]}
+      responses:
+        "200":
+          description: Paginated files.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FilePageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [Files]
+      summary: Upload a file
+      operationId: uploadFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: The stored file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FileEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "413": *requestTooLarge
+        "415": *unsupportedMedia
+        "422": *validationFailed
+
+  /api/v1/files/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Files]
+      summary: Get a file
+      operationId: getFile
+      responses:
+        "200":
+          description: The file.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FileEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    delete:
+      tags: [Files]
+      summary: Delete a file
+      operationId: deleteFile
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/data-processing/jobs:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Data Processing]
+      summary: List data-processing jobs (admin)
+      operationId: listProcessingJobs
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Paginated jobs.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProcessingJobPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+
+  /api/v1/data-processing/jobs/user:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Data Processing]
+      summary: List the caller's data-processing jobs
+      operationId: listUserProcessingJobs
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Paginated jobs.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProcessingJobPageEnvelope"}
+        "401": *unauthorized
+
+  /api/v1/data-processing/job/{jobId}:
+    parameters:
+      - $ref: "#/components/parameters/PathJobID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Data Processing]
+      summary: Get a data-processing job
+      operationId: getProcessingJob
+      responses:
+        "200":
+          description: The job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProcessingJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/data-processing/job/{jobId}/download:
+    parameters:
+      - $ref: "#/components/parameters/PathJobID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Data Processing]
+      summary: Download a completed job's output file
+      operationId: downloadProcessingJob
+      responses:
+        "200":
+          description: The generated file.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/data-processing/settings/cleanup:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Data Processing]
+      summary: Get the effective cleanup retention window
+      operationId: getCleanupSettings
+      responses:
+        "200":
+          description: Retention window in days.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CleanupSettingsEnvelope"}
+        "401": *unauthorized
+    post:
+      tags: [Data Processing]
+      summary: Update the cleanup retention window
+      operationId: updateCleanupSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [days]
+              properties:
+                days: {type: integer, minimum: 1}
+      responses:
+        "200":
+          description: Updated retention window.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/CleanupSettingsEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/settings:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Settings]
+      summary: Get the caller's effective settings, grouped
+      operationId: listSettings
+      parameters:
+        - name: group
+          in: query
+          required: false
+          schema: {type: string}
+      responses:
+        "200":
+          description: Effective settings grouped by section.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingsGroupedEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+
+  /api/v1/settings/tenant/{key}:
+    parameters:
+      - $ref: "#/components/parameters/PathKey"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    patch:
+      tags: [Settings]
+      summary: Update the caller's tenant override for a setting
+      operationId: updateTenantSetting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: {}
+      responses:
+        "200":
+          description: The effective setting.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/internal/settings:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Settings]
+      summary: Admin view of every catalog setting for a target
+      operationId: listInternalSettings
+      parameters:
+        - name: target_type
+          in: query
+          required: false
+          schema: {type: string, enum: [global, tenant]}
+        - name: target_id
+          in: query
+          required: false
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Effective settings for the target.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/internal/settings/{key}:
+    parameters:
+      - $ref: "#/components/parameters/PathKey"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    patch:
+      tags: [Settings]
+      summary: Upsert a setting for the target named in the body
+      operationId: updateInternalSetting
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SettingUpdateRequest"}
+      responses:
+        "200":
+          description: The effective setting.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Settings]
+      summary: Remove a setting override for the target named in the query
+      operationId: deleteInternalSetting
+      parameters:
+        - name: target_type
+          in: query
+          required: false
+          schema: {type: string, enum: [global, tenant]}
+        - name: target_id
+          in: query
+          required: false
+          schema: {type: integer, format: int64}
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/feature-flags:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Feature Flags]
+      summary: Get the caller's effective feature flags
+      operationId: listFeatureFlags
+      responses:
+        "200":
+          description: Effective flag values keyed by flag.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FeatureFlagValuesEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+
+  /api/v1/internal/feature-flags:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Feature Flags]
+      summary: Admin view of every feature flag for a target
+      operationId: listInternalFeatureFlags
+      parameters:
+        - name: target_type
+          in: query
+          required: false
+          schema: {type: string, enum: [global, tenant, user]}
+        - name: target_id
+          in: query
+          required: false
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Effective flags for the target.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FeatureFlagListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+    patch:
+      tags: [Feature Flags]
+      summary: Batch-update feature flags for a target
+      operationId: updateInternalFeatureFlags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/FeatureFlagUpdateRequest"}
+      responses:
+        "200":
+          description: Effective flags for the target.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FeatureFlagListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/internal/feature-flags/{key}:
+    parameters:
+      - $ref: "#/components/parameters/PathKey"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    delete:
+      tags: [Feature Flags]
+      summary: Clear a feature-flag override for a target
+      operationId: deleteInternalFeatureFlag
+      parameters:
+        - name: target_type
+          in: query
+          required: false
+          schema: {type: string, enum: [global, tenant, user]}
+        - name: target_id
+          in: query
+          required: false
+          schema: {type: integer, format: int64}
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/internal/settings-groups:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Settings]
+      summary: List settings groups
+      operationId: listSettingsGroups
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - $ref: "#/components/parameters/Search"
+        - name: order_by
+          in: query
+          required: false
+          schema: {type: string, enum: [sort_order, name, created_at]}
+        - name: order_direction
+          in: query
+          required: false
+          schema: {type: string, enum: [asc, desc]}
+        - name: is_light_weight
+          in: query
+          required: false
+          description: When true, returns the unpaginated lightweight list.
+          schema: {type: boolean}
+      responses:
+        "200":
+          description: Paginated settings groups (a lightweight list when is_light_weight=true).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingsGroupPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [Settings]
+      summary: Create a settings group
+      operationId: createSettingsGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SettingsGroupUpsertRequest"}
+      responses:
+        "201":
+          description: Created settings group.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingsGroupEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/internal/settings-groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Settings]
+      summary: Get a settings group
+      operationId: getSettingsGroup
+      responses:
+        "200":
+          description: The settings group.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingsGroupEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    patch:
+      tags: [Settings]
+      summary: Update a settings group
+      operationId: updateSettingsGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SettingsGroupUpsertRequest"}
+      responses:
+        "200":
+          description: The updated settings group.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingsGroupEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [Settings]
+      summary: Delete a settings group
+      operationId: deleteSettingsGroup
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/internal/settings/{key}/group:
+    parameters:
+      - $ref: "#/components/parameters/PathKey"
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    put:
+      tags: [Settings]
+      summary: Assign a setting to a settings group
+      operationId: assignSettingsGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AssignSettingsGroupRequest"}
+      responses:
+        "200":
+          description: The effective setting.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SettingEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  # ─── BEGIN GENERATED PATHS (ims gen openapi) — resources:  — do not edit ───
+  # ─── END GENERATED PATHS ───
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Opaque personal access token in `id|secret` form.
+
+  parameters:
+    PathID:
+      name: id
+      in: path
+      required: true
+      schema: {type: integer, format: int64, minimum: 1}
+    PathKey:
+      name: key
+      in: path
+      required: true
+      description: The catalog setting or feature-flag key (dotted, e.g. `system.name`).
+      schema: {type: string}
+    PathJobID:
+      name: jobId
+      in: path
+      required: true
+      schema: {type: string}
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 1, default: 1}
+    PerPage:
+      name: per_page
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 10}
+    Search:
+      name: search
+      in: query
+      schema: {type: string, maxLength: 255}
+    OrderDirection:
+      name: order_direction
+      in: query
+      schema: {type: string, enum: [asc, desc]}
+    OrderByUser:
+      name: order_by
+      in: query
+      schema: {type: string, enum: [id, name, email, created_at]}
+    ActingTenant:
+      name: X-Acting-Tenant
+      in: header
+      required: false
+      description: |
+        Optional super-admin impersonation tenant id. Omit both acting headers for a
+        read-only global view; set them before a write on a tenant-resolved route.
+        Sent only when impersonating — there is no default.
+      schema: {type: integer, format: int64}
+    ActingBranch:
+      name: X-Acting-Branch
+      in: header
+      required: false
+      description: |
+        Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+        only when impersonating — there is no default.
+      schema: {type: integer, format: int64}
+    TenantCode:
+      name: X-Tenant-Code
+      in: header
+      description: Public tenant resolution code.
+      schema: {type: string}
+
+  responses:
+    BadRequest: *badRequest
+    Unauthorized: *unauthorized
+    Forbidden: *forbidden
+    NotFound: *notFound
+    PaymentRequired: *paymentRequired
+    Conflict: *conflict
+    ValidationFailed: *validationFailed
+    RequestEntityTooLarge: *requestTooLarge
+    UnsupportedMediaType: *unsupportedMedia
+    TooManyRequests: *tooManyRequests
+    ServiceUnavailable: *serviceUnavailable
+    InternalServerError: *internalError
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      description: RFC 9457 problem+json payload.
+      properties:
+        type: {type: string, format: uri}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        instance: {type: string}
+        error_code: {type: string}
+        timestamp: {type: string, format: date-time}
+        trace_id: {type: string}
+        retry_after: {type: integer}
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: {type: string}
+        meta:
+          type: object
+          additionalProperties: true
+        debug:
+          type: object
+          properties:
+            exception: {type: string}
+            stack:
+              type: array
+              items: {type: string}
+
+    MessageEnvelope:
+      type: object
+      required: [message]
+      properties:
+        message: {type: string}
+      example:
+        message: Logged out successfully.
+
+    PageLink:
+      type: object
+      required: [label, active]
+      properties:
+        url: {type: string, nullable: true}
+        label: {type: string}
+        active: {type: boolean}
+
+    PaginationLinks:
+      type: object
+      properties:
+        first: {type: string, nullable: true}
+        last: {type: string, nullable: true}
+        prev: {type: string, nullable: true}
+        next: {type: string, nullable: true}
+
+    PaginationMeta:
+      type: object
+      required: [current_page, last_page, per_page, total]
+      properties:
+        current_page: {type: integer}
+        from: {type: integer, nullable: true}
+        last_page: {type: integer}
+        links:
+          type: array
+          items: {$ref: "#/components/schemas/PageLink"}
+        path: {type: string}
+        per_page: {type: integer}
+        to: {type: integer, nullable: true}
+        total: {type: integer, format: int64}
+
+    CursorLinks:
+      type: object
+      properties:
+        first: {type: string, nullable: true}
+        last: {type: string, nullable: true}
+        prev: {type: string, nullable: true}
+        next: {type: string, nullable: true}
+
+    FeedMeta:
+      type: object
+      required: [path, per_page, unread_count]
+      properties:
+        path: {type: string}
+        per_page: {type: integer}
+        next_cursor: {type: string, nullable: true}
+        prev_cursor: {type: string, nullable: true}
+        unread_count: {type: integer}
+
+    HealthResults:
+      type: object
+      properties:
+        finishedAt: {type: integer, format: int64}
+        checkResults:
+          type: array
+          items:
+            type: object
+            properties:
+              name: {type: string}
+              label: {type: string}
+              notificationMessage: {type: string}
+              shortSummary: {type: string}
+              status: {type: string}
+              meta:
+                type: object
+                additionalProperties: true
+
+    SystemInfoEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [name, version, environment, timezone, go_version, started_at, uptime_seconds]
+          properties:
+            name: {type: string}
+            version: {type: string}
+            environment: {type: string}
+            timezone: {type: string}
+            go_version: {type: string}
+            started_at: {type: string, format: date-time}
+            uptime_seconds: {type: integer, format: int64}
+
+    EchoEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [message, length]
+          properties:
+            message: {type: string}
+            length: {type: integer}
+
+    LoginRequest:
+      type: object
+      required: [email, password, device]
+      properties:
+        email: {type: string, format: email}
+        password: {type: string, minLength: 6}
+        device: {type: string, maxLength: 100}
+      example:
+        email: superadmin@ims.com
+        password: "123456"
+        device: cli
+
+    VerifyOTPRequest:
+      type: object
+      required: [email, otp, device]
+      properties:
+        email: {type: string, format: email}
+        otp: {type: string}
+        device: {type: string, maxLength: 100}
+      example:
+        email: superadmin@ims.com
+        otp: "123456"
+        device: cli
+
+    LoginEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [user, status, message, token]
+          properties:
+            user: {$ref: "#/components/schemas/User"}
+            status:
+              type: string
+              enum: [AUTH_SUCCESS, OTP_REQUIRED]
+            message: {type: string}
+            token: {type: string, nullable: true}
+      example:
+        data:
+          user:
+            id: 1
+            name: Super Admin
+            email: superadmin@ims.com
+            is_active: true
+            roles:
+              - {id: 1, name: Super-Admin, is_system: true}
+            created_at: "2026-01-01T00:00:00Z"
+            updated_at: "2026-01-01T00:00:00Z"
+          status: AUTH_SUCCESS
+          message: Login successful.
+          token: "1|abcdef1234567890abcdef1234567890abcdef12"
+
+    RoleSlim:
+      type: object
+      required: [id, name, is_system]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        is_system: {type: boolean}
+
+    TenantSlim:
+      type: object
+      required: [id, name, code]
+      description: Slim tenant reference embedded in role responses (absent for system/global roles).
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        code: {type: string}
+
+    User:
+      type: object
+      required: [id, name, email, is_active, roles, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        first_name: {type: string, nullable: true}
+        last_name: {type: string, nullable: true}
+        user_name: {type: string, nullable: true}
+        name: {type: string}
+        email: {type: string, format: email}
+        phone: {type: string, nullable: true}
+        is_active: {type: boolean}
+        email_verified_at: {type: string, format: date-time, nullable: true}
+        last_login_at: {type: string, format: date-time, nullable: true}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        branch_id: {type: integer, format: int64, nullable: true}
+        active_branch_id: {type: integer, format: int64, nullable: true}
+        photo: {type: string, nullable: true}
+        roles:
+          type: array
+          items: {$ref: "#/components/schemas/RoleSlim"}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    UserEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/User"}
+
+    UserPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/User"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    UserUpsertRequest:
+      type: object
+      required: [name, email]
+      properties:
+        first_name: {type: string, maxLength: 100, nullable: true}
+        last_name: {type: string, maxLength: 100, nullable: true}
+        user_name: {type: string, maxLength: 100, nullable: true}
+        name: {type: string, minLength: 2, maxLength: 255}
+        email: {type: string, format: email, maxLength: 255}
+        password: {type: string, minLength: 6, maxLength: 72, nullable: true}
+        phone: {type: string, maxLength: 50, nullable: true}
+        is_active: {type: boolean, nullable: true}
+        branch_id: {type: integer, format: int64, nullable: true}
+        roles:
+          type: array
+          items: {type: integer, format: int64}
+      example:
+        name: Jane Doe
+        email: jane.doe@acme.test
+        password: "secret123"
+        phone: "+8801700000000"
+        is_active: true
+        branch_id: 1
+        roles: [2]
+
+    InternalUserUpsertRequest:
+      allOf:
+        - $ref: "#/components/schemas/UserUpsertRequest"
+        - type: object
+          properties:
+            tenant_id: {type: integer, format: int64, nullable: true}
+      example:
+        name: Jane Doe
+        email: jane.doe@acme.test
+        password: "secret123"
+        tenant_id: 1
+        is_active: true
+        roles: [2]
+
+    AssignRoleRequest:
+      type: object
+      required: [user_id, roles]
+      properties:
+        user_id: {type: integer, format: int64}
+        roles:
+          type: array
+          minItems: 1
+          items: {type: integer, format: int64}
+      example:
+        user_id: 2
+        roles: [2]
+
+    ChangePasswordRequest:
+      type: object
+      required: [user_id, password]
+      properties:
+        user_id: {type: integer, format: int64}
+        password: {type: string, minLength: 6, maxLength: 72}
+      example:
+        user_id: 2
+        password: "newsecret123"
+
+    ExportFiltersRequest:
+      type: object
+      properties:
+        search: {type: string, maxLength: 255}
+        is_active: {type: boolean, nullable: true}
+        role_name: {type: string, maxLength: 255}
+        order_by: {type: string, enum: [id, name, email, created_at]}
+        order_direction: {type: string, enum: [asc, desc]}
+      example:
+        is_active: true
+        order_by: created_at
+        order_direction: desc
+
+    BackgroundJobEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [job_id, status, message]
+          properties:
+            job_id: {type: string}
+            status: {type: string}
+            message: {type: string}
+
+    ImportResult:
+      type: object
+      description: Summary of a synchronous user import.
+      required: [total, processed, success, failed, errors]
+      properties:
+        total: {type: integer}
+        processed: {type: integer}
+        success: {type: integer}
+        failed: {type: integer}
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+
+    Branch:
+      type: object
+      required: [id, tenant_id, name, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        tenant_id: {type: integer, format: int64}
+        name: {type: string}
+        address: {type: string, nullable: true}
+        description: {type: string, nullable: true}
+        phone: {type: string, nullable: true}
+        email: {type: string, nullable: true}
+        manager_id: {type: integer, format: int64, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    BranchUpsertRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 2, maxLength: 255}
+        address: {type: string, maxLength: 255, nullable: true}
+        description: {type: string, maxLength: 1000, nullable: true}
+        phone: {type: string, maxLength: 50, nullable: true}
+        email: {type: string, format: email, maxLength: 255, nullable: true}
+        manager_id: {type: integer, format: int64, nullable: true}
+      example:
+        name: Downtown Branch
+        address: 12 Gulshan Ave, Dhaka
+        phone: "+8801700000000"
+        email: downtown@acme.test
+
+    BranchEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Branch"}
+
+    BranchPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Branch"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    Role:
+      type: object
+      required: [id, name, is_system, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        is_system: {type: boolean}
+        description: {type: string, nullable: true}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        tenant: {$ref: "#/components/schemas/TenantSlim"}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    RoleUpsertRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 2, maxLength: 100}
+        description: {type: string, maxLength: 255, nullable: true}
+      example:
+        name: Support
+        description: Read-only support role
+
+    RoleInternalRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 2, maxLength: 100}
+        description: {type: string, maxLength: 255, nullable: true}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        is_system: {type: boolean}
+      example:
+        name: Support
+        description: Read-only support role
+        tenant_id: 1
+        is_system: false
+
+    RolePermissionAssignRequest:
+      type: object
+      required: [id]
+      properties:
+        id: {type: integer, format: int64}
+        permissions:
+          type: array
+          items: {type: integer, format: int64}
+      example:
+        id: 3
+        permissions: [1, 2, 3]
+
+    RoleEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Role"}
+
+    RoleArrayEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Role"}
+
+    Permission:
+      type: object
+      required: [id, name, group, guard, is_system]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        group: {type: string}
+        guard: {type: string}
+        description: {type: string, nullable: true}
+        is_system: {type: boolean}
+
+    PermissionInsertRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 2, maxLength: 150}
+        group: {type: string, maxLength: 100}
+        description: {type: string, maxLength: 255, nullable: true}
+      example:
+        name: report.view
+        group: report
+        description: Can view reports
+
+    PermissionEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Permission"}
+
+    PermissionArrayEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Permission"}
+
+    Tenant:
+      type: object
+      required: [id, name, code, is_active, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        code: {type: string}
+        slug: {type: string, nullable: true}
+        domain: {type: string, nullable: true}
+        phone: {type: string, nullable: true}
+        email: {type: string, nullable: true}
+        is_active: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    TenantUpsertRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, minLength: 2, maxLength: 255}
+        slug: {type: string, maxLength: 255, nullable: true}
+        domain: {type: string, maxLength: 255, nullable: true}
+        phone: {type: string, maxLength: 50, nullable: true}
+        email: {type: string, format: email, maxLength: 255, nullable: true}
+        is_active: {type: boolean, nullable: true}
+      example:
+        name: Acme Corp
+        slug: acme-corp
+        domain: acme.example.com
+        email: hello@acme.test
+        is_active: true
+
+    TenantEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Tenant"}
+
+    TenantPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Tenant"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    Feature:
+      type: object
+      required: [feature_key, is_enabled, limit_value]
+      properties:
+        feature_key: {type: string}
+        is_enabled: {type: boolean}
+        limit_value: {type: integer, format: int64}
+
+    Package:
+      type: object
+      required: [id, name, price, billing_cycle, trial_days, is_active, sort_order, features, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        description: {type: string, nullable: true}
+        price: {type: integer, format: int64, description: Minor units (paisa).}
+        billing_cycle: {type: string, enum: [monthly, yearly, one_time]}
+        trial_days: {type: integer}
+        is_active: {type: boolean}
+        sort_order: {type: integer}
+        features:
+          type: array
+          items: {$ref: "#/components/schemas/Feature"}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    FeatureRequest:
+      type: object
+      required: [feature_key]
+      properties:
+        feature_key: {type: string}
+        is_enabled: {type: boolean}
+        limit_value: {type: integer, format: int64, minimum: -1}
+      example:
+        feature_key: users.max
+        is_enabled: true
+        limit_value: 25
+
+    PackageInsertRequest:
+      type: object
+      required: [name, price, billing_cycle]
+      properties:
+        name: {type: string, minLength: 2, maxLength: 150}
+        description: {type: string, maxLength: 500, nullable: true}
+        price: {type: integer, format: int64, minimum: 0}
+        billing_cycle: {type: string, enum: [monthly, yearly, one_time]}
+        trial_days: {type: integer, minimum: 0}
+        is_active: {type: boolean, nullable: true}
+        sort_order: {type: integer}
+        features:
+          type: array
+          items: {$ref: "#/components/schemas/FeatureRequest"}
+      example:
+        name: Starter
+        description: For small teams
+        price: 9900
+        billing_cycle: monthly
+        trial_days: 14
+        is_active: true
+        sort_order: 1
+        features:
+          - {feature_key: users.max, is_enabled: true, limit_value: 10}
+          - {feature_key: branches.max, is_enabled: true, limit_value: 3}
+
+    PackageEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Package"}
+
+    PackageArrayEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Package"}
+
+    Subscription:
+      type: object
+      required: [id, tenant_id, package_id, status, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        tenant_id: {type: integer, format: int64}
+        package_id: {type: integer, format: int64}
+        status: {type: string, enum: [trial, pending, active, past_due, cancelled, expired]}
+        starts_at: {type: string, format: date-time, nullable: true}
+        trial_ends_at: {type: string, format: date-time, nullable: true}
+        expires_at: {type: string, format: date-time, nullable: true}
+        cancelled_at: {type: string, format: date-time, nullable: true}
+        cancellation_reason: {type: string, nullable: true}
+        overrides:
+          type: object
+          additionalProperties: true
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    SubscriptionEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Subscription"}
+
+    SubscriptionPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Subscription"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    SubscriptionStatusEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [active]
+          properties:
+            subscription: {$ref: "#/components/schemas/Subscription"}
+            package: {$ref: "#/components/schemas/Package"}
+            active: {type: boolean}
+
+    SubscribeRequest:
+      type: object
+      required: [package_id, payment_method]
+      properties:
+        package_id: {type: integer, format: int64}
+        payment_method: {type: string, enum: [bkash, nagad, cash, bank_transfer]}
+        payment_data:
+          type: object
+          additionalProperties: true
+      example:
+        package_id: 1
+        payment_method: cash
+        payment_data: {notes: paid in cash}
+
+    SubscribeEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [subscription, payment]
+          properties:
+            subscription: {$ref: "#/components/schemas/Subscription"}
+            payment: {$ref: "#/components/schemas/Payment"}
+
+    Payment:
+      type: object
+      required: [id, tenant_id, payment_method, status, amount, currency, invoice_number, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        tenant_id: {type: integer, format: int64}
+        subscription_id: {type: integer, format: int64, nullable: true}
+        payment_method: {type: string, enum: [bkash, nagad, cash, bank_transfer]}
+        status: {type: string, enum: [pending, processing, completed, failed, cancelled, awaiting_approval]}
+        amount: {type: integer, format: int64, description: Minor units (paisa).}
+        currency: {type: string, example: BDT}
+        gateway_ref: {type: string, nullable: true}
+        gateway_status: {type: string, nullable: true}
+        gateway_response:
+          type: object
+          additionalProperties: true
+        invoice_number: {type: string}
+        paid_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    PaymentEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Payment"}
+
+    PaymentPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Payment"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    RecordPaymentRequest:
+      type: object
+      required: [tenant_id, subscription_id, payment_method, amount]
+      properties:
+        tenant_id: {type: integer, format: int64}
+        subscription_id: {type: integer, format: int64}
+        payment_method: {type: string, enum: [cash, bank_transfer]}
+        amount: {type: integer, format: int64, minimum: 0}
+        notes: {type: string, maxLength: 500, nullable: true}
+      example:
+        tenant_id: 1
+        subscription_id: 1
+        payment_method: cash
+        amount: 9900
+        notes: collected at the front desk
+
+    ReviewRequest:
+      type: object
+      properties:
+        note: {type: string, maxLength: 500, nullable: true}
+      example:
+        note: verified the bank slip
+
+    Approval:
+      type: object
+      required: [id, tenant_id, subscription_id, payment_id, payment_method, status, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        tenant_id: {type: integer, format: int64}
+        subscription_id: {type: integer, format: int64}
+        payment_id: {type: integer, format: int64}
+        payment_method: {type: string, enum: [bkash, nagad, cash, bank_transfer]}
+        payment_data:
+          type: object
+          additionalProperties: true
+        status: {type: string, enum: [pending, approved, rejected]}
+        reviewer_id: {type: integer, format: int64, nullable: true}
+        reviewer_note: {type: string, nullable: true}
+        reviewed_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    ApprovalEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Approval"}
+
+    ApprovalPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Approval"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    NotificationTarget:
+      type: object
+      required: [id, target_type]
+      properties:
+        id: {type: integer, format: int64}
+        target_type: {type: string, enum: [USER, ROLE, BRANCH, TENANT, GLOBAL]}
+        target_id: {type: integer, format: int64, nullable: true}
+
+    Notification:
+      type: object
+      required: [id, event_type, priority, title, created_at, updated_at, targets]
+      properties:
+        id: {type: integer, format: int64}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        event_type: {type: string}
+        priority: {type: string, enum: [INFO, WARNING, CRITICAL]}
+        title: {type: string}
+        body: {type: string, nullable: true}
+        data: {}
+        group_key: {type: string, nullable: true}
+        created_by: {type: integer, format: int64, nullable: true}
+        updated_by: {type: integer, format: int64, nullable: true}
+        expires_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        targets:
+          type: array
+          items: {$ref: "#/components/schemas/NotificationTarget"}
+
+    NotificationUpsertRequest:
+      type: object
+      required: [event_type, priority, title, targets]
+      properties:
+        event_type: {type: string, maxLength: 255}
+        priority: {type: string, enum: [INFO, WARNING, CRITICAL]}
+        title: {type: string, maxLength: 255}
+        body: {type: string, nullable: true}
+        data:
+          type: object
+          additionalProperties: true
+        group_key: {type: string, maxLength: 255, nullable: true}
+        expires_at: {type: string, format: date-time, nullable: true}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        targets:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [type]
+            properties:
+              type: {type: string, enum: [USER, ROLE, BRANCH, TENANT, GLOBAL]}
+              id: {type: integer, format: int64, nullable: true}
+      example:
+        event_type: billing.subscription.expiring
+        priority: INFO
+        title: Your subscription expires soon
+        body: Renew to keep access.
+        targets:
+          - {type: TENANT}
+
+    NotificationEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/Notification"}
+
+    NotificationPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/Notification"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    FeedItem:
+      type: object
+      required: [id, event_type, priority, title, created_at, is_read]
+      properties:
+        id: {type: integer, format: int64}
+        event_type: {type: string}
+        priority: {type: string, enum: [INFO, WARNING, CRITICAL]}
+        title: {type: string}
+        body: {type: string, nullable: true}
+        data: {}
+        group_key: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+        is_read: {type: boolean}
+
+    NotificationFeedEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/FeedItem"}
+        links: {$ref: "#/components/schemas/CursorLinks"}
+        meta: {$ref: "#/components/schemas/FeedMeta"}
+
+    File:
+      type: object
+      required: [id, uuid, type, url, name, file_name, mime_type, size, attached, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        uuid: {type: string, format: uuid}
+        type: {type: string, enum: [image, video, document, other]}
+        url: {type: string}
+        name: {type: string}
+        file_name: {type: string}
+        mime_type: {type: string}
+        size: {type: integer, format: int64}
+        attached: {type: boolean}
+        created_at: {type: string, format: date-time}
+
+    FileEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/File"}
+
+    FilePageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/File"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    ProcessingJob:
+      type: object
+      required: [id, type, status, total_items, processed_items, success_count, error_count, progress_percentage, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        branch_id: {type: integer, format: int64, nullable: true}
+        job_id: {type: string, nullable: true}
+        type: {type: string}
+        status: {type: string, enum: [PENDING, PROCESSING, COMPLETED, FAILED]}
+        entity_type: {type: string, nullable: true}
+        filters: {}
+        file_name: {type: string, nullable: true}
+        file_size: {type: integer, format: int64, nullable: true}
+        file_mime: {type: string, nullable: true}
+        total_items: {type: integer}
+        processed_items: {type: integer}
+        success_count: {type: integer}
+        error_count: {type: integer}
+        errors: {}
+        error_message: {type: string, nullable: true}
+        progress_percentage: {type: integer}
+        user_id: {type: integer, format: int64, nullable: true}
+        started_at: {type: string, format: date-time, nullable: true}
+        completed_at: {type: string, format: date-time, nullable: true}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    ProcessingJobEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/ProcessingJob"}
+
+    ProcessingJobPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/ProcessingJob"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    CleanupSettingsEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [days]
+          properties:
+            days: {type: integer}
+
+    SettingsGroupRef:
+      type: object
+      required: [id, slug, name, sort_order]
+      properties:
+        id: {type: integer, format: int64}
+        slug: {type: string}
+        name: {type: string}
+        description: {type: string}
+        sort_order: {type: integer}
+
+    SettingItem:
+      type: object
+      required: [id, key, type, value, default, description, source, scope, editable, sort_order]
+      properties:
+        id: {type: integer, format: int64}
+        key: {type: string}
+        type: {type: string, enum: [string, int, bool, json]}
+        value: {}
+        default: {}
+        description: {type: string}
+        source: {type: string, enum: [tenant, global, default]}
+        scope: {type: string, enum: [global, tenant]}
+        editable: {type: boolean}
+        sort_order: {type: integer}
+        group: {$ref: "#/components/schemas/SettingsGroupRef"}
+
+    SettingsGroupSection:
+      type: object
+      required: [group, settings]
+      properties:
+        group: {$ref: "#/components/schemas/SettingsGroupRef"}
+        settings:
+          type: array
+          items: {$ref: "#/components/schemas/SettingItem"}
+
+    SettingsGroupedEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/SettingsGroupSection"}
+
+    SettingEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/SettingItem"}
+
+    SettingListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/SettingItem"}
+
+    SettingUpdateRequest:
+      type: object
+      required: [value]
+      properties:
+        value: {}
+        target_type: {type: string, enum: [global, tenant]}
+        target_id: {type: integer, format: int64}
+
+    FeatureFlagItem:
+      type: object
+      required: [key, value, default, source, description, group]
+      properties:
+        key: {type: string}
+        value: {type: boolean}
+        default: {type: boolean}
+        source: {type: string, enum: [user, tenant, global, default]}
+        description: {type: string}
+        group: {type: string}
+
+    FeatureFlagValuesEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: {type: boolean}
+
+    FeatureFlagListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/FeatureFlagItem"}
+
+    FeatureFlagUpdateRequest:
+      type: object
+      required: [flags]
+      properties:
+        target_type: {type: string, enum: [global, tenant, user]}
+        target_id: {type: integer, format: int64}
+        flags:
+          type: object
+          additionalProperties: {type: boolean, nullable: true}
+
+    SettingsGroup:
+      type: object
+      required: [id, slug, name, sort_order, is_system, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        slug: {type: string}
+        name: {type: string}
+        description: {type: string, nullable: true}
+        sort_order: {type: integer}
+        is_system: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    SettingsGroupLight:
+      type: object
+      required: [id, name, sort_order]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        sort_order: {type: integer}
+
+    SettingsGroupUpsertRequest:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string, maxLength: 255}
+        description: {type: string, maxLength: 255, nullable: true}
+        sort_order: {type: integer, minimum: 0}
+
+    SettingsGroupEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/SettingsGroup"}
+
+    SettingsGroupPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/SettingsGroup"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    SettingsGroupLightListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/SettingsGroupLight"}
+
+    AssignSettingsGroupRequest:
+      type: object
+      properties:
+        group_id: {type: integer, format: int64, nullable: true}
+    # ─── BEGIN GENERATED SCHEMAS (ims gen openapi) — do not edit ───
+    # ─── END GENERATED SCHEMAS ───

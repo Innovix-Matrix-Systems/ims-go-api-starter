@@ -1,0 +1,124 @@
+package tenants
+
+import (
+	"context"
+	"crypto/md5"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
+	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/cache"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
+)
+
+// BranchProvisioner provisions/removes the branches belonging to a tenant.
+type BranchProvisioner interface {
+	CreateDefaultForTenant(ctx context.Context, tenantID int64) error
+	DeleteForTenant(ctx context.Context, tenantID int64) error
+}
+
+// RoleProvisioner provisions the default roles for a new tenant.
+type RoleProvisioner interface {
+	CreateDefaultRolesForTenant(ctx context.Context, tenantID int64) error
+}
+
+// Service implements tenant business rules.
+type Service struct {
+	repo     Repository
+	branches BranchProvisioner
+	roles    RoleProvisioner
+	tx       *database.TxManager
+	cache    cache.Store
+	cfg      config.Tenancy
+}
+
+// NewService creates the tenant service.
+func NewService(repo Repository, branches BranchProvisioner, roles RoleProvisioner, tx *database.TxManager, store cache.Store, cfg config.Tenancy) *Service {
+	return &Service{repo: repo, branches: branches, roles: roles, tx: tx, cache: store, cfg: cfg}
+}
+
+// List returns tenants with pagination.
+func (s *Service) List(ctx context.Context, filter ListFilter) ([]Tenant, int64, error) {
+	items, err := s.repo.List(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.Count(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+// Get returns one tenant.
+func (s *Service) Get(ctx context.Context, id int64) (*Tenant, error) {
+	return s.repo.Get(ctx, id)
+}
+
+// Create adds a tenant and provisions its default branch and roles.
+func (s *Service) Create(ctx context.Context, actorID int64, input CreateInput) (*Tenant, error) {
+	input.Code = generateCode(input.Name, actorID)
+	input.ActorID = &actorID
+
+	tenant, err := s.repo.Create(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.branches.CreateDefaultForTenant(ctx, tenant.ID); err != nil {
+		return nil, err
+	}
+	if err := s.roles.CreateDefaultRolesForTenant(ctx, tenant.ID); err != nil {
+		return nil, err
+	}
+	return tenant, nil
+}
+
+// Update modifies a tenant.
+func (s *Service) Update(ctx context.Context, actorID, id int64, input UpdateInput) (*Tenant, error) {
+	input.ID = id
+	input.ActorID = &actorID
+	return s.repo.Update(ctx, input)
+}
+
+// Delete soft-deletes a tenant and its branches in one transaction; the seeded
+// default tenant is protected. Cached tenant-existence is invalidated so
+// impersonation against the deleted tenant fails immediately.
+func (s *Service) Delete(ctx context.Context, actorID, id int64) error {
+	if id == s.cfg.DefaultTenantID {
+		return apperr.New(apperr.OperationNotAllowed, "The default tenant cannot be deleted.")
+	}
+	err := s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
+		if _, err := q.SoftDeleteBranchesForTenant(ctx, id); err != nil {
+			return err
+		}
+		affected, err := q.SoftDeleteTenant(ctx, dbgen.SoftDeleteTenantParams{
+			ID:        id,
+			UpdatedBy: &actorID,
+		})
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return apperr.Newf(apperr.ResourceNotFound, "Tenant with ID '%d' was not found.", id)
+		}
+		return nil
+	})
+	if err != nil {
+		var appErr *apperr.Error
+		if errors.As(err, &appErr) {
+			return appErr
+		}
+		return database.MapError("tenants.delete", err)
+	}
+	tenancy.InvalidateTenantCheck(ctx, s.cache, id)
+	return nil
+}
+
+func generateCode(name string, actorID int64) string {
+	sum := md5.Sum([]byte(fmt.Sprintf("%s::%d::%d", name, actorID, time.Now().UnixNano())))
+	return fmt.Sprintf("%x", sum)
+}

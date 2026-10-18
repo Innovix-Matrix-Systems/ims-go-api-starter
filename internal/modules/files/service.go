@@ -1,0 +1,341 @@
+package files
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"mime/multipart"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/gabriel-vasile/mimetype"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/storage"
+)
+
+// Size limits (uploads 100 MB, avatars 5 MB).
+const (
+	MaxFileSize   = 100 << 20
+	MaxAvatarSize = 5 << 20
+)
+
+var allowedFileExtensions = map[string]bool{
+	"pdf": true, "jpg": true, "jpeg": true, "png": true,
+	"docx": true, "doc": true, "mp4": true, "mov": true, "mkv": true,
+}
+
+var allowedImageExtensions = map[string]bool{
+	"jpg": true, "jpeg": true, "png": true, "bmp": true, "gif": true, "svg": true, "webp": true,
+}
+
+// Service implements the file resource and attachment rules.
+type Service struct {
+	repo     Repository
+	disks    *storage.Registry
+	fileDisk string
+	tx       *database.TxManager
+	logger   *slog.Logger
+}
+
+// NewService creates the file service.
+func NewService(repo Repository, disks *storage.Registry, fileDisk string, tx *database.TxManager, logger *slog.Logger) *Service {
+	return &Service{repo: repo, disks: disks, fileDisk: fileDisk, tx: tx, logger: logger}
+}
+
+// Create stores a standalone library file.
+func (s *Service) Create(ctx context.Context, actorID int64, header *multipart.FileHeader) (*File, error) {
+	uploaded, err := s.storeOnDisk(ctx, header, allowedFileExtensions, MaxFileSize, false)
+	if err != nil {
+		return nil, err
+	}
+	file, err := s.repo.Create(ctx, CreateInput{
+		UUID:      uploaded.uuid,
+		Name:      uploaded.name,
+		FileName:  uploaded.fileName,
+		Disk:      s.fileDisk,
+		Path:      uploaded.path,
+		MimeType:  uploaded.mime,
+		Size:      uploaded.size,
+		Type:      uploaded.fileType,
+		CreatedBy: actorIDPtr(actorID),
+	})
+	if err != nil {
+		s.removeFromDisk(ctx, s.fileDisk, uploaded.path)
+		return nil, err
+	}
+	return file, nil
+}
+
+// UpdateAvatar replaces the user's profile file (single-file collection):
+// the new file is stored first, old rows are swapped in one transaction, and
+// the superseded disk files are removed afterwards.
+func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, header *multipart.FileHeader) error {
+	if userID < 1 {
+		return apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
+	}
+	uploaded, err := s.storeOnDisk(ctx, header, allowedImageExtensions, MaxAvatarSize, true)
+	if err != nil {
+		return err
+	}
+
+	actor := actorIDPtr(actorID)
+	ownerType := OwnerUser
+	collection := CollectionProfile
+
+	var superseded []dbgen.File
+	err = s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
+		removed, err := q.DeleteFilesByOwner(ctx, dbgen.DeleteFilesByOwnerParams{
+			OwnerType:  ownerType,
+			OwnerID:    userID,
+			Collection: collection,
+		})
+		if err != nil {
+			return database.MapError("files.avatar_replace", err)
+		}
+		superseded = removed
+		if _, err := q.CreateFile(ctx, dbgen.CreateFileParams{
+			Uuid:       uuidParam(uploaded.uuid),
+			Name:       uploaded.name,
+			FileName:   uploaded.fileName,
+			Disk:       s.fileDisk,
+			Path:       uploaded.path,
+			MimeType:   uploaded.mime,
+			Size:       uploaded.size,
+			Type:       uploaded.fileType,
+			OwnerType:  &ownerType,
+			OwnerID:    &userID,
+			Collection: &collection,
+			CreatedBy:  actor,
+			UpdatedBy:  actor,
+		}); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return apperr.New(apperr.Conflict, "The profile file was replaced concurrently; please retry.")
+			}
+			return database.MapError("files.avatar_create", err)
+		}
+		return nil
+	})
+	if err != nil {
+		s.removeFromDisk(ctx, s.fileDisk, uploaded.path)
+		return err
+	}
+
+	for _, old := range superseded {
+		s.removeFromDisk(ctx, old.Disk, old.Path)
+	}
+	return nil
+}
+
+// Get loads a file by ID.
+func (s *Service) Get(ctx context.Context, id int64) (*File, error) {
+	return s.repo.Get(ctx, id)
+}
+
+// List returns files with pagination and filters.
+func (s *Service) List(ctx context.Context, filter ListFilter) ([]File, int64, error) {
+	items, err := s.repo.List(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := s.repo.Count(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+// Delete removes a file row and its disk file (attached files included; the
+// owner simply loses the attachment).
+func (s *Service) Delete(ctx context.Context, id int64) error {
+	file, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	s.removeFromDisk(ctx, file.Disk, file.Path)
+	return nil
+}
+
+// URL resolves the public URL of a stored file; failures degrade to "".
+func (s *Service) URL(ctx context.Context, file File) string {
+	disk, err := s.disks.Disk(file.Disk)
+	if err != nil {
+		s.logWarn(ctx, "file disk unavailable", file, err)
+		return ""
+	}
+	url, err := disk.URL(ctx, file.Path)
+	if err != nil {
+		s.logWarn(ctx, "file URL resolution failed", file, err)
+		return ""
+	}
+	return url
+}
+
+// PhotoURL resolves the profile photo URL for a user ("" when none).
+func (s *Service) PhotoURL(ctx context.Context, userID int64) (string, error) {
+	file, err := s.repo.GetByOwner(ctx, OwnerUser, userID, CollectionProfile)
+	if err != nil {
+		if apperr.Is(err, apperr.ResourceNotFound) {
+			return "", nil
+		}
+		return "", err
+	}
+	return s.URL(ctx, *file), nil
+}
+
+// PhotoURLs resolves profile photo URLs for a set of users.
+func (s *Service) PhotoURLs(ctx context.Context, userIDs []int64) (map[int64]string, error) {
+	urls := make(map[int64]string, len(userIDs))
+	if len(userIDs) == 0 {
+		return urls, nil
+	}
+	files, err := s.repo.ListProfileFiles(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		if file.OwnerID == nil {
+			continue
+		}
+		urls[*file.OwnerID] = s.URL(ctx, file)
+	}
+	return urls, nil
+}
+
+type upload struct {
+	uuid     uuid.UUID
+	name     string
+	fileName string
+	path     string
+	mime     string
+	size     int64
+	fileType string
+}
+
+// storeOnDisk validates the upload, writes it to its disk and returns the
+// metadata needed for the file row.
+func (s *Service) storeOnDisk(ctx context.Context, header *multipart.FileHeader, allowed map[string]bool, maxSize int64, requireImage bool) (*upload, error) {
+	if header == nil || header.Filename == "" {
+		return nil, apperr.Validation(map[string][]string{"file": {"The file field is required."}})
+	}
+	if header.Size > maxSize {
+		return nil, apperr.Validation(map[string][]string{
+			"file": {fmt.Sprintf("The file field must not be greater than %d kilobytes.", maxSize>>10)},
+		})
+	}
+
+	name := filepath.Base(strings.ReplaceAll(header.Filename, "\\", "/"))
+	extension := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+	if !allowed[extension] {
+		return nil, apperr.Validation(map[string][]string{
+			"file": {"The file field must be a file of type: " + extensionList(allowed) + "."},
+		})
+	}
+	fileName := sanitizeFileName(name)
+
+	file, err := header.Open()
+	if err != nil {
+		return nil, apperr.Wrap(apperr.InternalServerError, "The uploaded file could not be read.", err)
+	}
+	defer file.Close()
+
+	mime, err := mimetype.DetectReader(file)
+	if err != nil {
+		return nil, apperr.Wrap(apperr.InternalServerError, "The uploaded file could not be inspected.", err)
+	}
+	detected := mime.String()
+	if requireImage && !strings.HasPrefix(detected, "image/") {
+		return nil, apperr.Validation(map[string][]string{"file": {"The file field must be an image."}})
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, apperr.Wrap(apperr.InternalServerError, "The uploaded file could not be read.", err)
+	}
+
+	id := uuid.New()
+	path := "files/" + id.String() + "/" + fileName
+	disk, err := s.disks.Disk(s.fileDisk)
+	if err != nil {
+		return nil, apperr.Wrap(apperr.ServiceUnavailable, "The file storage is not available.", err)
+	}
+	if err := disk.Put(ctx, path, file, header.Size); err != nil {
+		return nil, apperr.Wrap(apperr.ServiceUnavailable, "The file could not be stored.", err)
+	}
+
+	return &upload{
+		uuid:     id,
+		name:     name,
+		fileName: fileName,
+		path:     path,
+		mime:     detected,
+		size:     header.Size,
+		fileType: TypeFromMIME(detected),
+	}, nil
+}
+
+func (s *Service) removeFromDisk(ctx context.Context, diskName, path string) {
+	disk, err := s.disks.Disk(diskName)
+	if err != nil {
+		s.logWarn(ctx, "file disk unavailable during cleanup", File{Disk: diskName, Path: path}, err)
+		return
+	}
+	if err := disk.Delete(ctx, path); err != nil {
+		s.logWarn(ctx, "file cleanup failed", File{Disk: diskName, Path: path}, err)
+	}
+}
+
+func (s *Service) logWarn(ctx context.Context, message string, file File, err error) {
+	if s.logger == nil {
+		return
+	}
+	s.logger.WarnContext(ctx, message, "disk", file.Disk, "path", file.Path, "error", err)
+}
+
+// sanitizeFileName keeps a safe base name for storage paths.
+func sanitizeFileName(raw string) string {
+	name := filepath.Base(strings.ReplaceAll(raw, "\\", "/"))
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('_')
+		}
+	}
+	clean := strings.Trim(b.String(), "._")
+	if clean == "" {
+		clean = "file"
+	}
+	if len(clean) > 180 {
+		clean = clean[len(clean)-180:]
+	}
+	return clean
+}
+
+func extensionList(allowed map[string]bool) string {
+	extensions := make([]string, 0, len(allowed))
+	for extension := range allowed {
+		extensions = append(extensions, extension)
+	}
+	sort.Strings(extensions)
+	return strings.Join(extensions, ",")
+}
+
+func actorIDPtr(actorID int64) *int64 {
+	if actorID < 1 {
+		return nil
+	}
+	return &actorID
+}

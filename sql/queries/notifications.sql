@@ -1,0 +1,232 @@
+-- name: CreateNotification :one
+INSERT INTO notifications (
+    tenant_id, event_type, priority, title, body, data, group_key, created_by, expires_at
+)
+VALUES (
+    @tenant_id, @event_type, @priority, @title, @body, @data, @group_key, @created_by, @expires_at
+)
+RETURNING *;
+
+-- name: GetNotification :one
+SELECT * FROM notifications WHERE id = @id;
+
+-- name: UpdateNotification :one
+UPDATE notifications
+SET event_type = @event_type,
+    priority   = @priority,
+    title      = @title,
+    body       = @body,
+    data       = @data,
+    group_key  = @group_key,
+    expires_at = @expires_at,
+    updated_by = @updated_by,
+    updated_at = now()
+WHERE id = @id
+RETURNING *;
+
+-- name: DeleteNotification :execrows
+DELETE FROM notifications WHERE id = @id;
+
+-- name: ListNotifications :many
+SELECT * FROM notifications
+WHERE (@search::text IS NULL OR title ILIKE '%' || @search || '%')
+  AND (sqlc.narg('priority')::text IS NULL OR priority = sqlc.narg('priority')::text)
+ORDER BY
+  CASE WHEN @order_by::text = 'created_at' AND @order_dir::text = 'asc' THEN created_at END ASC,
+  CASE WHEN @order_by::text = 'created_at' AND @order_dir::text = 'desc' THEN created_at END DESC,
+  CASE WHEN @order_by::text = 'title' AND @order_dir::text = 'asc' THEN lower(title) END ASC,
+  CASE WHEN @order_by::text = 'title' AND @order_dir::text = 'desc' THEN lower(title) END DESC,
+  CASE WHEN @order_by::text = 'priority' AND @order_dir::text = 'asc' THEN priority END ASC,
+  CASE WHEN @order_by::text = 'priority' AND @order_dir::text = 'desc' THEN priority END DESC,
+  id DESC
+LIMIT @page_limit OFFSET @page_offset;
+
+-- name: CountNotifications :one
+SELECT count(*) FROM notifications
+WHERE (@search::text IS NULL OR title ILIKE '%' || @search || '%')
+  AND (sqlc.narg('priority')::text IS NULL OR priority = sqlc.narg('priority')::text);
+
+-- name: CreateNotificationTarget :one
+INSERT INTO notification_targets (tenant_id, notification_id, target_type, target_id)
+VALUES (@tenant_id, @notification_id, @target_type, @target_id)
+RETURNING *;
+
+-- name: DeleteNotificationTargets :execrows
+DELETE FROM notification_targets WHERE notification_id = @notification_id;
+
+-- name: ListNotificationTargets :many
+SELECT * FROM notification_targets WHERE notification_id = @notification_id ORDER BY id;
+
+-- name: ListUserIDsByIDs :many
+SELECT id FROM users WHERE deleted_at IS NULL AND id = ANY(@ids::bigint[]);
+
+-- name: ListUserIDsByBranch :many
+SELECT id FROM users WHERE deleted_at IS NULL AND branch_id = @branch_id;
+
+-- name: ListUserIDsByTenant :many
+SELECT id FROM users WHERE deleted_at IS NULL AND tenant_id = @tenant_id;
+
+-- name: ListGlobalUserIDs :many
+SELECT id FROM users WHERE deleted_at IS NULL AND tenant_id IS NULL;
+
+-- name: ListUserIDsByRoleIDs :many
+SELECT DISTINCT u.id
+FROM users u
+JOIN model_has_roles mhr ON mhr.model_type = 'user' AND mhr.model_id = u.id
+WHERE u.deleted_at IS NULL
+  AND mhr.role_id = ANY(@role_ids::bigint[]);
+
+-- name: InsertNotificationDeliveries :many
+INSERT INTO notification_deliveries (tenant_id, notification_id, user_id, status)
+SELECT @tenant_id, @notification_id, unnest(@user_ids::bigint[]), 'pending'
+ON CONFLICT (notification_id, user_id) DO NOTHING
+RETURNING user_id;
+
+-- name: ListUnreadDeliveryUserIDs :many
+SELECT d.user_id
+FROM notification_deliveries d
+WHERE d.notification_id = @notification_id
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_reads r
+      WHERE r.notification_id = d.notification_id AND r.user_id = d.user_id
+  );
+
+-- name: InsertNotificationRead :execrows
+INSERT INTO notification_reads (tenant_id, branch_id, notification_id, user_id, read_at)
+VALUES (@tenant_id, @branch_id, @notification_id, @user_id, @read_at)
+ON CONFLICT (notification_id, user_id) DO NOTHING;
+
+-- name: NotificationVisibleToUser :one
+SELECT EXISTS (
+    SELECT 1
+    FROM notifications n
+    WHERE n.id = @notification_id
+      AND (@all_tenants::boolean OR n.tenant_id = @tenant_id)
+      AND EXISTS (
+          SELECT 1
+          FROM notification_targets t
+          WHERE t.notification_id = n.id
+            AND (
+                (t.target_type = 'USER' AND t.target_id = @user_id::bigint)
+                OR (t.target_type = 'ROLE' AND t.target_id = ANY(@role_ids::bigint[]))
+                OR (t.target_type = 'BRANCH' AND @branch_id::bigint > 0 AND t.target_id = @branch_id::bigint)
+                OR (t.target_type = 'TENANT' AND t.target_id IS NULL
+                    AND (@all_tenants::boolean OR n.tenant_id = @tenant_id))
+                OR (t.target_type = 'GLOBAL' AND t.target_id IS NULL AND @is_non_tenant::boolean)
+            )
+      )
+) AS visible;
+
+-- name: MarkAllNotificationsRead :execrows
+INSERT INTO notification_reads (tenant_id, branch_id, notification_id, user_id, read_at)
+SELECT @tenant_id, @branch_id, n.id, @user_id, @read_at
+FROM notifications n
+WHERE (n.expires_at IS NULL OR n.expires_at > @read_at)
+  AND (@all_tenants::boolean OR n.tenant_id = @tenant_id)
+  AND EXISTS (
+      SELECT 1
+      FROM notification_targets t
+      WHERE t.notification_id = n.id
+        AND (
+            (t.target_type = 'USER' AND t.target_id = @user_id::bigint)
+            OR (t.target_type = 'ROLE' AND t.target_id = ANY(@role_ids::bigint[]))
+            OR (t.target_type = 'BRANCH' AND @branch_id::bigint > 0 AND t.target_id = @branch_id::bigint)
+            OR (t.target_type = 'TENANT' AND t.target_id IS NULL
+                AND (@all_tenants::boolean OR n.tenant_id = @tenant_id))
+            OR (t.target_type = 'GLOBAL' AND t.target_id IS NULL AND @is_non_tenant::boolean)
+        )
+  )
+ON CONFLICT (notification_id, user_id) DO NOTHING;
+
+-- name: ListNotificationFeed :many
+SELECT n.id, n.event_type, n.priority, n.title, n.body, n.data, n.group_key, n.created_at,
+       (r.id IS NOT NULL)::boolean AS is_read
+FROM notifications n
+LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = @user_id
+WHERE (@all_tenants::boolean OR n.tenant_id = @tenant_id)
+  AND (n.expires_at IS NULL OR n.expires_at > now())
+  AND (@unread_only::boolean = false OR r.id IS NULL)
+  AND (sqlc.narg('priority')::text IS NULL OR n.priority = sqlc.narg('priority')::text)
+  AND (@read_all_before::bigint = 0 OR n.created_at > to_timestamp(@read_all_before::bigint))
+  AND EXISTS (
+      SELECT 1
+      FROM notification_targets t
+      WHERE t.notification_id = n.id
+        AND (
+            (t.target_type = 'USER' AND t.target_id = @user_id::bigint)
+            OR (t.target_type = 'ROLE' AND t.target_id = ANY(@role_ids::bigint[]))
+            OR (t.target_type = 'BRANCH' AND @branch_id::bigint > 0 AND t.target_id = @branch_id::bigint)
+            OR (t.target_type = 'TENANT' AND t.target_id IS NULL
+                AND (@all_tenants::boolean OR n.tenant_id = @tenant_id))
+            OR (t.target_type = 'GLOBAL' AND t.target_id IS NULL AND @is_non_tenant::boolean)
+        )
+  )
+  AND (
+      sqlc.narg('cursor_created_at')::timestamptz IS NULL
+      OR (n.created_at, n.id) < (sqlc.narg('cursor_created_at')::timestamptz, sqlc.narg('cursor_id')::bigint)
+  )
+ORDER BY n.created_at DESC, n.id DESC
+LIMIT @page_limit;
+
+-- name: ListNotificationFeedBackward :many
+SELECT n.id, n.event_type, n.priority, n.title, n.body, n.data, n.group_key, n.created_at,
+       (r.id IS NOT NULL)::boolean AS is_read
+FROM notifications n
+LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = @user_id
+WHERE (@all_tenants::boolean OR n.tenant_id = @tenant_id)
+  AND (n.expires_at IS NULL OR n.expires_at > now())
+  AND (@unread_only::boolean = false OR r.id IS NULL)
+  AND (sqlc.narg('priority')::text IS NULL OR n.priority = sqlc.narg('priority')::text)
+  AND (@read_all_before::bigint = 0 OR n.created_at > to_timestamp(@read_all_before::bigint))
+  AND EXISTS (
+      SELECT 1
+      FROM notification_targets t
+      WHERE t.notification_id = n.id
+        AND (
+            (t.target_type = 'USER' AND t.target_id = @user_id::bigint)
+            OR (t.target_type = 'ROLE' AND t.target_id = ANY(@role_ids::bigint[]))
+            OR (t.target_type = 'BRANCH' AND @branch_id::bigint > 0 AND t.target_id = @branch_id::bigint)
+            OR (t.target_type = 'TENANT' AND t.target_id IS NULL
+                AND (@all_tenants::boolean OR n.tenant_id = @tenant_id))
+            OR (t.target_type = 'GLOBAL' AND t.target_id IS NULL AND @is_non_tenant::boolean)
+        )
+  )
+  AND (n.created_at, n.id) > (@cursor_created_at::timestamptz, @cursor_id::bigint)
+ORDER BY n.created_at ASC, n.id ASC
+LIMIT @page_limit;
+
+-- name: CountUnreadNotificationsForUser :one
+SELECT count(*)
+FROM notification_deliveries d
+JOIN notifications n ON n.id = d.notification_id
+WHERE d.user_id = @user_id
+  AND (@all_tenants::boolean OR n.tenant_id = @tenant_id)
+  AND (n.expires_at IS NULL OR n.expires_at > now())
+  AND NOT EXISTS (
+      SELECT 1 FROM notification_reads r
+      WHERE r.notification_id = d.notification_id AND r.user_id = d.user_id
+  );
+
+-- name: GetUserNotificationScope :one
+SELECT COALESCE(branch_id, 0)::bigint AS branch_id, COALESCE(tenant_id, 0)::bigint AS tenant_id
+FROM users
+WHERE id = @user_id AND deleted_at IS NULL;
+
+-- name: ListUserRoleIDs :many
+SELECT role_id FROM model_has_roles
+WHERE model_type = 'user' AND model_id = @user_id
+ORDER BY role_id;
+
+-- name: UserExistsInTenant :one
+SELECT EXISTS (
+    SELECT 1 FROM users
+    WHERE id = @id AND deleted_at IS NULL
+      AND (@tenant_id::bigint = 0 OR tenant_id = @tenant_id::bigint)
+);
+
+-- name: BranchExistsInTenant :one
+SELECT EXISTS (
+    SELECT 1 FROM branches
+    WHERE id = @id AND deleted_at IS NULL
+      AND (@tenant_id::bigint = 0 OR tenant_id = @tenant_id::bigint)
+);

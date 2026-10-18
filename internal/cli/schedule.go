@@ -1,0 +1,99 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
+
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/app"
+)
+
+func registerScheduleCommands(registry *Registry, state *State) error {
+	commands := []*cobra.Command{
+		newScheduleCommand(state),
+		newScheduleListCommand(state),
+		newScheduleRunCommand(state),
+	}
+	for _, cmd := range commands {
+		if err := registry.Add(cmd); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func newScheduleCommand(state *State) *cobra.Command {
+	return &cobra.Command{
+		Use:   "schedule",
+		Short: "Run the scheduler daemon (one process per deployment)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := state.Config()
+			if err := cfg.Validate(); err != nil {
+				return err
+			}
+			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			return platform.ScheduleRunner.Start(ctx)
+		},
+	}
+}
+
+func newScheduleListCommand(state *State) *cobra.Command {
+	return &cobra.Command{
+		Use:   "schedule:list",
+		Short: "List registered scheduled tasks",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := state.Config()
+			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintln(writer, "ID\tSPEC\tDESCRIPTION")
+			for _, task := range platform.ScheduleRegistry.Tasks() {
+				fmt.Fprintf(writer, "%s\t%s\t%s\n", task.ID, task.Spec, task.Description)
+			}
+			return writer.Flush()
+		},
+	}
+}
+
+func newScheduleRunCommand(state *State) *cobra.Command {
+	return &cobra.Command{
+		Use:   "schedule:run <task-id>",
+		Short: "Run a scheduled task once, immediately",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := state.Config()
+			if err := cfg.Validate(); err != nil {
+				return err
+			}
+			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
+			if err != nil {
+				return err
+			}
+			defer cleanup()
+
+			ctx, cancel := context.WithCancel(cmd.Context())
+			defer cancel()
+			if err := platform.ScheduleRunner.RunNow(ctx, args[0]); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Task %q finished.\n", args[0])
+			return nil
+		},
+	}
+}

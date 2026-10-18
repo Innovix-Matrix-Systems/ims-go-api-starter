@@ -1,0 +1,116 @@
+package storage
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// localDisk stores files under a root directory, optionally exposed through a
+// public URL prefix ({APP_URL}/storage).
+type localDisk struct {
+	name      string
+	root      string
+	urlPrefix string
+}
+
+func newLocalDisk(name, root, appURL string) *localDisk {
+	prefix := ""
+	if appURL != "" {
+		prefix = strings.TrimRight(appURL, "/") + "/storage"
+	}
+	return &localDisk{name: name, root: root, urlPrefix: prefix}
+}
+
+func (d *localDisk) fullPath(path string) (string, error) {
+	clean := filepath.Clean(filepath.FromSlash("/" + strings.TrimLeft(path, "/")))
+	target := filepath.Join(d.root, clean)
+	root := filepath.Clean(d.root)
+	if target != root && !strings.HasPrefix(target, root+string(os.PathSeparator)) {
+		return "", fmt.Errorf("storage: path %q escapes disk %q root", path, d.name)
+	}
+	return target, nil
+}
+
+func (d *localDisk) Put(_ context.Context, path string, contents io.Reader, _ int64) error {
+	target, err := d.fullPath(path)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("storage: create directory for %q: %w", path, err)
+	}
+	file, err := os.Create(target)
+	if err != nil {
+		return fmt.Errorf("storage: create %q: %w", path, err)
+	}
+	if _, err := io.Copy(file, contents); err != nil {
+		file.Close()
+		_ = os.Remove(target)
+		return fmt.Errorf("storage: write %q: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("storage: close %q: %w", path, err)
+	}
+	return nil
+}
+
+func (d *localDisk) Get(_ context.Context, path string) (io.ReadCloser, error) {
+	target, err := d.fullPath(path)
+	if err != nil {
+		return nil, err
+	}
+	file, err := os.Open(target)
+	if err != nil {
+		return nil, fmt.Errorf("storage: open %q: %w", path, err)
+	}
+	return file, nil
+}
+
+func (d *localDisk) Delete(_ context.Context, path string) error {
+	target, err := d.fullPath(path)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("storage: delete %q: %w", path, err)
+	}
+	return nil
+}
+
+func (d *localDisk) Exists(_ context.Context, path string) (bool, error) {
+	target, err := d.fullPath(path)
+	if err != nil {
+		return false, err
+	}
+	if _, err := os.Stat(target); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("storage: stat %q: %w", path, err)
+	}
+	return true, nil
+}
+
+func (d *localDisk) Size(_ context.Context, path string) (int64, error) {
+	target, err := d.fullPath(path)
+	if err != nil {
+		return 0, err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return 0, fmt.Errorf("storage: stat %q: %w", path, err)
+	}
+	return info.Size(), nil
+}
+
+func (d *localDisk) URL(_ context.Context, path string) (string, error) {
+	if d.urlPrefix == "" {
+		return "", fmt.Errorf("storage: disk %q has no public URL", d.name)
+	}
+	return d.urlPrefix + "/" + strings.TrimLeft(path, "/"), nil
+}

@@ -1,0 +1,215 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  IMS Go API Starter — developer commands
+#
+#  Run `make` (or `make help`) for the full list. Recipes use only portable
+#  tools (go, gofmt, and optionally air / golangci-lint / docker), so they work
+#  the same on Windows, macOS and Linux.
+# ─────────────────────────────────────────────────────────────────────────────
+
+APP                    := ims
+MODULE                 := github.com/Innovix-Matrix-Systems/ims-go-api-starter
+VERSION                ?= dev
+
+GOEXE                  := $(shell go env GOEXE)
+BIN                    := bin/$(APP)$(GOEXE)
+LDFLAGS                := -X $(MODULE)/internal/version.Version=$(VERSION)
+
+SQLC_VERSION           ?= v1.31.1
+OAPI_CODEGEN_VERSION   ?= v2.4.1
+AIR_VERSION            ?= latest
+GOLANGCI_VERSION       ?= v1.64.8
+
+DOCKER_COMPOSE         := docker compose -f tests/docker-compose.yml
+
+# Local machines can exhaust memory during parallel race builds; CI overrides
+# this to run fully parallel (`make test TEST_FLAGS=`).
+TEST_FLAGS             ?= -p 2
+
+# `rm -rf` does not exist in the Windows command shell.
+ifeq ($(OS),Windows_NT)
+  RM := rmdir /s /q
+else
+  RM := rm -rf
+endif
+
+.DEFAULT_GOAL := help
+.PHONY: help tools env build dev run serve queue schedule test test-race test-cover test-integration \
+        vet format format-check lint lint-fix tidy check \
+        sqlc openapi openapi-gen openapi-check generate gen-check \
+        db-up db-down migrate migrate-status migrate-rollback seed fresh \
+        health config version clean clean-all
+
+# ── Help ─────────────────────────────────────────────────────────────────────
+help:
+	@echo IMS Go API Starter - developer commands
+	@echo --- Setup ---
+	@echo   make tools             Install dev tools: air, golangci-lint
+	@echo --- Develop ---
+	@echo   make dev               Run the API with hot reload via air
+	@echo   make run               Run the API once with go run
+	@echo   make queue             Run the queue worker with go run
+	@echo   make schedule          Run the scheduler daemon with go run
+	@echo   make build             Build the release binary into bin/
+	@echo --- Quality ---
+	@echo   make test              Unit tests; integration tests skip without a DSN
+	@echo   make test-race         Unit tests with the race detector
+	@echo   make test-cover        Unit tests and an HTML coverage report
+	@echo   make test-integration  Full suite against Postgres; set DATABASE_TEST_DSN
+	@echo   make lint              Run golangci-lint
+	@echo   make lint-fix          Run golangci-lint with --fix
+	@echo   make format            Format all Go code with gofmt
+	@echo   make format-check      Fail if any file is not gofmt-clean
+	@echo   make vet               Run go vet
+	@echo   make check             format-check + vet + lint + test
+	@echo --- Code generation ---
+	@echo   make sqlc              Regenerate internal/dbgen from sql/ and migrations/
+	@echo   make openapi           Regenerate internal/contract from api/openapi.yaml
+	@echo   make openapi-gen       Refresh the generated regions of api/openapi.yaml
+	@echo   make openapi-check     Validate the spec + route drift + region freshness
+	@echo   make generate          sqlc + openapi + openapi-gen
+	@echo   make gen-check         Fail if generated code is out of date
+	@echo --- Database ---
+	@echo   make db-up             Start local Postgres via docker compose
+	@echo   make db-down           Stop local Postgres
+	@echo   make migrate           Apply pending migrations
+	@echo   make migrate-status    Show migration status
+	@echo   make migrate-rollback  Roll back the most recent migration
+	@echo   make seed              Seed permissions, tenant/branch/roles, super-admin
+	@echo   make fresh             Roll back everything, migrate and seed - destructive
+	@echo --- Operations ---
+	@echo   make health            Run the health checks
+	@echo   make config            Print the effective configuration
+	@echo   make version           Print the build version
+	@echo   make tidy              go mod tidy
+	@echo   make clean             Remove build artifacts
+	@echo   make clean-all         Remove build artifacts and local state in var/
+
+# ── Setup ────────────────────────────────────────────────────────────────────
+tools: ## Install the developer tools used by `dev` and `lint`.
+	go install github.com/air-verse/air@$(AIR_VERSION)
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_VERSION)
+
+env: ## Warn when .env is missing.
+	@$(if $(wildcard .env),echo Using existing .env file.,echo No .env found - copy .env.example to .env to customise local config.)
+
+# ── Develop ──────────────────────────────────────────────────────────────────
+build: ## Build the release binary with a baked-in version.
+	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/app
+
+dev: env ## Run the API with hot reload. Requires air; see .air.toml.
+	go run ./cmd/app migrate
+	air
+
+run: ## Run the API once from source.
+	go run ./cmd/app serve
+
+serve: run ## Alias for `run`.
+
+queue: ## Run the queue worker (River). Stop with Ctrl-C.
+	go run ./cmd/app queue:work
+
+schedule: ## Run the scheduler daemon. Stop with Ctrl-C.
+	go run ./cmd/app schedule
+
+# ── Quality ──────────────────────────────────────────────────────────────────
+test: ## Run the unit test suite.
+	go test $(TEST_FLAGS) ./...
+
+test-race: ## Run the unit test suite with the race detector.
+	go test -race $(TEST_FLAGS) ./...
+
+test-cover: ## Run tests and write coverage.html.
+	go test $(TEST_FLAGS) -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo Coverage report written to coverage.html
+
+test-integration: ## Run the full suite against a real Postgres.
+	go test -count=1 -race $(TEST_FLAGS) ./...
+
+vet: ## Run go vet.
+	go vet ./...
+
+format: ## Format all Go code.
+	gofmt -w .
+
+fmt: format ## Alias for `format`.
+
+format-check: ## Fail when any Go file is not gofmt-clean.
+	@$(if $(shell gofmt -l .),$(error Unformatted files - run: make format :: $(shell gofmt -l .)),echo Go files are gofmt-clean.)
+
+fmt-check: format-check ## Alias for `format-check`.
+
+lint: ## Run golangci-lint.
+	golangci-lint run ./...
+
+lint-fix: ## Run golangci-lint and apply automatic fixes.
+	golangci-lint run --fix ./...
+
+tidy: ## Tidy go.mod and go.sum.
+	go mod tidy
+
+check: format-check vet lint test ## Format check + vet + lint + unit tests.
+
+# ── Code generation ──────────────────────────────────────────────────────────
+sqlc: ## Regenerate sqlc output in internal/dbgen.
+	go run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) generate
+
+openapi: ## Regenerate OpenAPI-derived types in internal/contract.
+	go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) -config api/oapi-codegen.yaml api/openapi.yaml
+
+openapi-gen: ## Refresh the generated regions of api/openapi.yaml from module routes/DTOs.
+	go run ./cmd/app gen openapi --all
+
+openapi-check: ## Validate the spec + route drift and fail if the generated regions are stale.
+	go run ./cmd/app openapi:check
+
+generate: sqlc openapi openapi-gen ## Regenerate all generated code.
+
+gen-check: ## Verify generated code is current; fails on drift.
+	$(MAKE) sqlc openapi
+	git diff --exit-code -- internal/dbgen internal/contract
+	go run ./cmd/app gen openapi --all --check
+
+# ── Database ─────────────────────────────────────────────────────────────────
+db-up: ## Start the local Postgres via docker compose.
+	$(DOCKER_COMPOSE) up -d
+
+db-down: ## Stop the local Postgres.
+	$(DOCKER_COMPOSE) down
+
+migrate: ## Apply pending migrations.
+	go run ./cmd/app migrate
+
+migrate-status: ## Show applied and pending migrations.
+	go run ./cmd/app migrate:status
+
+migrate-rollback: ## Roll back the most recent migration.
+	go run ./cmd/app migrate:rollback
+
+seed: ## Seed permissions, default tenant/branch/roles and the super-admin user.
+	go run ./cmd/app db:seed
+
+fresh: ## Roll back everything, migrate and seed. Destructive.
+	go run ./cmd/app migrate:rollback 0
+	$(MAKE) migrate seed
+
+# ── Operations ───────────────────────────────────────────────────────────────
+health: ## Run the application health checks.
+	go run ./cmd/app health:check
+
+config: ## Print the effective configuration with secrets masked.
+	go run ./cmd/app config:show
+
+version: ## Print the build version.
+	go run ./cmd/app version
+
+# ── Cleanup ──────────────────────────────────────────────────────────────────
+clean: ## Remove build artifacts.
+	go clean
+	-$(RM) bin
+	-$(RM) tmp
+	-$(RM) coverage.out
+	-$(RM) coverage.html
+
+clean-all: clean ## Also remove local runtime state.
+	-$(RM) var
