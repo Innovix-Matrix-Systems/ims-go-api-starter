@@ -35,8 +35,10 @@ type ContractMismatch struct {
 
 // RouteDrift compares the routes of a chi router against an OpenAPI document
 // and returns the symmetric difference (empty when they agree). '/storage/*' is
-// excluded (not part of the JSON API); all-method registrations (chi.Handle)
-// accept whatever methods the spec declares for that path.
+// excluded (not part of the JSON API), and so are the developer dashboard's
+// static SPA routes ('/dev', '/dev/*') whose API surface is checked separately.
+// All-method registrations (chi.Handle) accept whatever methods the spec
+// declares for that path.
 func RouteDrift(router http.Handler, doc *openapi3.T) ([]ContractMismatch, error) {
 	mux, ok := router.(chi.Routes)
 	if !ok {
@@ -54,7 +56,7 @@ func RouteDrift(router http.Handler, doc *openapi3.T) ([]ContractMismatch, error
 
 	chiMethods := map[string]map[string]bool{}
 	if err := chi.Walk(mux, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		if strings.HasPrefix(route, "/storage/") {
+		if strings.HasPrefix(route, "/storage/") || route == "/dev" || route == "/dev/*" {
 			return nil
 		}
 		if chiMethods[route] == nil {

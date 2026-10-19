@@ -83,15 +83,16 @@ func (q *Queries) CountUsersWithRole(ctx context.Context, arg CountUsersWithRole
 }
 
 const createRole = `-- name: CreateRole :one
-INSERT INTO roles (tenant_id, name, guard_name, is_system, description, created_by, updated_by)
-VALUES ($1, $2, 'sanctum', $3, $4, $5, $6)
-RETURNING id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at
+INSERT INTO roles (tenant_id, name, guard_name, is_system, hidden, description, created_by, updated_by)
+VALUES ($1, $2, 'sanctum', $3, $4, $5, $6, $7)
+RETURNING id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden
 `
 
 type CreateRoleParams struct {
 	TenantID    *int64  `json:"tenant_id"`
 	Name        string  `json:"name"`
 	IsSystem    bool    `json:"is_system"`
+	Hidden      bool    `json:"hidden"`
 	Description *string `json:"description"`
 	CreatedBy   *int64  `json:"created_by"`
 	UpdatedBy   *int64  `json:"updated_by"`
@@ -102,6 +103,7 @@ func (q *Queries) CreateRole(ctx context.Context, arg CreateRoleParams) (Role, e
 		arg.TenantID,
 		arg.Name,
 		arg.IsSystem,
+		arg.Hidden,
 		arg.Description,
 		arg.CreatedBy,
 		arg.UpdatedBy,
@@ -118,6 +120,7 @@ func (q *Queries) CreateRole(ctx context.Context, arg CreateRoleParams) (Role, e
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Hidden,
 	)
 	return i, err
 }
@@ -135,7 +138,7 @@ func (q *Queries) DeleteRole(ctx context.Context, id int64) (int64, error) {
 }
 
 const getRole = `-- name: GetRole :one
-SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at FROM roles
+SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden FROM roles
 WHERE id = $1
   AND (tenant_id = $2 OR (tenant_id IS NULL AND is_system))
 `
@@ -159,12 +162,13 @@ func (q *Queries) GetRole(ctx context.Context, arg GetRoleParams) (Role, error) 
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Hidden,
 	)
 	return i, err
 }
 
 const getRoleByID = `-- name: GetRoleByID :one
-SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at FROM roles
+SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden FROM roles
 WHERE id = $1
 `
 
@@ -182,12 +186,13 @@ func (q *Queries) GetRoleByID(ctx context.Context, id int64) (Role, error) {
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Hidden,
 	)
 	return i, err
 }
 
 const getRoleByName = `-- name: GetRoleByName :one
-SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at FROM roles
+SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden FROM roles
 WHERE name = $1
   AND (tenant_id = $2 OR (tenant_id IS NULL AND is_system))
 ORDER BY tenant_id NULLS LAST
@@ -213,6 +218,7 @@ func (q *Queries) GetRoleByName(ctx context.Context, arg GetRoleByNameParams) (R
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Hidden,
 	)
 	return i, err
 }
@@ -258,8 +264,9 @@ func (q *Queries) ListRoleIDsByNames(ctx context.Context, arg ListRoleIDsByNames
 }
 
 const listRoles = `-- name: ListRoles :many
-SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at FROM roles
-WHERE tenant_id = $1 OR (tenant_id IS NULL AND is_system)
+SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden FROM roles
+WHERE (tenant_id = $1 OR (tenant_id IS NULL AND is_system))
+  AND hidden = false
 ORDER BY id
 `
 
@@ -283,6 +290,7 @@ func (q *Queries) ListRoles(ctx context.Context, tenantID *int64) ([]Role, error
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Hidden,
 		); err != nil {
 			return nil, err
 		}
@@ -386,6 +394,22 @@ func (q *Queries) RolePermissionIDs(ctx context.Context, roleID int64) ([]int64,
 	return items, nil
 }
 
+const setRoleHidden = `-- name: SetRoleHidden :exec
+UPDATE roles
+SET hidden = $1, updated_at = now()
+WHERE id = $2
+`
+
+type SetRoleHiddenParams struct {
+	Hidden bool  `json:"hidden"`
+	ID     int64 `json:"id"`
+}
+
+func (q *Queries) SetRoleHidden(ctx context.Context, arg SetRoleHiddenParams) error {
+	_, err := q.db.Exec(ctx, setRoleHidden, arg.Hidden, arg.ID)
+	return err
+}
+
 const updateRole = `-- name: UpdateRole :one
 UPDATE roles
 SET name        = $1,
@@ -393,7 +417,7 @@ SET name        = $1,
     updated_by  = $3,
     updated_at  = now()
 WHERE id = $4
-RETURNING id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at
+RETURNING id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden
 `
 
 type UpdateRoleParams struct {
@@ -422,6 +446,7 @@ func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (Role, e
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Hidden,
 	)
 	return i, err
 }
@@ -430,6 +455,7 @@ const userRoleRefs = `-- name: UserRoleRefs :many
 SELECT r.id, r.name, r.is_system FROM roles r
 JOIN model_has_roles mr ON mr.role_id = r.id
 WHERE mr.model_type = $1 AND mr.model_id = $2
+  AND r.hidden = false
 ORDER BY r.id
 `
 

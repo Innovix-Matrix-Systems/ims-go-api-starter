@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
@@ -31,17 +33,22 @@ type jobArgs struct {
 // Kind implements river.JobArgs.
 func (jobArgs) Kind() string { return riverArgsKind }
 
+// JobObserver receives worker-side execution outcomes and enqueue results
+// (used by telemetry). It is safe to call from any goroutine.
+type JobObserver interface {
+	JobEnqueued(ctx context.Context, kind, queue string, jobID int64, duration time.Duration, err error)
+	JobFinished(ctx context.Context, kind, queue string, jobID int64, duration time.Duration, err error)
+}
+
 type dispatcherWorker struct {
 	river.WorkerDefaults[jobArgs]
-	registry *Registry
-	cfg      config.Queue
-	onDone   chan<- struct{}
+	engine *RiverEngine
 }
 
 // Work implements river.Worker: it resolves the typed definition, validates the
 // payload, restores the tenant scope from the envelope and calls the handler.
 func (w *dispatcherWorker) Work(ctx context.Context, job *river.Job[jobArgs]) error {
-	def, ok := w.registry.Definition(job.Args.JobKind)
+	def, ok := w.engine.registry.Definition(job.Args.JobKind)
 	if !ok {
 		return river.JobCancel(fmt.Errorf("unknown job kind %q", job.Args.JobKind))
 	}
@@ -56,10 +63,14 @@ func (w *dispatcherWorker) Work(ctx context.Context, job *river.Job[jobArgs]) er
 			BranchID: job.Args.BranchID,
 		})
 	}
+	started := time.Now()
 	err := def.Handle(ctx, job.Args.Payload)
-	if w.onDone != nil {
+	if observer := w.engine.observerFor(); observer != nil {
+		observer.JobFinished(ctx, job.Args.JobKind, job.Queue, job.ID, time.Since(started), err)
+	}
+	if w.engine.done != nil {
 		select {
-		case w.onDone <- struct{}{}:
+		case w.engine.done <- struct{}{}:
 		default:
 		}
 	}
@@ -69,22 +80,25 @@ func (w *dispatcherWorker) Work(ctx context.Context, job *river.Job[jobArgs]) er
 // Timeout implements river.Worker using the per-kind timeout, falling back to
 // the job's queue channel timeout.
 func (w *dispatcherWorker) Timeout(job *river.Job[jobArgs]) time.Duration {
-	def, ok := w.registry.Definition(job.Args.JobKind)
+	def, ok := w.engine.registry.Definition(job.Args.JobKind)
 	if !ok {
 		return 0
 	}
 	if def.Timeout > 0 {
 		return def.Timeout
 	}
-	return ChannelConfig(w.cfg, def.Queue).Timeout
+	return ChannelConfig(w.engine.cfg, def.Queue).Timeout
 }
 
 // RiverEngine runs typed jobs on River with transactional enqueue.
 type RiverEngine struct {
-	registry *Registry
-	cfg      config.Queue
-	client   *river.Client[pgx.Tx]
-	done     chan struct{}
+	registry   *Registry
+	cfg        config.Queue
+	client     *river.Client[pgx.Tx]
+	pool       *pgxpool.Pool
+	done       chan struct{}
+	observerMu sync.RWMutex
+	observer   JobObserver
 }
 
 // RiverOptions overrides worker configuration for a specific process
@@ -114,11 +128,12 @@ func NewRiverEngine(pool *pgxpool.Pool, registry *Registry, cfg config.Queue, lo
 	engine := &RiverEngine{
 		registry: registry,
 		cfg:      cfg,
+		pool:     pool,
 		done:     make(chan struct{}, 1),
 	}
 
 	workers := river.NewWorkers()
-	river.AddWorker(workers, &dispatcherWorker{registry: registry, cfg: cfg, onDone: engine.done})
+	river.AddWorker(workers, &dispatcherWorker{engine: engine})
 
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{
 		Queues:  queueConfig,
@@ -135,29 +150,74 @@ func NewRiverEngine(pool *pgxpool.Pool, registry *Registry, cfg config.Queue, lo
 // Kind implements Engine.
 func (e *RiverEngine) Kind() string { return "river" }
 
+// SetObserver registers a worker-side execution observer (nil disables it).
+func (e *RiverEngine) SetObserver(observer JobObserver) {
+	e.observerMu.Lock()
+	e.observer = observer
+	e.observerMu.Unlock()
+}
+
+func (e *RiverEngine) observerFor() JobObserver {
+	e.observerMu.RLock()
+	defer e.observerMu.RUnlock()
+	return e.observer
+}
+
 // Enqueue implements Engine.
 func (e *RiverEngine) Enqueue(ctx context.Context, kind string, payload any, opts EnqueueOptions) error {
+	started := time.Now()
 	args, insertOpts, err := e.prepare(ctx, kind, payload, opts)
 	if err != nil {
+		e.notifyEnqueued(ctx, kind, "", 0, started, err)
 		return err
 	}
-	if _, err := e.client.Insert(ctx, args, insertOpts); err != nil {
-		return database.MapError("queue.enqueue", err)
+	result, err := e.client.Insert(ctx, args, insertOpts)
+	jobID := insertJobID(result)
+	if err != nil {
+		mapped := database.MapError("queue.enqueue", err)
+		e.notifyEnqueued(ctx, kind, insertOpts.Queue, jobID, started, mapped)
+		return mapped
 	}
+	e.notifyEnqueued(ctx, kind, insertOpts.Queue, jobID, started, nil)
 	return nil
 }
 
 // EnqueueTx implements Engine with River's transactional insert: the job is
 // committed with the caller's transaction or not at all.
 func (e *RiverEngine) EnqueueTx(ctx context.Context, tx pgx.Tx, kind string, payload any, opts EnqueueOptions) error {
+	started := time.Now()
 	args, insertOpts, err := e.prepare(ctx, kind, payload, opts)
 	if err != nil {
+		e.notifyEnqueued(ctx, kind, "", 0, started, err)
 		return err
 	}
-	if _, err := e.client.InsertTx(ctx, tx, args, insertOpts); err != nil {
-		return database.MapError("queue.enqueue_tx", err)
+	result, err := e.client.InsertTx(ctx, tx, args, insertOpts)
+	jobID := insertJobID(result)
+	if err != nil {
+		mapped := database.MapError("queue.enqueue_tx", err)
+		e.notifyEnqueued(ctx, kind, insertOpts.Queue, jobID, started, mapped)
+		return mapped
 	}
+	e.notifyEnqueued(ctx, kind, insertOpts.Queue, jobID, started, nil)
 	return nil
+}
+
+func insertJobID(result *rivertype.JobInsertResult) int64 {
+	if result == nil || result.Job == nil {
+		return 0
+	}
+	return result.Job.ID
+}
+
+func (e *RiverEngine) notifyEnqueued(ctx context.Context, kind, queue string, jobID int64, started time.Time, err error) {
+	observer := e.observerFor()
+	if observer == nil {
+		return
+	}
+	if queue == "" {
+		queue = "default"
+	}
+	observer.JobEnqueued(ctx, kind, queue, jobID, time.Since(started), err)
 }
 
 // Start begins worker processing and blocks until ctx is cancelled. River's

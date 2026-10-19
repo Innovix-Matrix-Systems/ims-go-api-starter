@@ -16,13 +16,19 @@ LIMIT 1;
 
 -- name: ListRoles :many
 SELECT * FROM roles
-WHERE tenant_id = @tenant_id OR (tenant_id IS NULL AND is_system)
+WHERE (tenant_id = @tenant_id OR (tenant_id IS NULL AND is_system))
+  AND hidden = false
 ORDER BY id;
 
 -- name: CreateRole :one
-INSERT INTO roles (tenant_id, name, guard_name, is_system, description, created_by, updated_by)
-VALUES (@tenant_id, @name, 'sanctum', @is_system, @description, @created_by, @updated_by)
+INSERT INTO roles (tenant_id, name, guard_name, is_system, hidden, description, created_by, updated_by)
+VALUES (@tenant_id, @name, 'sanctum', @is_system, @hidden, @description, @created_by, @updated_by)
 RETURNING *;
+
+-- name: SetRoleHidden :exec
+UPDATE roles
+SET hidden = @hidden, updated_at = now()
+WHERE id = @id;
 
 -- name: UpdateRole :one
 UPDATE roles
@@ -71,6 +77,7 @@ ON CONFLICT DO NOTHING;
 SELECT r.id, r.name, r.is_system FROM roles r
 JOIN model_has_roles mr ON mr.role_id = r.id
 WHERE mr.model_type = @model_type AND mr.model_id = @model_id
+  AND r.hidden = false
 ORDER BY r.id;
 
 -- name: ListUserIDsWithRole :many

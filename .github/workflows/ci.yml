@@ -44,6 +44,35 @@ jobs:
         with:
           version: v1.64.8
 
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/dev/package-lock.json
+
+      - name: install
+        run: npm ci
+        working-directory: web/dev
+
+      - name: typecheck
+        run: npm run typecheck
+        working-directory: web/dev
+
+      - name: build
+        run: npm run build
+        working-directory: web/dev
+
+      - name: generated OpenAPI types are current
+        run: |
+          npm run openapi:gen
+          git diff --exit-code -- src/api/schema.d.ts
+        working-directory: web/dev
+
   cross-compile:
     runs-on: ubuntu-latest
     strategy:

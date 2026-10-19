@@ -34,7 +34,7 @@ func (s *RoleService) Get(ctx context.Context, tenantID, id int64) (*Role, error
 
 // Create adds a tenant role.
 func (s *RoleService) Create(ctx context.Context, tenantID, actorID int64, name string, description *string) (*Role, error) {
-	if name == authz.SuperAdminRole {
+	if isReservedRoleName(name) {
 		return nil, apperr.Validation(map[string][]string{"name": {"The name has already been taken."}})
 	}
 	if _, err := s.roles.GetByName(ctx, tenantID, name); err == nil {
@@ -82,7 +82,7 @@ func (s *RoleService) Update(ctx context.Context, tenantID, id, actorID int64, n
 	if role.IsSystem {
 		return nil, apperr.New(apperr.Forbidden, "System roles cannot be modified.")
 	}
-	if name == authz.SuperAdminRole {
+	if name == authz.SuperAdminRole || name == authz.DeveloperRole {
 		return nil, apperr.Validation(map[string][]string{"name": {"The name has already been taken."}})
 	}
 	updated, err := s.roles.Update(ctx, id, name, description, &actorID)
@@ -236,6 +236,10 @@ func (s *RoleService) CreateDefaultRolesForTenant(ctx context.Context, tenantID 
 		ids = append(ids, permission.ID)
 	}
 	return s.roles.AssignPermissions(ctx, role.ID, ids)
+}
+
+func isReservedRoleName(name string) bool {
+	return name == authz.SuperAdminRole || name == authz.DeveloperRole
 }
 
 // PermissionService implements permission business rules.

@@ -13,14 +13,17 @@ developer guide is [`docs/developer-guide.md`](docs/developer-guide.md) and per-
   CLI — all in **one binary** (`cmd/app`), deployed with systemd (no containers).
 - **Implemented phases:** 0 (kernel), 1 (database), 2 (auth/tenancy/RBAC), 3 (platform), 4
   (billing), 5 (notifications, i18n, files, import/export, mail), 6 (contract/observability),
-  7 (deploy/generators), 10 (OpenAPI spec generator), 11 (settings/groups/feature flags).
-  Next: 8–9 (React dashboards).
+  7 (deploy/generators), 10 (OpenAPI spec generator), 11 (settings/groups/feature flags),
+  9 core (developer dashboard: hidden Developer access, queue admin, telemetry capture, `/dev`
+  SPA with Telescope/queue/logs/commands/system screens). Next: 8, then 9 management panels
+  (sessions/settings/flags/files/developers).
 
 ## Golden commands
 
 ```bash
 make help                  # list every task (dev, build, test, lint, generate, db, ...)
-make dev                   # hot-reload API via air (.air.toml; runs migrations first)
+make dev                   # API + SPA hot reload (air + Vite HMR; UI at localhost:5173/dev/)
+make dev-api               # API only, hot reload via air
 make build                 # bin/ims (static-ish, CGO-free)
 make run                   # run the API once (loads .env if present; defaults otherwise)
 make check                 # format-check + vet + lint + unit tests
@@ -45,6 +48,7 @@ green) plus the integration suite when a DSN is available. Never commit; the use
 
 ```text
 cmd/app/                      Single binary entry point
+web/dev/                      TanStack Start developer dashboard (SPA mode, embedded via go:embed)
 internal/
   app/        composition root: platform.go (shared deps), wiring.go (HTTP deps), routes.go
               (middleware chain + route groups), lifecycle.go

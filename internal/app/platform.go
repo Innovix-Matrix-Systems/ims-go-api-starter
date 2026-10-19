@@ -17,6 +17,7 @@ import (
 	billingservice "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/service"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/branches"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/dataprocessing"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/dev"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/files"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/identity"
@@ -29,6 +30,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/queue"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/scheduler"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/storage"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/telemetry"
 )
 
 // Platform is the infrastructure dependency set shared by the HTTP API and the
@@ -42,7 +44,9 @@ type Platform struct {
 	Cache            cache.Store
 	Storage          *storage.Registry
 	Queue            queue.Engine
+	QueueAdmin       queue.Admin
 	QueueRegistry    *queue.Registry
+	Telemetry        *telemetry.Collector
 	ScheduleRegistry *scheduler.Registry
 	ScheduleRunner   *scheduler.Runner
 	Checker          *authz.Checker
@@ -66,7 +70,8 @@ type Platform struct {
 // NewPlatform constructs the platform dependencies. Pools connect lazily, so
 // this succeeds even when the database is temporarily unavailable.
 func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), error) {
-	dbRegistry, err := database.Open(context.Background(), cfg.Database)
+	lazyTracer := telemetry.NewLazyTracer()
+	dbRegistry, err := database.Open(context.Background(), cfg.Database, database.WithTracer(lazyTracer))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,6 +82,18 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		dbRegistry.Close()
 		return nil, nil, err
 	}
+
+	// Telemetry: the collector's sink writes through the same pools it
+	// observes, so the tracer attaches lazily once the collector exists.
+	collector := telemetry.NewCollector(telemetry.CaptureConfig{
+		Enabled:      cfg.DevDashboard.Enabled,
+		Capture:      cfg.DevDashboard.Capture,
+		SampleRate:   cfg.DevDashboard.SampleRate,
+		MaxBodyBytes: cfg.DevDashboard.MaxBodyBytes,
+	}, telemetry.NewRedactor(cfg.DevDashboard.RedactKeys), dev.NewTelemetrySink(txManager.Queries()), logger)
+	lazyTracer.Attach(collector)
+	logger = slog.New(telemetry.WrapLogHandler(logger.Handler(), collector))
+	store = telemetry.WrapCache(store, collector)
 
 	queueRegistry := queue.NewRegistry()
 	scheduleRegistry := scheduler.NewRegistry()
@@ -89,6 +106,9 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		dbRegistry.Close()
 		return nil, nil, err
 	}
+	// Queues are observed through RiverEngine's JobObserver (which carries the
+	// inserted job id for deep links); no interface decorator is needed here.
+	telemetryQueue := queueEngine
 
 	mailDriver, err := mail.New(cfg.Mail, logger, cfg.IsDebug())
 	if err != nil {
@@ -105,7 +125,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 	notificationsService := notifications.NewService(
 		notifications.NewRepository(txManager.Queries(), txManager),
 		store,
-		queueEngine,
+		telemetryQueue,
 		settingsService,
 		logger,
 	)
@@ -149,7 +169,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 	checker := authz.NewChecker(txManager.Queries(), store)
 	authenticator := authn.NewOpaqueAuthenticator(txManager.Queries(), identityRepo, cfg.Auth)
 	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard)
-	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, queueEngine, cfg, logger)
+	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, telemetryQueue, cfg, logger)
 	if err := exchangeService.RegisterJobs(queueRegistry); err != nil {
 		cacheCleanup()
 		dbRegistry.Close()
@@ -231,6 +251,30 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		return nil, nil, err
 	}
 
+	if cfg.DevDashboard.Enabled {
+		telemetryRepo := dev.NewTelemetryRepository(txManager.Queries())
+		retentionDays := cfg.DevDashboard.RetentionDays
+		if err := scheduleRegistry.Register(scheduler.Task{
+			ID:          "devdashboard.prune",
+			Spec:        "0 3 * * *",
+			Description: "Deletes developer dashboard telemetry older than the retention window.",
+			Timeout:     10 * time.Minute,
+			Overlap:     scheduler.OverlapSkip,
+			Run: func(ctx context.Context) error {
+				deleted, err := telemetryRepo.Prune(ctx, retentionDays)
+				if err != nil {
+					return err
+				}
+				logger.Info("dev dashboard telemetry pruned", "deleted", deleted, "retention_days", retentionDays)
+				return nil
+			},
+		}); err != nil {
+			cacheCleanup()
+			dbRegistry.Close()
+			return nil, nil, err
+		}
+	}
+
 	platform := &Platform{
 		Config:           cfg,
 		Logger:           logger,
@@ -238,8 +282,9 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		Tx:               txManager,
 		Cache:            store,
 		Storage:          storageRegistry,
-		Queue:            queueEngine,
+		Queue:            telemetryQueue,
 		QueueRegistry:    queueRegistry,
+		Telemetry:        collector,
 		ScheduleRegistry: scheduleRegistry,
 		ScheduleRunner:   runner,
 		Checker:          checker,
@@ -259,7 +304,12 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		BillingApprovals: billingApprovalService,
 		BillingGuard:     billingGuard,
 	}
+	if riverEngine, ok := queueEngine.(*queue.RiverEngine); ok {
+		riverEngine.SetObserver(collector)
+		platform.QueueAdmin = riverEngine.Admin()
+	}
 	cleanup := func() {
+		collector.Close()
 		cacheCleanup()
 		dbRegistry.Close()
 	}
@@ -268,7 +318,14 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 
 // NewQueueEngine selects the configured queue engine.
 func (p *Platform) NewQueueEngine(logger *slog.Logger) (queue.Engine, error) {
-	return newQueueEngine(p.Config, p.DB.Primary().Pool, p.QueueRegistry, logger)
+	engine, err := newQueueEngine(p.Config, p.DB.Primary().Pool, p.QueueRegistry, logger)
+	if err != nil {
+		return nil, err
+	}
+	if riverEngine, ok := engine.(*queue.RiverEngine); ok {
+		riverEngine.SetObserver(p.Telemetry)
+	}
+	return engine, nil
 }
 
 func newQueueEngine(cfg *config.Config, pool *pgxpool.Pool, registry *queue.Registry, logger *slog.Logger) (queue.Engine, error) {

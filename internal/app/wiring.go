@@ -2,7 +2,10 @@ package app
 
 import (
 	"log/slog"
+	"net/http"
 	"time"
+
+	webdev "github.com/Innovix-Matrix-Systems/ims-go-api-starter/web/dev"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
@@ -12,6 +15,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/branches"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/dataprocessing"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/dev"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/files"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/identity"
@@ -29,6 +33,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/queue"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/ratelimit"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/scheduler"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/webui"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/version"
 )
@@ -66,6 +71,8 @@ type Dependencies struct {
 	Processing    *dataprocessing.Handler
 	Settings      *settings.Handler
 	Flags         *featureflags.Handler
+	Dev           *dev.Handler
+	DevUI         *webui.Handler
 }
 
 // NewDependencies constructs the dependency graph for the HTTP API mode. The
@@ -75,6 +82,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	if err != nil {
 		return nil, nil, err
 	}
+	logger = platform.Logger
 
 	responder := httpx.NewResponder(cfg.App.URL, cfg.App.Env, cfg.App.Debug)
 	binder := httpx.NewBinder(cfg.HTTP.MaxRequestBodyBytes, cfg.HTTP.StrictJSONFields)
@@ -101,6 +109,13 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	healthHandler := health.NewHandler(healthRegistry, 30*time.Second)
 
 	limiter := ratelimit.NewCacheLimiter(store, cfg.RateLimit.PerMinute, time.Minute)
+
+	distFS, err := webdev.Dist()
+	if err != nil {
+		platformCleanup()
+		return nil, nil, err
+	}
+	devUI := webui.New(http.FS(distFS))
 
 	// Repositories
 	identityRepo := platform.IdentityRepo
@@ -165,6 +180,8 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 		Processing:    dataprocessing.NewHandler(platform.Processing, platform.Settings, checker, binder, validator, responder),
 		Settings:      settings.NewHandler(platform.Settings, checker, binder, validator, responder),
 		Flags:         featureflags.NewHandler(platform.FeatureFlags, checker, binder, validator, responder),
+		Dev:           dev.NewHandler(checker, permissionService, platform.QueueAdmin, dev.NewActionRepository(queries), dev.NewTelemetryRepository(queries), platform.Telemetry, logger, cfg.DevDashboard.RetentionDays, binder, validator, responder),
+		DevUI:         devUI,
 		Billing: billing.NewHandler(
 			platform.BillingPackages,
 			platform.BillingSubs,

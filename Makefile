@@ -33,11 +33,11 @@ else
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help tools env build dev run serve queue schedule test test-race test-cover test-integration \
+.PHONY: help tools env build build-all dev dev-api run serve queue schedule test test-race test-cover test-integration \
         vet format format-check lint lint-fix tidy check \
         sqlc openapi openapi-gen openapi-check generate gen-check \
         db-up db-down migrate migrate-status migrate-rollback seed fresh \
-        health config version clean clean-all
+        health config version web-build web-typecheck dev-web clean clean-all
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 help:
@@ -45,11 +45,14 @@ help:
 	@echo --- Setup ---
 	@echo   make tools             Install dev tools: air, golangci-lint
 	@echo --- Develop ---
-	@echo   make dev               Run the API with hot reload via air
+	@echo   make dev               Run API + SPA with hot reload (air + Vite)
+	@echo   make dev-api           Run the API only with air
 	@echo   make run               Run the API once with go run
 	@echo   make queue             Run the queue worker with go run
 	@echo   make schedule          Run the scheduler daemon with go run
 	@echo   make build             Build the release binary into bin/
+	@echo   make build-all         Build the SPA and then the Go binary
+	@echo   make dev-web           Run the developer dashboard SPA on :5173
 	@echo --- Quality ---
 	@echo   make test              Unit tests; integration tests skip without a DSN
 	@echo   make test-race         Unit tests with the race detector
@@ -96,7 +99,23 @@ env: ## Warn when .env is missing.
 build: ## Build the release binary with a baked-in version.
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/app
 
-dev: env ## Run the API with hot reload. Requires air; see .air.toml.
+build-all: web-build build ## Build the developer SPA, then the Go binary.
+
+web-build: ## Build the developer SPA into web/dev/dist (embedded by Go).
+	npm --prefix web/dev ci
+	npm --prefix web/dev run build
+
+web-typecheck: ## Type-check the developer SPA.
+	npm --prefix web/dev run typecheck
+
+dev-web: ## Run the SPA dev server on :5173 with /dev/api proxied to :8080.
+	npm --prefix web/dev run dev
+
+dev: env ## Run the API and the SPA dev server with hot reload.
+	go run ./cmd/app migrate
+	node web/dev/scripts/dev.mjs
+
+dev-api: env ## Run only the API with hot reload (air).
 	go run ./cmd/app migrate
 	air
 

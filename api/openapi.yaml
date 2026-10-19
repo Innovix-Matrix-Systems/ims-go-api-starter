@@ -48,6 +48,8 @@ tags:
     description: Grouped settings with global and tenant targets.
   - name: Feature Flags
     description: Boolean feature flags with global, tenant and user targets.
+  - name: Dev
+    description: Developer dashboard identity and (later) telemetry/queue admin API.
   - name: Ops
     description: Liveness, health, docs and metrics.
 
@@ -2505,6 +2507,444 @@ paths:
         "404": *notFound
         "422": *validationFailed
 
+  # ─── Developer dashboard (hand-written: the generator only emits /api/v1) ──
+  /dev/api/me:
+    get:
+      tags: [Dev]
+      summary: Current identity and effective permissions for the dev dashboard
+      operationId: devMe
+      responses:
+        "200":
+          description: Identity plus granted permission names.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [user_id, name, email, is_super_admin, permissions]
+                    properties:
+                      user_id: {type: integer, format: int64}
+                      name: {type: string}
+                      email: {type: string, format: email}
+                      tenant_id: {type: integer, format: int64, nullable: true}
+                      branch_id: {type: integer, format: int64, nullable: true}
+                      is_super_admin: {type: boolean}
+                      permissions:
+                        type: array
+                        items: {type: string}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/actions:
+    get:
+      tags: [Dev]
+      summary: Developer action audit log
+      operationId: devListActions
+      parameters:
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+        - name: cursor
+          in: query
+          description: Last seen action id (exclusive).
+          schema: {type: string}
+      responses:
+        "200":
+          description: Cursor-paginated action log.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevActionListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/simulate-events:
+    post:
+      tags: [Dev]
+      summary: Generate synthetic logs and an exception for dashboard testing
+      operationId: devSimulateEvents
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                logs: {type: integer, minimum: 0, maximum: 20, default: 3}
+                level: {type: string, enum: [warn, error], default: warn}
+                exception: {type: boolean, default: true}
+      responses:
+        "200":
+          description: The simulated request id plus what was recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [request_id, logs, exception, level]
+                    properties:
+                      request_id: {type: string}
+                      logs: {type: integer}
+                      exception: {type: boolean}
+                      level: {type: string}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "409": *conflict
+        "422": *validationFailed
+
+  /dev/api/queue/queues:
+    get:
+      tags: [Dev]
+      summary: Queues with depth counters
+      operationId: devListQueues
+      responses:
+        "200":
+          description: Queues with totals, active/failed counters and pause state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevQueueListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "503": *serviceUnavailable
+
+  /dev/api/queue/queues/{name}/pause:
+    post:
+      tags: [Dev]
+      summary: Pause a queue
+      operationId: devPauseQueue
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: Queue paused.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "503": *serviceUnavailable
+
+  /dev/api/queue/queues/{name}/resume:
+    post:
+      tags: [Dev]
+      summary: Resume a queue
+      operationId: devResumeQueue
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: Queue resumed.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "503": *serviceUnavailable
+
+  /dev/api/queue/jobs:
+    get:
+      tags: [Dev]
+      summary: List queue jobs
+      operationId: devListJobs
+      parameters:
+        - name: queue
+          in: query
+          schema: {type: string}
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [available, cancelled, completed, discarded, pending, retryable, running, scheduled]
+        - name: kind
+          in: query
+          description: Application job kind decoded from the ims.job envelope.
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+        - name: cursor
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Cursor-paginated jobs, newest first.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevJobListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+        "503": *serviceUnavailable
+
+  /dev/api/queue/jobs/{id}:
+    get:
+      tags: [Dev]
+      summary: Get a queue job
+      operationId: devGetJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: The job with decoded application kind and error history.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "503": *serviceUnavailable
+    delete:
+      tags: [Dev]
+      summary: Delete a queue job
+      operationId: devDeleteJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: The deleted job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "409": *conflict
+        "503": *serviceUnavailable
+
+  /dev/api/queue/jobs/{id}/retry:
+    post:
+      tags: [Dev]
+      summary: Retry a job immediately
+      operationId: devRetryJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: The retried job (now available).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "503": *serviceUnavailable
+
+  /dev/api/queue/jobs/{id}/cancel:
+    post:
+      tags: [Dev]
+      summary: Cancel a job
+      operationId: devCancelJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: The cancelled job.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevJobEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "503": *serviceUnavailable
+
+  /dev/api/requests:
+    get:
+      tags: [Dev]
+      summary: List captured HTTP requests
+      operationId: devListRequests
+      parameters:
+        - name: method
+          in: query
+          schema: {type: string}
+        - name: status
+          in: query
+          schema: {type: integer, minimum: 100, maximum: 599}
+        - name: search
+          in: query
+          description: Substring match on the request path.
+          schema: {type: string}
+        - name: tenant_id
+          in: query
+          schema: {type: integer, format: int64}
+        - name: user_id
+          in: query
+          schema: {type: integer, format: int64}
+        - name: request_id
+          in: query
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+        - name: cursor
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Cursor-paginated captured requests, newest first.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevRequestListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /dev/api/requests/{id}:
+    get:
+      tags: [Dev]
+      summary: Captured request with correlated SQL, cache, queue, logs and exceptions
+      operationId: devGetRequest
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: Full request detail with redacted payloads.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevRequestDetailEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/logs:
+    get:
+      tags: [Dev]
+      summary: Captured application logs
+      operationId: devListLogs
+      parameters:
+        - name: level
+          in: query
+          schema: {type: string}
+        - name: request_id
+          in: query
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+        - name: cursor
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Cursor-paginated logs, newest first.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevLogListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/logs/{id}:
+    get:
+      tags: [Dev]
+      summary: Captured log detail
+      operationId: devGetLog
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: The captured log entry.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevLogEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/exceptions:
+    get:
+      tags: [Dev]
+      summary: Captured exceptions and panics
+      operationId: devListExceptions
+      parameters:
+        - name: request_id
+          in: query
+          schema: {type: string}
+        - name: limit
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 25}
+        - name: cursor
+          in: query
+          schema: {type: string}
+      responses:
+        "200":
+          description: Cursor-paginated exceptions, newest first.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevExceptionListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/exceptions/{id}:
+    get:
+      tags: [Dev]
+      summary: Captured exception detail
+      operationId: devGetException
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: {type: integer, format: int64}
+      responses:
+        "200":
+          description: The captured exception entry.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevExceptionEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/telemetry/prune:
+    post:
+      tags: [Dev]
+      summary: Delete telemetry older than the retention window
+      operationId: devPruneTelemetry
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/DevPruneRequest"}
+      responses:
+        "200":
+          description: Deleted row counts per table.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/DevPruneEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
   # ─── BEGIN GENERATED PATHS (ims gen openapi) — resources:  — do not edit ───
   # ─── END GENERATED PATHS ───
 components:
@@ -3717,5 +4157,284 @@ components:
       type: object
       properties:
         group_id: {type: integer, format: int64, nullable: true}
+
+    # ─── Developer dashboard (hand-written) ──────────────────────────────
+    DevAction:
+      type: object
+      required: [id, actor_user_id, action, status, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        actor_user_id: {type: integer, format: int64}
+        action: {type: string}
+        target: {type: string, nullable: true}
+        params: {type: object, additionalProperties: true}
+        status: {type: string, enum: [ok, error]}
+        error_message: {type: string, nullable: true}
+        duration_ms: {type: integer}
+        created_at: {type: string, format: date-time}
+
+    DevActionListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/DevAction"}
+        links: {type: object, nullable: true}
+        meta:
+          type: object
+          properties:
+            next_cursor: {type: string}
+
+    DevQueue:
+      type: object
+      required: [name, total, active, failed]
+      properties:
+        name: {type: string}
+        paused_at: {type: string, format: date-time, nullable: true}
+        total: {type: integer, format: int64}
+        active: {type: integer, format: int64}
+        failed: {type: integer, format: int64}
+
+    DevQueueListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/DevQueue"}
+
+    DevJob:
+      type: object
+      required: [id, kind, queue, state, priority, attempt, max_attempts, args, created_at, scheduled_at]
+      properties:
+        id: {type: integer, format: int64}
+        kind: {type: string}
+        river_kind: {type: string}
+        queue: {type: string}
+        state: {type: string}
+        priority: {type: integer}
+        attempt: {type: integer}
+        max_attempts: {type: integer}
+        args: {type: object, additionalProperties: true}
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              at: {type: string, format: date-time}
+              attempt: {type: integer}
+              error: {type: string}
+        tags:
+          type: array
+          items: {type: string}
+        created_at: {type: string, format: date-time}
+        scheduled_at: {type: string, format: date-time}
+        attempted_at: {type: string, format: date-time, nullable: true}
+        finalized_at: {type: string, format: date-time, nullable: true}
+
+    DevJobEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/DevJob"}
+
+    DevJobListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/DevJob"}
+        links: {type: object, nullable: true}
+        meta:
+          type: object
+          properties:
+            next_cursor: {type: string}
+
+    DevRequestSummary:
+      type: object
+      required: [id, request_id, method, path, route, status, duration_ms, request_bytes, response_bytes, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        request_id: {type: string}
+        method: {type: string}
+        path: {type: string}
+        route: {type: string}
+        status: {type: integer}
+        duration_ms: {type: number}
+        request_bytes: {type: integer, format: int64}
+        response_bytes: {type: integer, format: int64}
+        user_id: {type: integer, format: int64, nullable: true}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        ip: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+
+    DevRequest:
+      allOf:
+        - $ref: "#/components/schemas/DevRequestSummary"
+        - type: object
+          properties:
+            branch_id: {type: integer, format: int64, nullable: true}
+            user_agent: {type: string, nullable: true}
+            headers: {type: object, additionalProperties: true}
+            request_body: {nullable: true}
+            response_body: {nullable: true}
+
+    DevQuery:
+      type: object
+      required: [id, sql, duration_ms, row_count, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        request_id: {type: string, nullable: true}
+        sql: {type: string}
+        args: {nullable: true}
+        duration_ms: {type: number}
+        row_count: {type: integer, format: int64}
+        error: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+
+    DevCacheEvent:
+      type: object
+      required: [id, operation, key, duration_ms, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        request_id: {type: string, nullable: true}
+        operation: {type: string}
+        key: {type: string}
+        hit: {type: boolean, nullable: true}
+        duration_ms: {type: number}
+        created_at: {type: string, format: date-time}
+
+    DevQueueEvent:
+      type: object
+      required: [id, event, queue, kind, duration_ms, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        request_id: {type: string, nullable: true}
+        event: {type: string}
+        queue: {type: string}
+        kind: {type: string}
+        job_id: {type: integer, format: int64, nullable: true}
+        duration_ms: {type: number}
+        error: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+
+    DevLog:
+      type: object
+      required: [id, level, message, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        request_id: {type: string, nullable: true}
+        level: {type: string}
+        message: {type: string}
+        attributes: {nullable: true}
+        created_at: {type: string, format: date-time}
+
+    DevException:
+      type: object
+      required: [id, class, message, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        request_id: {type: string, nullable: true}
+        class: {type: string}
+        message: {type: string}
+        stack: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+
+    DevLogEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/DevLog"}
+
+    DevExceptionEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/DevException"}
+
+    DevRequestDetail:
+      type: object
+      required: [request, queries, cache_events, queue_events, logs, exceptions]
+      properties:
+        request: {$ref: "#/components/schemas/DevRequest"}
+        queries:
+          type: array
+          items: {$ref: "#/components/schemas/DevQuery"}
+        cache_events:
+          type: array
+          items: {$ref: "#/components/schemas/DevCacheEvent"}
+        queue_events:
+          type: array
+          items: {$ref: "#/components/schemas/DevQueueEvent"}
+        logs:
+          type: array
+          items: {$ref: "#/components/schemas/DevLog"}
+        exceptions:
+          type: array
+          items: {$ref: "#/components/schemas/DevException"}
+
+    DevRequestListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/DevRequestSummary"}
+        links: {type: object, nullable: true}
+        meta:
+          type: object
+          properties:
+            next_cursor: {type: string}
+
+    DevRequestDetailEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/DevRequestDetail"}
+
+    DevLogListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/DevLog"}
+        links: {type: object, nullable: true}
+        meta:
+          type: object
+          properties:
+            next_cursor: {type: string}
+
+    DevExceptionListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/DevException"}
+        links: {type: object, nullable: true}
+        meta:
+          type: object
+          properties:
+            next_cursor: {type: string}
+
+    DevPruneRequest:
+      type: object
+      properties:
+        retention_days: {type: integer, minimum: 1, maximum: 3650}
+
+    DevPruneEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            retention_days: {type: integer}
+            deleted:
+              type: object
+              additionalProperties: {type: integer, format: int64}
     # ─── BEGIN GENERATED SCHEMAS (ims gen openapi) — do not edit ───
     # ─── END GENERATED SCHEMAS ───

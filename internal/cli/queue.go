@@ -68,6 +68,9 @@ func newQueueWorkCommand(state *State) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if platform.Telemetry != nil {
+				engine.SetObserver(platform.Telemetry)
+			}
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()

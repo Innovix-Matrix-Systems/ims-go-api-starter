@@ -25,6 +25,11 @@ import (
 // SuperAdminEmail is the seeded super-admin account e-mail.
 const SuperAdminEmail = "superadmin@ims.com"
 
+// DeveloperEmail is the seeded developer account e-mail. The account holds the
+// hidden Developer role (every catalog permission) and is the non-super-admin
+// access path to the developer dashboard.
+const DeveloperEmail = "developer@ims.com"
+
 // Run executes the full, idempotent seed.
 func Run(ctx context.Context, cfg *config.Config, queries *dbgen.Queries, tx *database.TxManager, checker *authz.Checker, logger *slog.Logger) error {
 	permRepo := access.NewPermissionRepository(queries)
@@ -46,6 +51,14 @@ func Run(ctx context.Context, cfg *config.Config, queries *dbgen.Queries, tx *da
 		return err
 	}
 	if err := assignAllPermissions(ctx, roleRepo, permRepo, superRole.ID); err != nil {
+		return err
+	}
+
+	devRole, err := ensureDeveloperRole(ctx, roleRepo)
+	if err != nil {
+		return err
+	}
+	if err := assignAllPermissions(ctx, roleRepo, permRepo, devRole.ID); err != nil {
 		return err
 	}
 
@@ -75,10 +88,14 @@ func Run(ctx context.Context, cfg *config.Config, queries *dbgen.Queries, tx *da
 	if err := ensureSuperAdminUser(ctx, cfg, userRepo, checker, superRole.ID, logger); err != nil {
 		return err
 	}
+	if err := ensureDeveloperUser(ctx, cfg, userRepo, checker, devRole.ID, logger); err != nil {
+		return err
+	}
 
 	logger.Info("seeding completed",
 		"tenant_id", tenant.ID,
 		"super_admin_role_id", superRole.ID,
+		"developer_role_id", devRole.ID,
 	)
 	return nil
 }
@@ -103,6 +120,32 @@ func ensureSuperAdminRole(ctx context.Context, roleRepo access.RoleRepository) (
 	return created, nil
 }
 
+func ensureDeveloperRole(ctx context.Context, roleRepo access.RoleRepository) (*access.Role, error) {
+	role, err := roleRepo.GetSystemByName(ctx, authz.DeveloperRole)
+	if err == nil {
+		if !role.Hidden {
+			if hiddenErr := roleRepo.SetHidden(ctx, role.ID, true); hiddenErr != nil {
+				return nil, fmt.Errorf("mark developer role hidden: %w", hiddenErr)
+			}
+		}
+		return role, nil
+	}
+	if !apperr.Is(err, apperr.ResourceNotFound) {
+		return nil, fmt.Errorf("lookup developer role: %w", err)
+	}
+	description := "Developer dashboard access (hidden)"
+	created, err := roleRepo.Create(ctx, access.CreateRoleInput{
+		Name:        authz.DeveloperRole,
+		IsSystem:    true,
+		Hidden:      true,
+		Description: &description,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create developer role: %w", err)
+	}
+	return created, nil
+}
+
 func assignAllPermissions(ctx context.Context, roleRepo access.RoleRepository, permRepo access.PermissionRepository, roleID int64) error {
 	names := make([]string, 0, len(authz.Catalog))
 	for _, permission := range authz.Catalog {
@@ -117,10 +160,10 @@ func assignAllPermissions(ctx context.Context, roleRepo access.RoleRepository, p
 		ids = append(ids, permission.ID)
 	}
 	if err := roleRepo.ClearPermissions(ctx, roleID); err != nil {
-		return fmt.Errorf("clear super admin permissions: %w", err)
+		return fmt.Errorf("clear permissions for role %d: %w", roleID, err)
 	}
 	if err := roleRepo.AssignPermissions(ctx, roleID, ids); err != nil {
-		return fmt.Errorf("assign super admin permissions: %w", err)
+		return fmt.Errorf("assign permissions to role %d: %w", roleID, err)
 	}
 	return nil
 }
@@ -190,5 +233,40 @@ func ensureSuperAdminUser(ctx context.Context, cfg *config.Config, userRepo iden
 	}
 	checker.InvalidateUser(ctx, created.ID)
 	logger.Info("super admin user created", "email", SuperAdminEmail)
+	return nil
+}
+
+func ensureDeveloperUser(ctx context.Context, cfg *config.Config, userRepo identity.Repository, checker *authz.Checker, roleID int64, logger *slog.Logger) error {
+	user, err := userRepo.GetByEmail(ctx, DeveloperEmail)
+	if err == nil {
+		if assignErr := userRepo.AssignRoles(ctx, user.ID, []int64{roleID}); assignErr != nil {
+			return fmt.Errorf("assign developer role: %w", assignErr)
+		}
+		checker.InvalidateUser(ctx, user.ID)
+		return nil
+	}
+	if !apperr.Is(err, apperr.ResourceNotFound) {
+		return fmt.Errorf("lookup developer user: %w", err)
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(cfg.Auth.DefaultPassword), cfg.Auth.BcryptRounds)
+	if err != nil {
+		return fmt.Errorf("hash developer password: %w", err)
+	}
+	created, err := userRepo.Create(ctx, identity.CreateInput{
+		Name:            "Developer",
+		Email:           DeveloperEmail,
+		Password:        string(hash),
+		IsActive:        true,
+		EmailVerifiedAt: time.Now(),
+	})
+	if err != nil {
+		return fmt.Errorf("seed developer user: %w", err)
+	}
+	if err := userRepo.AssignRoles(ctx, created.ID, []int64{roleID}); err != nil {
+		return fmt.Errorf("assign developer role: %w", err)
+	}
+	checker.InvalidateUser(ctx, created.ID)
+	logger.Info("developer user created", "email", DeveloperEmail)
 	return nil
 }

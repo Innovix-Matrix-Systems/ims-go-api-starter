@@ -21,6 +21,7 @@ type RoleRepository interface {
 	GetSystemByName(ctx context.Context, name string) (*Role, error)
 	Create(ctx context.Context, input CreateRoleInput) (*Role, error)
 	Update(ctx context.Context, id int64, name string, description *string, actorID *int64) (*Role, error)
+	SetHidden(ctx context.Context, id int64, hidden bool) error
 	Delete(ctx context.Context, id int64) error
 	ExistsForTenant(ctx context.Context, tenantID, id int64) (bool, error)
 	ClearPermissions(ctx context.Context, roleID int64) error
@@ -63,6 +64,7 @@ type CreateRoleInput struct {
 	TenantID    *int64
 	Name        string
 	IsSystem    bool
+	Hidden      bool
 	Description *string
 	ActorID     *int64
 }
@@ -141,6 +143,7 @@ func (r *roleRepository) Create(ctx context.Context, input CreateRoleInput) (*Ro
 		TenantID:    input.TenantID,
 		Name:        input.Name,
 		IsSystem:    input.IsSystem,
+		Hidden:      input.Hidden,
 		Description: input.Description,
 		CreatedBy:   input.ActorID,
 		UpdatedBy:   input.ActorID,
@@ -167,6 +170,13 @@ func (r *roleRepository) Update(ctx context.Context, id int64, name string, desc
 	}
 	role := mapRole(row)
 	return &role, nil
+}
+
+func (r *roleRepository) SetHidden(ctx context.Context, id int64, hidden bool) error {
+	if err := r.queries.SetRoleHidden(ctx, dbgen.SetRoleHiddenParams{ID: id, Hidden: hidden}); err != nil {
+		return database.MapError("access.set_role_hidden", err)
+	}
+	return nil
 }
 
 func (r *roleRepository) Delete(ctx context.Context, id int64) error {

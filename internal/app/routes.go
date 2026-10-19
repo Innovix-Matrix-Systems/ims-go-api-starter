@@ -7,6 +7,8 @@ import (
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/dev"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/docs"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/ratelimit"
@@ -34,6 +36,9 @@ func (d *Dependencies) Router() http.Handler {
 	))
 	r.Use(httpx.AccessLog(d.Logger))
 	r.Use(httpx.Recover(d.Logger, d.Responder))
+	if d.Platform != nil && d.Platform.Telemetry != nil {
+		r.Use(d.Platform.Telemetry.HTTPMiddleware)
+	}
 	if d.Config.Ops.MetricsEnabled && d.Metrics != nil {
 		r.Use(d.Metrics.Middleware)
 	}
@@ -52,6 +57,22 @@ func (d *Dependencies) Router() http.Handler {
 	if d.Config.Ops.MetricsEnabled && d.Metrics != nil {
 		r.Handle("/metrics", d.Metrics.Handler())
 	}
+
+	// Developer dashboard: one gate for the SPA, its JSON API and the telemetry
+	// capture surface. Registered unconditionally so the route table stays
+	// stable for openapi:check; disabled deployments answer 404 before
+	// authentication.
+	r.Group(func(r chi.Router) {
+		r.Use(dev.Gate(d.Config.DevDashboard.Enabled, d.Responder))
+		r.Get("/dev", d.DevUI.ServeHTTP)
+		r.HandleFunc("/dev/*", d.DevUI.ServeHTTP)
+		r.Route("/dev/api", func(r chi.Router) {
+			r.Use(authn.Authenticate(d.Authenticator, d.Responder))
+			r.Use(tenancy.Exempt())
+			r.Use(authz.Require(d.Checker, authz.PermDevView, d.Responder))
+			d.Dev.RegisterRoutes(r)
+		})
+	})
 
 	r.Route("/api/v1", func(r chi.Router) {
 		d.System.RegisterRoutes(r)

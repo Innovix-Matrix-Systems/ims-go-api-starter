@@ -5,6 +5,7 @@ const (
 	SuperAdminRole = "Super-Admin"
 	AdminRole      = "Admin"
 	UserRole       = "User"
+	DeveloperRole  = "Developer"
 )
 
 // GuardName is the guard value stored on roles and permissions.
@@ -84,6 +85,9 @@ const (
 	PermSettingsGroupCreate  = "settings_group.create"
 	PermSettingsGroupUpdate  = "settings_group.update"
 	PermSettingsGroupDelete  = "settings_group.delete"
+
+	PermDevView   = "dev.view"
+	PermDevManage = "dev.manage"
 )
 
 // Catalog is the application permission catalog.
@@ -180,6 +184,10 @@ var Catalog = []Permission{
 	{Name: PermSettingsGroupCreate, Group: "settings_group", IsSystem: true, Description: "Can create settings groups"},
 	{Name: PermSettingsGroupUpdate, Group: "settings_group", IsSystem: true, Description: "Can modify settings groups"},
 	{Name: PermSettingsGroupDelete, Group: "settings_group", IsSystem: true, Description: "Can delete settings groups"},
+
+	// ── dev ───────────────────────────────────────────────
+	{Name: PermDevView, Group: "dev", IsSystem: true, Description: "Can view the developer dashboard"},
+	{Name: PermDevManage, Group: "dev", IsSystem: true, Description: "Can execute developer dashboard actions"},
 }
 
 // AdminTenantPermissions is the tenant Admin role composition, matching

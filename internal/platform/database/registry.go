@@ -7,10 +7,23 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 )
+
+// OpenOption customizes pool creation (e.g. attaching a query tracer).
+type OpenOption func(*openOptions)
+
+type openOptions struct {
+	tracer pgx.QueryTracer
+}
+
+// WithTracer attaches a pgx query tracer to every opened pool.
+func WithTracer(tracer pgx.QueryTracer) OpenOption {
+	return func(options *openOptions) { options.tracer = tracer }
+}
 
 // Conn is one named database connection backed by a pgx pool.
 type Conn struct {
@@ -28,14 +41,18 @@ type Registry struct {
 // Open creates pools for all configured connections. Pools connect lazily; no
 // network round-trip happens here, so the API can boot while a database is
 // temporarily unavailable (health checks surface the real state).
-func Open(ctx context.Context, cfg config.Database) (*Registry, error) {
+func Open(ctx context.Context, cfg config.Database, opts ...OpenOption) (*Registry, error) {
+	options := openOptions{}
+	for _, apply := range opts {
+		apply(&options)
+	}
 	registry := &Registry{conns: make(map[string]*Conn, len(cfg.Connections))}
 	for _, connCfg := range cfg.Connections {
 		if _, exists := registry.conns[connCfg.Name]; exists {
 			registry.Close()
 			return nil, fmt.Errorf("database: duplicate connection %q", connCfg.Name)
 		}
-		conn, err := openConn(ctx, connCfg)
+		conn, err := openConn(ctx, connCfg, options)
 		if err != nil {
 			registry.Close()
 			return nil, err
@@ -46,7 +63,7 @@ func Open(ctx context.Context, cfg config.Database) (*Registry, error) {
 	return registry, nil
 }
 
-func openConn(ctx context.Context, cfg config.Connection) (*Conn, error) {
+func openConn(ctx context.Context, cfg config.Connection, options openOptions) (*Conn, error) {
 	switch strings.ToLower(cfg.Driver) {
 	case "pgsql", "postgres", "postgresql":
 		poolCfg, err := pgxpool.ParseConfig(cfg.DSN)
@@ -56,6 +73,9 @@ func openConn(ctx context.Context, cfg config.Connection) (*Conn, error) {
 		poolCfg.MaxConns = cfg.MaxConns
 		poolCfg.MinConns = cfg.MinConns
 		poolCfg.ConnConfig.ConnectTimeout = cfg.ConnTimeout
+		if options.tracer != nil {
+			poolCfg.ConnConfig.Tracer = options.tracer
+		}
 		pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 		if err != nil {
 			return nil, fmt.Errorf("database %q: create pool: %w", cfg.Name, err)

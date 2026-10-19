@@ -106,6 +106,10 @@ func (h *RoleHandler) show(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
+	if role.Hidden {
+		h.responder.Error(w, r, apperr.Newf(apperr.ResourceNotFound, "Role with ID '%d' was not found.", id))
+		return
+	}
 	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *role))
 }
 

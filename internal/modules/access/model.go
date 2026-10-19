@@ -13,6 +13,7 @@ type Role struct {
 	Name        string
 	GuardName   string
 	IsSystem    bool
+	Hidden      bool
 	Description *string
 	CreatedBy   *int64
 	UpdatedBy   *int64
@@ -47,6 +48,7 @@ func mapRole(row dbgen.Role) Role {
 		Name:        row.Name,
 		GuardName:   row.GuardName,
 		IsSystem:    row.IsSystem,
+		Hidden:      row.Hidden,
 		Description: row.Description,
 		CreatedBy:   row.CreatedBy,
 		UpdatedBy:   row.UpdatedBy,

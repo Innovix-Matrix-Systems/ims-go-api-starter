@@ -193,6 +193,17 @@ do_release() {
   log "building release $version -> $release_dir"
   run mkdir -p "$release_dir"
 
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '   [dry-run] (cd %s/web/dev && npm ci && npm run build)\n' "$workdir"
+  else
+    log "building developer dashboard SPA"
+    (
+      cd "$workdir/web/dev"
+      npm ci
+      npm run build
+    )
+  fi
+
   local ldflags="-X ${BUILD_MODULE}/internal/version.Version=${version}"
   if [[ "$DRY_RUN" == "1" ]]; then
     printf '   [dry-run] (cd %s && CGO_ENABLED=0 %s build -trimpath -ldflags %q -o %s/ims ./cmd/app)\n' \

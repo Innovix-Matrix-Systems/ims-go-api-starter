@@ -1,0 +1,408 @@
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { prettyJSON } from '../format'
+import { useToast } from './Toasts'
+
+export type IconName =
+  | 'overview'
+  | 'telescope'
+  | 'requests'
+  | 'logs'
+  | 'exceptions'
+  | 'queue'
+  | 'actions'
+  | 'system'
+  | 'sessions'
+  | 'settings'
+  | 'flags'
+  | 'files'
+  | 'developers'
+  | 'docs'
+  | 'logout'
+  | 'refresh'
+  | 'search'
+  | 'copy'
+  | 'external'
+  | 'chevron'
+  | 'x'
+  | 'play'
+  | 'pause'
+  | 'trash'
+  | 'check'
+  | 'alert'
+  | 'clock'
+  | 'activity'
+  | 'terminal'
+  | 'eye'
+
+const paths: Record<IconName, ReactNode> = {
+  overview: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
+  telescope: <><circle cx="12" cy="12" r="8" /><path d="M12 4v4M12 16v4M4 12h4M16 12h4" /><circle cx="12" cy="12" r="2.5" /></>,
+  requests: <><path d="M4 7h16M4 12h10M4 17h13" /><circle cx="20" cy="17" r="2" /></>,
+  logs: <><path d="M5 4h10l4 4v12H5z" /><path d="M9 12h6M9 16h6M9 8h3" /></>,
+  exceptions: <><path d="M12 3 2.5 20h19z" /><path d="M12 9v5M12 17.2v.3" /></>,
+  queue: <><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="7" cy="6" r="1.2" /><circle cx="7" cy="12" r="1.2" /><circle cx="7" cy="18" r="1.2" /></>,
+  actions: <><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></>,
+  system: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></>,
+  sessions: <><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M8 21h8M12 19v2M7 10h4M7 13h7" /></>,
+  settings: <><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></>,
+  flags: <><path d="M5 21V4" /><path d="M5 5h11l-2 4 2 4H5" /></>,
+  files: <><path d="M4 6h6l2 2h8v11H4z" /><path d="M4 10h16" /></>,
+  developers: <><circle cx="9" cy="8" r="3" /><path d="M3 20c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5" /><path d="M17 8h4M19 6v4" /></>,
+  docs: <><path d="M6 3h9l4 4v14H6z" /><path d="M9 12h6M9 16h6M9 8h3" /></>,
+  logout: <><path d="M10 4H5v16h5" /><path d="M15 8l4 4-4 4M9 12h10" /></>,
+  refresh: <><path d="M20 11a8 8 0 1 0-2.3 6.3" /><path d="M20 4v7h-7" /></>,
+  search: <><circle cx="11" cy="11" r="6" /><path d="m20 20-4.2-4.2" /></>,
+  copy: <><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4V4h11v1" /></>,
+  external: <><path d="M14 4h6v6M20 4l-9 9" /><path d="M20 14v6H4V4h6" /></>,
+  chevron: <path d="m9 6 6 6-6 6" />,
+  x: <path d="M6 6l12 12M18 6 6 18" />,
+  play: <path d="m8 5 11 7-11 7z" />,
+  pause: <><path d="M9 5v14M15 5v14" /></>,
+  trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></>,
+  check: <path d="m5 12 5 5 9-10" />,
+  alert: <><circle cx="12" cy="12" r="9" /><path d="M12 7v6M12 16.5v.5" /></>,
+  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+  activity: <path d="M3 12h4l2.5-7 4 14 2.5-7h5" />,
+  terminal: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3M12.5 15H17" /></>,
+  eye: <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="3" /></>,
+}
+
+export function Icon({ name, className, style }: { name: IconName; className?: string; style?: React.CSSProperties }) {
+  return (
+    <svg
+      className={className}
+      style={style}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {paths[name]}
+    </svg>
+  )
+}
+
+type ButtonVariant = 'default' | 'primary' | 'danger' | 'ghost'
+type ButtonSize = 'default' | 'sm'
+
+export function Button({
+  variant = 'default',
+  size = 'default',
+  icon,
+  children,
+  className,
+  ...rest
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: ButtonVariant
+  size?: ButtonSize
+  icon?: IconName
+}) {
+  return (
+    <button
+      className={['btn', variant !== 'default' ? variant : '', size === 'sm' ? 'sm' : '', className ?? ''].join(' ').trim()}
+      {...rest}
+    >
+      {icon ? <Icon name={icon} /> : null}
+      {children}
+    </button>
+  )
+}
+
+export function Card({ children, className, tight }: { children: ReactNode; className?: string; tight?: boolean }) {
+  return <div className={`card ${tight ? 'tight' : ''} ${className ?? ''}`}>{children}</div>
+}
+
+export function CardHeader({ title, sub, actions }: { title: string; sub?: string; actions?: ReactNode }) {
+  return (
+    <div className="card-header">
+      <div>
+        <div className="card-title">{title}</div>
+        {sub ? <div className="card-sub">{sub}</div> : null}
+      </div>
+      {actions ? <div className="card-actions">{actions}</div> : null}
+    </div>
+  )
+}
+
+export function PageHeader({
+  eyebrow,
+  title,
+  subtitle,
+  actions,
+}: {
+  eyebrow?: string
+  title: string
+  subtitle?: string
+  actions?: ReactNode
+}) {
+  return (
+    <div className="page-header">
+      <div>
+        {eyebrow ? <div className="eyebrow">{eyebrow}</div> : null}
+        <h1 className="page-title">{title}</h1>
+        {subtitle ? <p className="page-sub">{subtitle}</p> : null}
+      </div>
+      {actions ? <div className="page-actions">{actions}</div> : null}
+    </div>
+  )
+}
+
+function AnimatedNumber({ value }: { value: number }) {
+  const [display, setDisplay] = useState(value)
+  const previous = useRef(0)
+  useEffect(() => {
+    const from = previous.current
+    previous.current = value
+    if (from === value) {
+      setDisplay(value)
+      return
+    }
+    let frame = 0
+    const started = performance.now()
+    const duration = 520
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - started) / duration)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setDisplay(Math.round(from + (value - from) * eased))
+      if (progress < 1) frame = requestAnimationFrame(tick)
+    }
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [value])
+  return <>{display.toLocaleString()}</>
+}
+
+export function StatCard({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string
+  value: ReactNode
+  tone?: 'accent' | 'green' | 'red'
+  hint?: string
+}) {
+  return (
+    <div className="stat-card">
+      <div className="stat-label">{label}</div>
+      <div className={`stat-value ${tone ?? ''}`}>
+        {typeof value === 'number' ? <AnimatedNumber value={value} /> : value}
+      </div>
+      {hint ? <div className="stat-hint">{hint}</div> : null}
+    </div>
+  )
+}
+
+export type Tone = 'gray' | 'green' | 'red' | 'yellow' | 'blue' | 'purple' | 'orange'
+
+export function Chip({ tone = 'gray', children }: { tone?: Tone; children: ReactNode }) {
+  return <span className={`chip ${tone}`}>{children}</span>
+}
+
+export function StatusChip({ status }: { status: number }) {
+  const tone = status >= 500 ? 'red' : status >= 400 ? 'yellow' : status >= 300 ? 'blue' : 'green'
+  return <Chip tone={tone}>{status}</Chip>
+}
+
+export function MethodBadge({ method }: { method: string }) {
+  return <span className={`method ${method.toUpperCase()}`}>{method.toUpperCase()}</span>
+}
+
+export function EmptyState({
+  title,
+  description,
+  icon = 'telescope',
+  action,
+}: {
+  title: string
+  description?: string
+  icon?: IconName
+  action?: ReactNode
+}) {
+  return (
+    <div className="empty">
+      <div className="empty-icon">
+        <Icon name={icon} />
+      </div>
+      <div className="empty-title">{title}</div>
+      {description ? <div className="empty-sub">{description}</div> : null}
+      {action}
+    </div>
+  )
+}
+
+export function Spinner({ large }: { large?: boolean }) {
+  return <span className={`spinner ${large ? 'lg' : ''}`} aria-label="Loading" />
+}
+
+export function LoadingBlock({ label = 'Loading…' }: { label?: string }) {
+  return (
+    <div className="skeleton-rows" role="status" aria-label={label}>
+      <div className="skeleton-row" style={{ width: '26%', height: 10, opacity: 0.7 }} />
+      {[92, 74, 86, 63, 78].map((width, index) => (
+        <div
+          key={index}
+          className="skeleton-row"
+          style={{ width: `${width}%`, animationDelay: `${index * 90}ms` }}
+        />
+      ))}
+    </div>
+  )
+}
+
+export function ErrorBox({ message }: { message: string }) {
+  return <div className="error-box">{message}</div>
+}
+
+export function Tabs<T extends string>({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: { id: T; label: string; count?: number }[]
+  active: T
+  onChange: (id: T) => void
+}) {
+  return (
+    <div className="tabs" role="tablist">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          role="tab"
+          aria-selected={active === tab.id}
+          className={`tab ${active === tab.id ? 'active' : ''}`}
+          onClick={() => onChange(tab.id)}
+        >
+          {tab.label}
+          {tab.count !== undefined ? <span className="count">{tab.count}</span> : null}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export function CodeBlock({ code, label, maxHeight }: { code: string; label?: string; maxHeight?: number }) {
+  return (
+    <div className="code-block">
+      <div className="code-block-bar">
+        <span className="code-block-label">{label ?? 'Code'}</span>
+        <CopyButton value={code} />
+      </div>
+      <pre className="json" style={maxHeight ? { maxHeight } : undefined}>
+        {code}
+      </pre>
+    </div>
+  )
+}
+
+export function JsonView({ value, maxHeight, label }: { value: unknown; maxHeight?: number; label?: string }) {
+  return <CodeBlock code={prettyJSON(value)} label={label ?? 'JSON'} maxHeight={maxHeight} />
+}
+
+export function CopyButton({ value, label }: { value: string; label?: string }) {
+  const { push } = useToast()
+  return (
+    <button
+      type="button"
+      className="btn ghost sm"
+      title="Copy to clipboard"
+      onClick={() => {
+        void navigator.clipboard
+          .writeText(value)
+          .then(() => push('Copied to clipboard', 'success'))
+          .catch(() => push('Clipboard unavailable', 'error'))
+      }}
+    >
+      <Icon name="copy" />
+      {label ?? null}
+    </button>
+  )
+}
+
+export function ConfirmDialog({
+  open,
+  title,
+  description,
+  confirmLabel = 'Confirm',
+  danger,
+  busy,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean
+  title: string
+  description?: string
+  confirmLabel?: string
+  danger?: boolean
+  busy?: boolean
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  if (!open) return null
+  return (
+    <div className="overlay center" onClick={onCancel}>
+      <div className="modal" onClick={(event) => event.stopPropagation()}>
+        <h2 className="modal-title">{title}</h2>
+        {description ? <p className="modal-sub">{description}</p> : null}
+        <div className="modal-actions">
+          <Button variant="ghost" onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant={danger ? 'danger' : 'primary'} onClick={onConfirm} disabled={busy}>
+            {busy ? <Spinner /> : null}
+            {confirmLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function Drawer({
+  open,
+  title,
+  subtitle,
+  onClose,
+  actions,
+  children,
+}: {
+  open: boolean
+  title: ReactNode
+  subtitle?: ReactNode
+  onClose: () => void
+  actions?: ReactNode
+  children: ReactNode
+}) {
+  if (!open) return null
+  return (
+    <div className="overlay" onClick={onClose}>
+      <aside className="drawer" onClick={(event) => event.stopPropagation()}>
+        <header className="drawer-header">
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>{title}</div>
+            {subtitle ? <div className="card-sub mt-0">{subtitle}</div> : null}
+          </div>
+          <div className="spacer" />
+          {actions}
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+            <Icon name="x" />
+          </button>
+        </header>
+        <div className="drawer-body">{children}</div>
+      </aside>
+    </div>
+  )
+}
+
+export function RefreshToggle({ enabled, onChange }: { enabled: boolean; onChange: (value: boolean) => void }) {
+  return (
+    <label className="checkbox">
+      <input type="checkbox" checked={enabled} onChange={(event) => onChange(event.target.checked)} />
+      Live
+    </label>
+  )
+}

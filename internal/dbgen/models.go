@@ -59,6 +59,90 @@ type DataProcessingJob struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type DevAction struct {
+	ID           int64              `json:"id"`
+	ActorUserID  int64              `json:"actor_user_id"`
+	Action       string             `json:"action"`
+	Target       *string            `json:"target"`
+	Params       []byte             `json:"params"`
+	Status       string             `json:"status"`
+	ErrorMessage *string            `json:"error_message"`
+	DurationMs   int32              `json:"duration_ms"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type DevCacheEvent struct {
+	ID         int64              `json:"id"`
+	RequestID  *string            `json:"request_id"`
+	Operation  string             `json:"operation"`
+	Key        string             `json:"key"`
+	Hit        *bool              `json:"hit"`
+	DurationMs float64            `json:"duration_ms"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type DevException struct {
+	ID        int64              `json:"id"`
+	RequestID *string            `json:"request_id"`
+	Class     string             `json:"class"`
+	Message   string             `json:"message"`
+	Stack     *string            `json:"stack"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type DevLog struct {
+	ID         int64              `json:"id"`
+	RequestID  *string            `json:"request_id"`
+	Level      string             `json:"level"`
+	Message    string             `json:"message"`
+	Attributes []byte             `json:"attributes"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type DevQuery struct {
+	ID         int64              `json:"id"`
+	RequestID  *string            `json:"request_id"`
+	Sql        string             `json:"sql"`
+	Args       []byte             `json:"args"`
+	DurationMs float64            `json:"duration_ms"`
+	RowCount   int64              `json:"row_count"`
+	Error      *string            `json:"error"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type DevQueueEvent struct {
+	ID         int64              `json:"id"`
+	RequestID  *string            `json:"request_id"`
+	Event      string             `json:"event"`
+	Queue      string             `json:"queue"`
+	Kind       string             `json:"kind"`
+	JobID      *int64             `json:"job_id"`
+	DurationMs float64            `json:"duration_ms"`
+	Error      *string            `json:"error"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
+type DevRequest struct {
+	ID            int64              `json:"id"`
+	RequestID     string             `json:"request_id"`
+	Method        string             `json:"method"`
+	Path          string             `json:"path"`
+	Route         string             `json:"route"`
+	Status        int32              `json:"status"`
+	DurationMs    float64            `json:"duration_ms"`
+	RequestBytes  int64              `json:"request_bytes"`
+	ResponseBytes int64              `json:"response_bytes"`
+	UserID        *int64             `json:"user_id"`
+	TenantID      *int64             `json:"tenant_id"`
+	BranchID      *int64             `json:"branch_id"`
+	Ip            *string            `json:"ip"`
+	UserAgent     *string            `json:"user_agent"`
+	Headers       []byte             `json:"headers"`
+	RequestBody   []byte             `json:"request_body"`
+	ResponseBody  []byte             `json:"response_body"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type FeatureFlag struct {
 	ID         int64              `json:"id"`
 	Key        string             `json:"key"`
@@ -240,6 +324,7 @@ type Role struct {
 	UpdatedBy   *int64             `json:"updated_by"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	Hidden      bool               `json:"hidden"`
 }
 
 type RoleHasPermission struct {
