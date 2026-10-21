@@ -23,7 +23,7 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 6 | [phase-6-contract-observability-hardening.md](phase-6-contract-observability-hardening.md) | **Done** (2026-10-17) |
 | 7 | [phase-7-deployment-generators.md](phase-7-deployment-generators.md) | **Done** (2026-10-17) |
 | 8 | [phase-8-admin-dashboard.md](phase-8-admin-dashboard.md) | Stub (post-API) |
-| 9 | [phase-9-developer-dashboard.md](phase-9-developer-dashboard.md) | Draft (Deliverable A can ship early) |
+| 9 | [phase-9-developer-dashboard.md](phase-9-developer-dashboard.md) | In progress (A–J done; hardening remaining) |
 | 10 | [phase-10-openapi-generator.md](phase-10-openapi-generator.md) | Done (2026-10-18) |
 | 11 | [phase-11-settings-groups-feature-flags.md](phase-11-settings-groups-feature-flags.md) | **Done** (2026-10-18) |
 

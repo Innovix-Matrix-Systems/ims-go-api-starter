@@ -113,6 +113,28 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
   return payload as T
 }
 
+export async function apiBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(new URL(path, window.location.origin).toString(), {
+    headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : undefined,
+    signal,
+  })
+  if (!response.ok) {
+    if (response.status === 401) {
+      clearSession()
+      if (!window.location.pathname.endsWith('/login')) window.location.assign('/dev/login')
+    }
+    let detail = `Request failed (${response.status})`
+    try {
+      const payload = (await response.json()) as { detail?: string; title?: string; error_code?: string }
+      detail = payload.detail ?? payload.title ?? detail
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(detail, response.status)
+  }
+  return response.blob()
+}
+
 export async function login(email: string, password: string): Promise<LoginResult> {
   const response = await fetch('/api/v1/login', {
     method: 'POST',

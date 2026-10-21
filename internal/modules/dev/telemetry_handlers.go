@@ -204,27 +204,3 @@ func (h *Handler) pruneTelemetry(w http.ResponseWriter, r *http.Request) {
 		"deleted":        deleted,
 	})
 }
-
-func parseCursor(raw string) (int64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
-	}
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value < 0 {
-		return 0, apperr.Validation(map[string][]string{"cursor": {"The cursor is invalid."}})
-	}
-	return value, nil
-}
-
-func parseOptionalID(raw, field string) (int64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, nil
-	}
-	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value < 1 {
-		return 0, apperr.Validation(map[string][]string{field: {"The identifier is invalid."}})
-	}
-	return value, nil
-}

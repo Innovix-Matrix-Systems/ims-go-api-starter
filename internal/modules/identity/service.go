@@ -118,7 +118,11 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 	if err := s.validatePhoneUnique(ctx, input.Phone, 0); err != nil {
 		return nil, err
 	}
-	if err := s.validateRoles(ctx, tenantID, input.Roles); err != nil {
+	if scope.Internal && tenantID == 0 {
+		if err := s.validateSystemRoles(ctx, input.Roles); err != nil {
+			return nil, err
+		}
+	} else if err := s.validateRoles(ctx, tenantID, input.Roles); err != nil {
 		return nil, err
 	}
 
@@ -292,6 +296,49 @@ func (s *Service) AssignRoles(ctx context.Context, scope tenancy.Scope, actorID,
 	}
 	s.checker.InvalidateUser(ctx, target.ID)
 	return target, nil
+}
+
+// GrantRole adds one role without replacing the user's existing roles.
+func (s *Service) GrantRole(ctx context.Context, scope tenancy.Scope, targetID, roleID int64) (*User, error) {
+	target, err := s.Get(ctx, scope, targetID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateRoleForTarget(ctx, scope, target, roleID); err != nil {
+		return nil, err
+	}
+	if err := s.repo.AddRole(ctx, target.ID, roleID); err != nil {
+		return nil, err
+	}
+	s.checker.InvalidateUser(ctx, target.ID)
+	return target, nil
+}
+
+// RevokeRole removes one role without touching the user's other roles.
+func (s *Service) RevokeRole(ctx context.Context, scope tenancy.Scope, targetID, roleID int64) (*User, error) {
+	target, err := s.Get(ctx, scope, targetID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.validateRoleForTarget(ctx, scope, target, roleID); err != nil {
+		return nil, err
+	}
+	removed, err := s.repo.RemoveRole(ctx, target.ID, roleID)
+	if err != nil {
+		return nil, err
+	}
+	if !removed {
+		return nil, apperr.Newf(apperr.ResourceNotFound, "User '%d' does not hold role '%d'.", targetID, roleID)
+	}
+	s.checker.InvalidateUser(ctx, target.ID)
+	return target, nil
+}
+
+func (s *Service) validateRoleForTarget(ctx context.Context, scope tenancy.Scope, target *User, roleID int64) error {
+	if scope.Internal && target.TenantIDValue() == 0 {
+		return s.validateSystemRoles(ctx, []int64{roleID})
+	}
+	return s.validateRoles(ctx, target.TenantIDValue(), []int64{roleID})
 }
 
 // ChangePassword sets a new password (admin flow) and revokes active tokens.

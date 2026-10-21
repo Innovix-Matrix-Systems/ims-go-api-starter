@@ -2,6 +2,10 @@ import { defineConfig } from 'vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 
+declare const process: { env: Record<string, string | undefined> }
+
+const apiOrigin = process.env.IMS_API_ORIGIN ?? 'http://127.0.0.1:8080'
+
 export default defineConfig({
   base: '/dev/',
   plugins: [
@@ -16,9 +20,11 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      '/dev/api': 'http://127.0.0.1:8080',
-      '/api': 'http://127.0.0.1:8080',
-      '/docs': 'http://127.0.0.1:8080',
+      '/dev/api': apiOrigin,
+      '/api': apiOrigin,
+      '/docs': apiOrigin,
+      '/storage': apiOrigin,
+      '/up': apiOrigin,
     },
   },
 })

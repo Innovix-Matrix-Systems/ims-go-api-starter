@@ -12,28 +12,8 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/queue"
 )
-
-const (
-	defaultAdminLimit = 25
-	maxAdminLimit     = 100
-)
-
-func (h *Handler) requireManage(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	identity, ok := authn.IdentityFromContext(r.Context())
-	if !ok {
-		h.responder.Error(w, r, apperr.New(apperr.Unauthorized, "Authentication is required."))
-		return 0, false
-	}
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermDevManage); err != nil {
-		h.responder.Error(w, r, err)
-		return 0, false
-	}
-	return identity.UserID, true
-}
 
 func (h *Handler) requireQueueAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if h.queueAdmin != nil {
@@ -230,20 +210,6 @@ func (h *Handler) listActions(w http.ResponseWriter, r *http.Request) {
 	h.responder.Cursor(w, r, http.StatusOK, actions, meta, nil)
 }
 
-func parseLimit(raw string) (int, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultAdminLimit, nil
-	}
-	value, err := strconv.Atoi(raw)
-	if err != nil || value < 1 || value > maxAdminLimit {
-		return 0, apperr.Validation(map[string][]string{
-			"limit": {"The limit must be between 1 and 100."},
-		})
-	}
-	return value, nil
-}
-
 func validAdminState(state string) bool {
 	for _, candidate := range queue.AdminStates {
 		if candidate == state {
@@ -251,13 +217,4 @@ func validAdminState(state string) bool {
 		}
 	}
 	return false
-}
-
-func pathID(r *http.Request) (int64, error) {
-	raw := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 1 {
-		return 0, apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-	}
-	return id, nil
 }

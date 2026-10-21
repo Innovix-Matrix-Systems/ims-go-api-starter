@@ -12,6 +12,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing"
 	billingdomain "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
 	billingservice "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/service"
@@ -31,6 +32,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/scheduler"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/storage"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/telemetry"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/version"
 )
 
 // Platform is the infrastructure dependency set shared by the HTTP API and the
@@ -58,6 +60,7 @@ type Platform struct {
 	FeatureFlags     *featureflags.Service
 	Processing       *dataprocessing.Service
 	Files            *files.Service
+	Backup           *backup.Service
 	Notifications    *notifications.Service
 	Exchange         *identity.ExchangeService
 	BillingPackages  *billingservice.PackageService
@@ -99,6 +102,14 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 	scheduleRegistry := scheduler.NewRegistry()
 	settingsService := settings.NewService(settings.NewRepository(txManager.Queries()), store)
 	featureFlagsService := featureflags.NewService(featureflags.NewRepository(txManager.Queries()), store)
+
+	if cfg.DevDashboard.Enabled && cfg.IsLocal() {
+		if err := dev.RegisterPlaygroundJob(queueRegistry); err != nil {
+			cacheCleanup()
+			dbRegistry.Close()
+			return nil, nil, err
+		}
+	}
 
 	queueEngine, err := newQueueEngine(cfg, dbRegistry.Primary().Pool, queueRegistry, logger)
 	if err != nil {
@@ -145,6 +156,23 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 	processingService := dataprocessing.NewService(dataprocessing.NewRepository(txManager.Queries())).
 		WithFiles(storageRegistry, cfg.Processing).
 		WithLogger(logger)
+	backupService := backup.NewService(backup.Options{
+		Config:     cfg.Backup,
+		Repository: backup.NewRepository(txManager.Queries()),
+		Disks:      storageRegistry,
+		Pool:       dbRegistry.Primary().Pool,
+		Queue:      telemetryQueue,
+		DSN:        cfg.Database.Primary.DSN,
+		AppVersion: version.Version,
+		Logger:     logger,
+	})
+	if cfg.Backup.Enabled {
+		if err := backup.RegisterJob(queueRegistry, backupService); err != nil {
+			cacheCleanup()
+			dbRegistry.Close()
+			return nil, nil, err
+		}
+	}
 
 	// Billing
 	billingPackages := billingdomain.NewPackageRepository(txManager.Queries())
@@ -251,6 +279,47 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		return nil, nil, err
 	}
 
+	if cfg.Backup.Enabled {
+		if err := scheduleRegistry.Register(scheduler.Task{
+			ID:          "backup.run",
+			Spec:        cfg.Backup.RunCron,
+			Description: "Creates a database backup archive and copies it to the configured destinations.",
+			Timeout:     cfg.Backup.Timeout,
+			Overlap:     scheduler.OverlapSkip,
+			Run: func(ctx context.Context) error {
+				run, err := backupService.Enqueue(ctx, backup.TriggerSchedule, 0)
+				if err != nil {
+					return err
+				}
+				logger.Info("backup queued", "run_id", run.ID, "filename", run.Filename)
+				return nil
+			},
+		}); err != nil {
+			cacheCleanup()
+			dbRegistry.Close()
+			return nil, nil, err
+		}
+		if err := scheduleRegistry.Register(scheduler.Task{
+			ID:          "backup.clean",
+			Spec:        cfg.Backup.CleanCron,
+			Description: "Applies the backup retention policy and deletes expired archives.",
+			Timeout:     30 * time.Minute,
+			Overlap:     scheduler.OverlapSkip,
+			Run: func(ctx context.Context) error {
+				result, err := backupService.Clean(ctx, false)
+				if err != nil {
+					return err
+				}
+				logger.Info("backup cleanup finished", "deleted", result.Deleted, "candidates", result.Candidates, "failed", result.Failed)
+				return nil
+			},
+		}); err != nil {
+			cacheCleanup()
+			dbRegistry.Close()
+			return nil, nil, err
+		}
+	}
+
 	if cfg.DevDashboard.Enabled {
 		telemetryRepo := dev.NewTelemetryRepository(txManager.Queries())
 		retentionDays := cfg.DevDashboard.RetentionDays
@@ -297,6 +366,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		FeatureFlags:     featureFlagsService,
 		Processing:       processingService,
 		Files:            filesService,
+		Backup:           backupService,
 		Notifications:    notificationsService,
 		BillingPackages:  billingPackageService,
 		BillingSubs:      billingSubscriptionService,

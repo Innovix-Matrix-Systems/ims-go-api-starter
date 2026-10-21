@@ -8,6 +8,7 @@ import "context"
 // Identity is the authenticated caller established by the bearer middleware.
 type Identity struct {
 	UserID         int64
+	TokenID        int64
 	Name           string
 	Email          string
 	TenantID       int64

@@ -1,20 +1,16 @@
-import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { api } from '../api/client'
 import type { CursorPage, DevAction } from '../api/types'
 import { DataTable } from '../components/DataTable'
-import { useToast } from '../components/Toasts'
 import {
   Button,
-  Card,
-  CardHeader,
   Chip,
   Drawer,
   EmptyState,
   ErrorBox,
-  Icon,
   JsonView,
   LoadingBlock,
   PageHeader,
@@ -29,30 +25,6 @@ export const Route = createFileRoute('/_app/actions')({
 function ActionsPage() {
   const [live, setLive] = useState(false)
   const [selected, setSelected] = useState<DevAction | null>(null)
-  const [simulating, setSimulating] = useState(false)
-  const queryClient = useQueryClient()
-  const { push } = useToast()
-
-  const simulate = async (logs: number, level: 'warn' | 'error', exception: boolean) => {
-    setSimulating(true)
-    try {
-      const result = await api<{ request_id: string; logs: number; exception: boolean }>(
-        '/dev/api/simulate-events',
-        { method: 'POST', body: { logs, level, exception } },
-      )
-      push(
-        `Generated ${result.logs} ${level} log${result.logs === 1 ? '' : 's'}${result.exception ? ' + exception' : ''}`,
-        'success',
-      )
-      for (const key of ['logs', 'exceptions', 'actions', 'overview']) {
-        void queryClient.invalidateQueries({ queryKey: [key] })
-      }
-    } catch (error) {
-      push(error instanceof Error ? error.message : 'Simulation failed', 'error')
-    } finally {
-      setSimulating(false)
-    }
-  }
 
   const query = useInfiniteQuery({
     queryKey: ['actions'],
@@ -126,34 +98,6 @@ function ActionsPage() {
           </>
         }
       />
-
-      <Card tight className="mb-16">
-        <CardHeader
-          title="Test telemetry"
-          sub="Generate synthetic entries to verify the Logs and Exceptions screens."
-          actions={<Icon name="terminal" className="icon-inline" />}
-        />
-        <div className="flex" style={{ flexWrap: 'wrap' }}>
-          <Button icon="logs" disabled={simulating} onClick={() => void simulate(3, 'warn', false)}>
-            3 warning logs
-          </Button>
-          <Button icon="logs" disabled={simulating} onClick={() => void simulate(3, 'error', false)}>
-            3 error logs
-          </Button>
-          <Button
-            variant="danger"
-            icon="alert"
-            disabled={simulating}
-            onClick={() => void simulate(1, 'error', true)}
-          >
-            Log + exception
-          </Button>
-        </div>
-        <div className="small dim mt-8">
-          Entries are correlated with the request id of this call and appear immediately in Logs,
-          Exceptions, and the Commands audit log.
-        </div>
-      </Card>
 
       {query.isLoading ? (
         <LoadingBlock label="Loading audit log…" />

@@ -74,7 +74,7 @@ internal/
     storage/    Disk interface: private/public local roots + s3 (aws-sdk-go-v2); /storage static
     ratelimit/  Limiter interface: memory + cache-backed fixed window
   modules/    business features (see "Module anatomy")
-    system/ auth/ identity/ access/ tenants/ branches/ settings/ dataprocessing/ billing/
+    system/ auth/ identity/ access/ tenants/ branches/ settings/ dataprocessing/ billing/ backup/
     files/ notifications/
   dbgen/      sqlc generated code (never edit by hand)
   contract/   oapi-codegen generated code (never edit by hand)
@@ -278,6 +278,8 @@ Keep this list accurate; add to it when you make a non-obvious choice (also upda
 - List endpoints whitelist `order_by`.
 - Error responses are unified RFC 9457 (no separate "bare message" error shape).
 - OTP codes are cache-only (not stored on the user row).
+- Backups are local-first (the local archive is mandatory) with optional S3/R2 copies; the
+  `backup` module is transport-free and the dev module owns `/dev/api/backups*`.
 
 ## When a task is ambiguous
 

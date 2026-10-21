@@ -7,7 +7,100 @@ package dbgen
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const countDevDevelopers = `-- name: CountDevDevelopers :one
+SELECT count(*)
+FROM users u
+JOIN model_has_roles mr ON mr.model_type = 'user' AND mr.model_id = u.id
+JOIN roles r ON r.id = mr.role_id
+WHERE u.deleted_at IS NULL
+  AND r.name = $1
+  AND r.tenant_id IS NULL
+  AND (
+    $2::text = ''
+    OR u.name ILIKE '%' || $2::text || '%'
+    OR u.email ILIKE '%' || $2::text || '%'
+  )
+`
+
+type CountDevDevelopersParams struct {
+	RoleName string `json:"role_name"`
+	Search   string `json:"search"`
+}
+
+func (q *Queries) CountDevDevelopers(ctx context.Context, arg CountDevDevelopersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDevDevelopers, arg.RoleName, arg.Search)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countDevTenantTargets = `-- name: CountDevTenantTargets :one
+SELECT count(*)
+FROM tenants t
+WHERE t.deleted_at IS NULL
+  AND (
+    $1::text = ''
+    OR t.name ILIKE '%' || $1::text || '%'
+    OR t.code ILIKE '%' || $1::text || '%'
+  )
+`
+
+func (q *Queries) CountDevTenantTargets(ctx context.Context, search string) (int64, error) {
+	row := q.db.QueryRow(ctx, countDevTenantTargets, search)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countDevTenantTargetsWithOverrides = `-- name: CountDevTenantTargetsWithOverrides :one
+SELECT count(DISTINCT f.target_id)
+FROM feature_flags f
+JOIN tenants t ON t.id = f.target_id AND t.deleted_at IS NULL
+WHERE f.target_type = 'tenant'
+`
+
+func (q *Queries) CountDevTenantTargetsWithOverrides(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countDevTenantTargetsWithOverrides)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countDevUserTargets = `-- name: CountDevUserTargets :one
+SELECT count(*)
+FROM users u
+WHERE u.deleted_at IS NULL
+  AND (
+    $1::text = ''
+    OR u.name ILIKE '%' || $1::text || '%'
+    OR u.email ILIKE '%' || $1::text || '%'
+  )
+`
+
+func (q *Queries) CountDevUserTargets(ctx context.Context, search string) (int64, error) {
+	row := q.db.QueryRow(ctx, countDevUserTargets, search)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countDevUserTargetsWithOverrides = `-- name: CountDevUserTargetsWithOverrides :one
+SELECT count(DISTINCT f.target_id)
+FROM feature_flags f
+JOIN users u ON u.id = f.target_id AND u.deleted_at IS NULL
+WHERE f.target_type = 'user'
+`
+
+func (q *Queries) CountDevUserTargetsWithOverrides(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countDevUserTargetsWithOverrides)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
 
 const insertDevAction = `-- name: InsertDevAction :one
 INSERT INTO dev_actions (actor_user_id, action, target, params, status, error_message, duration_ms)
@@ -81,6 +174,211 @@ func (q *Queries) ListDevActions(ctx context.Context, arg ListDevActionsParams) 
 			&i.ErrorMessage,
 			&i.DurationMs,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDevDevelopers = `-- name: ListDevDevelopers :many
+SELECT
+    u.id,
+    u.name,
+    u.email,
+    u.is_active,
+    u.last_login_at,
+    u.created_at,
+    (
+        SELECT count(*)
+        FROM personal_access_tokens t
+        WHERE t.tokenable_type = 'user'
+          AND t.tokenable_id = u.id
+          AND (t.expires_at IS NULL OR t.expires_at > now())
+    ) AS active_tokens
+FROM users u
+JOIN model_has_roles mr ON mr.model_type = 'user' AND mr.model_id = u.id
+JOIN roles r ON r.id = mr.role_id
+WHERE u.deleted_at IS NULL
+  AND r.name = $1
+  AND r.tenant_id IS NULL
+  AND (
+    $2::text = ''
+    OR u.name ILIKE '%' || $2::text || '%'
+    OR u.email ILIKE '%' || $2::text || '%'
+  )
+ORDER BY u.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListDevDevelopersParams struct {
+	RoleName   string `json:"role_name"`
+	Search     string `json:"search"`
+	PageOffset int32  `json:"page_offset"`
+	PageLimit  int32  `json:"page_limit"`
+}
+
+type ListDevDevelopersRow struct {
+	ID           int64              `json:"id"`
+	Name         string             `json:"name"`
+	Email        string             `json:"email"`
+	IsActive     int16              `json:"is_active"`
+	LastLoginAt  pgtype.Timestamptz `json:"last_login_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	ActiveTokens int64              `json:"active_tokens"`
+}
+
+func (q *Queries) ListDevDevelopers(ctx context.Context, arg ListDevDevelopersParams) ([]ListDevDevelopersRow, error) {
+	rows, err := q.db.Query(ctx, listDevDevelopers,
+		arg.RoleName,
+		arg.Search,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDevDevelopersRow{}
+	for rows.Next() {
+		var i ListDevDevelopersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.IsActive,
+			&i.LastLoginAt,
+			&i.CreatedAt,
+			&i.ActiveTokens,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDevTenantTargets = `-- name: ListDevTenantTargets :many
+SELECT
+    t.id,
+    t.name,
+    t.code,
+    (
+        SELECT count(*)
+        FROM feature_flags f
+        WHERE f.target_type = 'tenant' AND f.target_id = t.id
+    ) AS overrides
+FROM tenants t
+WHERE t.deleted_at IS NULL
+  AND (
+    $1::text = ''
+    OR t.name ILIKE '%' || $1::text || '%'
+    OR t.code ILIKE '%' || $1::text || '%'
+  )
+ORDER BY t.name ASC, t.id ASC
+LIMIT $3 OFFSET $2
+`
+
+type ListDevTenantTargetsParams struct {
+	Search     string `json:"search"`
+	PageOffset int32  `json:"page_offset"`
+	PageLimit  int32  `json:"page_limit"`
+}
+
+type ListDevTenantTargetsRow struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Code      string `json:"code"`
+	Overrides int64  `json:"overrides"`
+}
+
+func (q *Queries) ListDevTenantTargets(ctx context.Context, arg ListDevTenantTargetsParams) ([]ListDevTenantTargetsRow, error) {
+	rows, err := q.db.Query(ctx, listDevTenantTargets, arg.Search, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDevTenantTargetsRow{}
+	for rows.Next() {
+		var i ListDevTenantTargetsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Code,
+			&i.Overrides,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDevUserTargets = `-- name: ListDevUserTargets :many
+SELECT
+    u.id,
+    u.name,
+    u.email,
+    u.tenant_id,
+    t.name AS tenant_name,
+    (
+        SELECT count(*)
+        FROM feature_flags f
+        WHERE f.target_type = 'user' AND f.target_id = u.id
+    ) AS overrides
+FROM users u
+LEFT JOIN tenants t ON t.id = u.tenant_id AND t.deleted_at IS NULL
+WHERE u.deleted_at IS NULL
+  AND (
+    $1::text = ''
+    OR u.name ILIKE '%' || $1::text || '%'
+    OR u.email ILIKE '%' || $1::text || '%'
+  )
+ORDER BY u.name ASC, u.id ASC
+LIMIT $3 OFFSET $2
+`
+
+type ListDevUserTargetsParams struct {
+	Search     string `json:"search"`
+	PageOffset int32  `json:"page_offset"`
+	PageLimit  int32  `json:"page_limit"`
+}
+
+type ListDevUserTargetsRow struct {
+	ID         int64   `json:"id"`
+	Name       string  `json:"name"`
+	Email      string  `json:"email"`
+	TenantID   *int64  `json:"tenant_id"`
+	TenantName *string `json:"tenant_name"`
+	Overrides  int64   `json:"overrides"`
+}
+
+func (q *Queries) ListDevUserTargets(ctx context.Context, arg ListDevUserTargetsParams) ([]ListDevUserTargetsRow, error) {
+	rows, err := q.db.Query(ctx, listDevUserTargets, arg.Search, arg.PageOffset, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListDevUserTargetsRow{}
+	for rows.Next() {
+		var i ListDevUserTargetsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Email,
+			&i.TenantID,
+			&i.TenantName,
+			&i.Overrides,
 		); err != nil {
 			return nil, err
 		}

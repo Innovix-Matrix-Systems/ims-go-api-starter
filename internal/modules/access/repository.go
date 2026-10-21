@@ -26,6 +26,7 @@ type RoleRepository interface {
 	ExistsForTenant(ctx context.Context, tenantID, id int64) (bool, error)
 	ClearPermissions(ctx context.Context, roleID int64) error
 	AssignPermissions(ctx context.Context, roleID int64, permissionIDs []int64) error
+	CountPermissions(ctx context.Context, roleID int64) (int64, error)
 	IDsByNames(ctx context.Context, tenantID int64, names []string) (map[string]int64, error)
 }
 
@@ -232,6 +233,14 @@ func (r *roleRepository) AssignPermissions(ctx context.Context, roleID int64, pe
 		return database.MapError("access.assign_role_permissions", err)
 	}
 	return nil
+}
+
+func (r *roleRepository) CountPermissions(ctx context.Context, roleID int64) (int64, error) {
+	count, err := r.queries.CountRolePermissions(ctx, roleID)
+	if err != nil {
+		return 0, database.MapError("access.count_role_permissions", err)
+	}
+	return count, nil
 }
 
 // PermissionRepository is the persistence contract for permissions.

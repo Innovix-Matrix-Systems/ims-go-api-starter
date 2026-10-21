@@ -1,10 +1,12 @@
 # Phase 9 — Developer dashboard (lightweight Telescope)
 
-**Status:** In progress — A (identity/access), B (queue admin), C (telemetry capture) and D (SPA,
-core screens + detail views) are implemented and green (`make check` + integration suite + live
-smoke); E–I (management panels) are placeholder routes pending their backends. Rev 6 adds
-**Deliverable J — database backups** (CLI + scheduler + dev panel, Laravel-backup principles) to
-the plan.
+**Status:** In progress — A (identity/access), B (queue admin), C (telemetry capture), D (SPA,
+core screens + detail views), E (Sessions), F (Settings, global/tenant), G (Feature flags),
+H (Files), I (Developers) and J (backups) are implemented and green (`make check` + integration
+suite); hardening (telemetry overhead smoke, runbooks, acceptance pass) remains. Rev 6 adds
+**Deliverable J — database backups** (CLI + scheduler + dev panel, Laravel-backup principles) to the
+plan; rev 7 sequences the remaining work; rev 8 de-scopes per-user settings and locks the dashboard
+to developers only.
 **Roadmap:** PLAN.md §7.21 + §11 Phase 9
 **Depends on:** Phases 0–7, 10, 11; builds on Phase 3 (queue/scheduler/cache), Phase 6
 (observability, contract), and Phase 11 (settings groups + feature flags). The admin dashboard
@@ -12,6 +14,36 @@ the plan.
 first.
 **Spec owner:** —
 
+> **Revision 8 (2026-10-21) — scope: global/tenant settings only; developer-only access.** Per-user
+> settings overrides are **deferred** (no `user` target in `settings.Service`, no
+> `settings:blob:u:<id>`, no UI user-scope option); F is complete as shipped. Tenant overrides stay
+> on the tenant surface (`GET /api/v1/settings`, `PATCH /api/v1/settings/tenant/{key}`) for any
+> tenant user holding `setting.update`. The developer dashboard remains tenantless and
+> **developer-only**: tenant users are never granted `dev.view`/`dev.manage` and never reach
+> `/dev`/`/dev/api` — they get their own dashboard (Phase 8). Decision 12 updated accordingly.
+>
+> **Revision 12 (2026-10-21) — H Files shipped.** New `sql/queries/dev_files.sql` (filtered page list
+> + count + type/disk stats), `dev.FileRepository`, `files.Service.Open` and `/dev/api/files*`
+> (page/per_page list, stats, authenticated stream, audited delete). The **tenant filter matches the
+> uploader's tenant** because `files` is platform-global; no migration or index was added. Inline
+> preview is limited to raster images, video, audio and PDF (`?inline=1`); SVG and unknown types
+> always download. The SPA is a grid/list file manager persisted in `localStorage`, with tenant/type/
+> disk/attachment/date filters, thumbnails over authenticated blob URLs, a detail drawer and
+> audited delete. Upload and bulk delete remain out of scope for v1.
+>
+> **Revision 13 (2026-10-22) — J Backups shipped.** `internal/modules/backup` is transport-free
+> (model/repository/dump/archive/retention/service/jobs/health) and owns `backup_runs`
+> (`00017_create_backup_runs.sql`, column `trigger_kind` to avoid the reserved word). **Local disk is
+> mandatory** and always included in `BACKUP_DESTINATIONS`; S3-compatible remote storage (AWS S3,
+> Cloudflare R2, MinIO, Backblaze B2 S3) is optional through the shared `S3_*` settings. The
+> `pg_dump --format=custom` dump is always inside the `.tar.gz` archive (so the DB reaches every
+> destination), with a manifest, SHA-256, size and per-destination results. `BACKUP_DIR` defaults to
+> `backups` under `APP_STORAGE_DIR`. Scheduler (`backup.run`, `backup.clean`), the `backup.run` River
+> job (advisory-locked), CLI (`backup:run/list/clean/monitor`), the `Backups` health check and the dev
+> API/SPA (`/dev/api/backups*`) are wired. `BACKUP_ENABLED` gates scheduling and dashboard creation;
+> the CLI can always run a manual backup. Restore/PITR/WAL, encryption and notifications remain out
+> of scope.
+>
 > **Revision 3 (2026-10-18).** Adds four management panels from the Dev Dashboard mock: **Sessions**
 > (token/device management with stats, force-logout, idle prune), **Settings** (grouped board with
 > drag-and-drop, global/tenant/**per-user** overrides), **Feature Flags** (global/tenant/user
@@ -19,7 +51,8 @@ first.
 > Notes from research: Phase 11 already ships settings groups + runtime feature flags
 > (`settings_groups`, `feature_flags`, `internal/settings*`, `internal/feature-flags*`), so those
 > panels are thin dev APIs + UI; only **per-user settings overrides** (currently 422) are a backend
-> dependency. Migration numbering fixed: `00013` is taken by Phase 11 — this phase uses `00014+`.
+> dependency *(deferred by rev 8)*. Migration numbering fixed: `00013` is taken by Phase 11 — this
+> phase uses `00014+`.
 >
 > **Revision 6 (2026-10-19).** Adds **Deliverable J — database backups** modelled on
 > spatie/laravel-backup: `pg_dump` archive, multiple destinations (local dir + S3 prefix),
@@ -27,31 +60,64 @@ first.
 > a queue-backed run job with an advisory lock, and a Backups screen + command-center entry in the
 > dev panel. Backup is opt-in (`BACKUP_ENABLED=false`); restore is out of scope in v1.
 >
+> **Revision 7 (2026-10-21) — remaining-work execution plan.** A–D are complete. The remaining
+> slices ship in seven focused turns, each independently green (`make check` + integration +
+> web typecheck/build + `openapi:check`):
+>
+> 1. **E Sessions** (+ dev-module scaffolding: `dev.Deps` struct, shared `panelBase`, per-panel
+>    files). Adds `authn.Identity.TokenID`, token admin SQL, `/dev/api/sessions/*` and the screen.
+> 2. **I Developers.** Developer accounts are created from the panel: one request creates a
+>    tenantless internal user and assigns the hidden `Developer` role. The panel also provisions or
+>    repairs the role itself (hidden system role + every catalog permission, mirroring Super-Admin)
+>    when a database was seeded without it. Self-unassign is refused; developers impersonate
+>    tenants with the normal `X-Acting-Tenant` headers.
+> 3. **G Flags.** Thin dev API over `featureflags.Service`; grouped UI with source badges and
+>    override drawer. Adds one shared `GET /dev/api/targets` search helper (also used by F).
+> 4. **H Files.** New `sql/queries/dev_files.sql` (filters/order/stats/uploader join), authenticated
+>    download/preview streaming through `storage.Disk.Get`, audited delete through
+>    `files.Service.Delete`, file-manager UI. Inline previews use authenticated blob URLs because
+>    `<img>` cannot send the bearer header. No upload in v1.
+> 5. **F Settings.** First extend `settings.Service` to accept `user` targets for tenant-scoped
+>    keys, resolve **user → tenant → global → default**, and cache `settings:blob:u:<id>`; then the
+>    dev API + drag-and-drop board. Consumers opt in through the new user-aware read methods.
+>    *(Superseded by rev 8: per-user targets are deferred; F shipped global/tenant only.)*
+> 6. **J Backups.** `internal/modules/backup` stays **transport-free** (service/repository/dump/
+>    archive/destinations/retention/jobs/monitor); the dev module owns `/dev/api/backups*`. This
+>    supersedes J's `routes.go`/`handler.go` sketch for the same reason billing keeps HTTP at the
+>    module root: the service must be callable from CLI, River and the scheduler without an HTTP
+>    dependency. Split into 6a backend/CLI and 6b dev API/UI.
+> 7. **Hardening.** Telemetry ≤3% p95 smoke, developer/backup runbooks, `dev_actions` retention
+>    decision, OpenAPI drift, full acceptance pass and tracker close-out.
+>
+> Cross-cutting rules: dev is transport only (delegate to owning services); every mutation writes
+> `dev_actions` with a stable action name; `/dev/api` stays hand-written in `api/openapi.yaml`
+> outside generated regions; streams use cursor pagination and management lists use
+> page/per_page; no migration is needed for E–I, so J keeps `00017`.
+>
 > **Revision 2 (2026-10-18).** River UI dropped in favor of a first-party queue admin API built on
 > the River client (Decision 1); developer-dashboard-only scope; hidden `Developer` role/user
 > (Decision 2); TanStack Start SPA (Decision 8); one gate flag (Decision 3); concrete config,
 > routes, migrations, CI and acceptance criteria.
 
-## Progress tracker (rev 4 — 2026-10-19)
+## Progress tracker (rev 12 — 2026-10-21)
 
 | Slice | Status | What remains |
 |---|---|---|
 | A — identity & access | **Done** | — |
 | B — queue admin | **Done** | Job-id deep links + full job detail page shipped |
 | C — telemetry backend | **Done** | ≤3% p95 overhead smoke not measured; optional file store deferred |
-| D — SPA | **Done (core screens)** | E–I panels are placeholder routes |
-| E — Sessions | Not started | `TokenID` on Identity, token stats/directory/device + prune queries, `/dev/api/sessions/*`, screen |
-| F — Settings | Not started | Per-user settings target (external settings-module dependency), dev endpoints + drag-and-drop board |
-| G — Feature flags | Not started | Thin dev endpoints + grouped toggle UI (Phase 11 backend exists) |
-| H — Files | Not started | Dev listing/stats/download endpoints + file-manager UI |
-| I — Developers | Not started | Developers list/assign endpoints + screen |
-| J — Backups | Not started | Spec complete (rev 6); independent of E–I, requires host `pg_dump` |
+| D — SPA | **Done** | — |
+| E — Sessions | **Done** | — |
+| F — Settings | **Done (global/tenant)** | Per-user target deferred (rev 8); tenant overrides live on the tenant surface |
+| G — Feature flags | **Done** | — |
+| H — Files | **Done** | — |
+| I — Developers | **Done** | — |
+| Playground (local-only) | **Done** | Sandbox section after Management; telemetry simulator, `dev.test` presets/custom form, real `user.export` + `mail.send` triggers |
+| J — Backups | **Done** | Requires host `pg_dump` (fails fast when missing) |
 
-**Next-session starting point — E (Sessions).** No external dependency: read Decision 11 and
-Deliverable E, add `TokenID` to `authn.Identity`, then the token aggregate/directory/device/prune
-queries, endpoints and the screen. After E: G (thin wrapper over the existing featureflags module),
-H, I; F last unless the per-user settings extension lands. **J (Backups) is independent** and can
-be implemented in parallel or first if backups are operationally urgent (needs host `pg_dump`).
+**Next-session starting point (rev 13).** All deliverables (A–J) are complete. What remains is
+**hardening**: the ≤3% p95 telemetry smoke, developer/backup runbooks, the `dev_actions` retention
+decision, OpenAPI drift and the full acceptance pass. Per-user settings are deferred (rev 8).
 
 **Delivered beyond the original checklist (rev 4):** per-entity detail views with eye-icon deep
 links (`/jobs/{id}`, `/logs/{id}`, `/exceptions/{id}`), copy buttons on every code block, River job
@@ -69,7 +135,7 @@ Session paused here; resume at **E (Sessions)** using the starting point above.
 destinations + retention + monitoring + CLI + dev screen). It is independent and can be picked up
 between/alongside E–I; `pg_dump` must be available on the host.
 
-## Implementation status (rev 4)
+## Implementation status (rev 12)
 
 - **A — done.** `00014_add_roles_hidden.sql`; `roles.hidden` plumbed through model/query/response
   (hidden roles absent from lists and 404 on the tenant surface, `UserRoleRefs` filtered);
@@ -111,9 +177,113 @@ between/alongside E–I; `pg_dump` must be available on the host.
   Ctrl/Cmd+K command center (cmdk) navigates pages, requests, jobs and exceptions and runs the
   simulator/refresh/sign-out actions. Verified live: developer login → `/dev` shell →
   `/dev/api/me` → queue list → captured requests, with immutable asset caching.
-- **Remaining:** E–I (sessions/settings/flags/files/developers panels; F's per-user settings
-  target is the external dependency), the ≤3% p95 overhead smoke, and a runbook note for the
-  seeded developer account.
+- **E — done.** `authn.Identity.TokenID` (set from the verified token row); `sql/queries/tokens.sql`
+  session stats/directory/token-list/delete/prune queries; `dev.NewSessionRepository`;
+  `/dev/api/sessions/stats`, `/dev/api/sessions/users`, `/dev/api/sessions/users/{id}/tokens`,
+  `DELETE /dev/api/sessions/tokens/{id}`, `DELETE /dev/api/sessions/users/{id}`,
+  `DELETE /dev/api/sessions`, `POST /dev/api/sessions/prune` (reads gated by `dev.view`,
+  mutations by `dev.manage`, all audited as `sessions.*`); Sessions screen with five stat cards,
+  force-logout-all (preserves the caller token), preview-then-clear inactive, searchable user
+  directory and a per-device drawer. Dev handler/scaffolding refactored to `dev.Deps` + `panelBase`
+  so later panels stop growing the positional constructor. Coverage: repository integration test
+  (formulas, directory/cursor/search, expired flag, prune safety, force-logout exclusion) and the
+  app e2e flow (current-token flag, dry-run, force logout survives the caller).
+- **I — done.** Developer accounts are created from the panel: `POST /dev/api/developers` creates a
+  tenantless internal user through `identity.Service.Create` and assigns the hidden role in the same
+  operation (new `GrantRole/RevokeRole` plus `AddRole/RemoveRole` identity primitives; `AssignRoles`
+  remains the replace-all path). `POST /dev/api/developers/role` calls
+  `access.RoleService.EnsureDeveloperRole` to create or repair the hidden global role and sync every
+  catalog permission (including un-hiding an existing role). `GET /dev/api/developers` (page/search)
+  and `/developers/stats` (developer count, role status, permission totals); `DELETE
+  /dev/api/developers/{user_id}` removes the role and refuses self-unassign (403). Reads use
+  `dev.view`, mutations `dev.manage`, all audited (`developers.create`, `developers.role.ensure`,
+  `developers.unassign`). The screen mirrors the mock: stat cards, missing/out-of-sync role card,
+  searchable account table with active-token counts, and a create-account modal. Coverage:
+  repository integration test (role holders, active-token counts, search/pagination) plus e2e create
+  → login → self-unassign 403 → revoke → access 403 and a dedicated role-provisioning test
+  (delete role → 409 on create → one-click provision → create/login works), including
+  permission-cache invalidation.
+- **G — done.** Shared `GET /dev/api/targets?type=tenant|user&search=&page=&per_page=` directory
+  (new `ListDevTenantTargets`/`ListDevUserTargets` + count queries, per-target override counts and
+  `GET /dev/api/targets/stats` + `dev.NewTargetRepository`) also usable by the Settings panel.
+  The list is cursor-free page/per_page (default 10, UI asks 20, max 100) with total/links/meta, so
+  a large user base never renders as a capped inline list. Thin flags API over
+  `featureflags.Service`: `GET /dev/api/flags` (effective + source + `overridden` at the selected
+  target), `PATCH /dev/api/flags` (batch set/clear, `nil` = inherit), `DELETE
+  /dev/api/flags/{key}` (reset to the next level), `POST /dev/api/flags/sync`; reads `dev.view`,
+  mutations `dev.manage`, audited as `flags.set`/`flags.reset`/`flags.sync`. Flags screen:
+  Global defaults / Tenant overrides / User overrides tabs; the tenant/user view is a two-pane
+  directory (search, override badges, pagination) plus a managing-target panel, while the global
+  view keeps the grouped toggle cards. Every flag row has source/default/override badges, an
+  inline switch, reset and a resolution drawer. Coverage: `parseFlagTarget`/override-mapping unit
+  tests plus an e2e state-machine test (global → tenant inheritance → tenant override → reset →
+  user override → counts/stats → batch clear → paged targets → sync → audit) and a live smoke
+  against the running binary. Note: target search is still `ILIKE '%term%'` (sequential scan);
+  add `pg_trgm` GIN indexes if a deployment's user table reaches millions.
+- **Playground — done (local-only, rev 10).** New **Sandbox** nav section after Management with a
+  `/playground` screen, hidden unless `GET /dev/api/me` reports `playground: true`
+  (`Config.IsLocal()`; local/development/dev only). The telemetry simulator moved out of Commands.
+  `dev.test` (registered only when the dashboard is enabled and the environment is local) has preset
+  actions (default batch, heavy, slow, failing) and a custom form (queue, count 1–10, sleep ≤10s,
+  fail, tag). The same screen can trigger real jobs: **`user.export`** (creates a data-processing
+  job + heavy export; returns the processing id/UUID) and **`mail.send`** (to/subject/text through
+  the configured driver). `POST /dev/api/playground/jobs` returns `202` and audits
+  `playground.jobs`; `GET /dev/api/playground` exposes the driver, queues and job kinds. Coverage:
+  `Config.IsLocal` unit test, a local e2e (synthetic batch → queue admin kind filter → user export
+  → mail → audit) and a staging e2e proving the endpoints 404 while the dashboard stays reachable.
+  Live smoke: both real jobs were accepted and `user.export` completed on the running worker.
+- **F — done (global/tenant).** Dev settings API delegates to `settings.Service`:
+  `GET /dev/api/settings/groups`, `POST /dev/api/settings/groups`,
+  `PATCH|DELETE /dev/api/settings/groups/{id}`, `GET /dev/api/settings?target_type=global|tenant`,
+  `PATCH|DELETE /dev/api/settings/{key}`, `PATCH /dev/api/settings/{key}/group` and
+  `POST /dev/api/settings/sync`; reads use `dev.view`, mutations `dev.manage`, audited as
+  `settings.set/reset/sync` and `settings.group.create/update/delete/assign`. The screen is a
+  master-detail board (scales to 100+ groups): a searchable, scrollable **group directory** on the
+  left + the selected group's settings on the right. HTML5 drag moves a setting onto any visible
+  group (`AssignKeyGroup`); dragging a group handle reorders (`UpdateGroup` sort orders); each
+  setting row has a **Move** modal with a destination-group form, and the setting editor also has a
+  group selector for long directories. A catalog **Ungrouped** group (sort 0) is the parking
+  bucket: drag a setting into it, select it from the left directory, then drag it back to any
+  functional group (or use Move). Custom groups are created/edited in a small modal and deleted
+  with a confirm. Catalog system groups can be renamed from the same modal; their slug stays
+  stable and `settings:sync` restores the catalog name/description/sort. Type-aware value editor
+  (string/int/bool/json) with default → global → tenant → effective chain, inline bool switches,
+  source/set-here badges, reset, per-group setting filter, and a Sync catalog CTA for fresh
+  databases. Global-only keys are read-only on the tenant target. Per-user overrides are deferred
+  (rev 8); tenant overrides remain available to tenant users on the tenant surface. Coverage: e2e
+  (groups CRUD, assignment + fallback on delete, global/tenant set/reset, global-only rejection,
+  sync idempotence, audit) plus a live smoke against the running binary.
+- **H — done.** `sql/queries/dev_files.sql` lists files with search/type/disk/attachment/owner/
+  uploader/tenant/date filters, whitelisted ordering and a type/disk/attachment aggregate stats
+  query. `dev.FileRepository` + `NewFileRepository` own the joins (uploader name/email, tenant,
+  owner name/email) and the stats roll-up; `files.Service.Open` streams through `storage.Disk.Get`
+  with not-found/subscription error mapping. Endpoints: `GET /dev/api/files` (page/per_page),
+  `GET /dev/api/files/stats`, `GET /dev/api/files/{id}/download?inline=1` (safe inline types only:
+  raster image/video/audio/PDF; SVG and unknown types download) and `DELETE /dev/api/files/{id}`
+  (delegates to `files.Service.Delete`, audited as `files.delete`). The tenant filter uses the
+  uploader's `users.tenant_id` because files are platform-global. The SPA has grid/list views
+  (persisted), stat cards, tenant/type/disk/attachment/date filters, sortable paging, authenticated
+  thumbnail/preview blob URLs, a metadata drawer and download/delete. No migration was needed (the
+  optional `files(created_at)` index was skipped to leave `00017` for J). Coverage: repository
+  integration test (filters, pagination, ordering, enrichment, stats) + app e2e
+  (tenant filtering, stats, inline/attachment streams, audited delete) and handler unit tests.
+- **J — done.** `00017_create_backup_runs.sql` (+ `backup_runs` queries/indexes) and the transport-free
+  `internal/modules/backup`: repository, `pg_dump` runner (PG* env, custom format, compress=9,
+  no-owner/no-privileges, timeout, version probe), tar.gz archive with `manifest.json` +
+  `database.dump` (+ optional files), independent local/S3 destination copies, DefaultStrategy
+  retention (never deletes newest; optional size cap), advisory-locked execution, River job
+  (`backup.run`, heavy, 1 retry), `backup.run`/`backup.clean` scheduler tasks, `Backups` health
+  check, CLI (`backup:run/list/clean/monitor`) and `/dev/api/backups*` (list/stats/config/create/
+  get/download/delete/clean, audited). **Local storage is mandatory**; S3/R2/MinIO is optional via
+  the shared `S3_*` settings because the archive (including the DB dump) is copied to every
+  destination. `BACKUP_DIR` defaults to `backups` under `APP_STORAGE_DIR`; `BACKUP_ENABLED` gates
+  scheduling and dashboard creation, while the CLI can always trigger a manual run. The SPA screen
+  polls while runs are pending/running, shows per-destination results, downloads and previews
+  cleanup. Coverage: retention table tests, archive contents, DSN→PG* env, service partial/failure
+  and cleanup tests, repository integration test; the app e2e skips when `pg_dump` is unavailable
+  (it is not installed in the current local environment).
+- **Remaining:** hardening only — the ≤3% p95 overhead smoke, developer/backup runbooks, the
+  `dev_actions` retention decision, OpenAPI drift and the full acceptance pass.
 
 ## Goal
 
@@ -126,10 +296,15 @@ production unless explicitly enabled:
    request, redacted before persistence.
 3. **Queue & ops admin:** first-party queue management (jobs, retries, cancels, queue
    pause/resume) built on River's client admin API — **no River UI dependency**.
-4. **Management panels:** sessions/devices, settings (groups + global/tenant/user overrides),
+4. **Management panels:** sessions/devices, settings (groups + global/tenant overrides),
    feature flags, file browser, developer-role holders — mirroring the Dev Dashboard mock.
 5. **SPA at `/dev`:** React dashboard (TanStack Start SPA mode + Query/Table/Form/Virtual) tying it
    all together, with the existing Scalar docs and health linked.
+
+The dashboard is **developer-only**: tenant users are never granted `dev.view`/`dev.manage` and
+never reach `/dev`/`/dev/api`; they will get their own dashboard (Phase 8). Tenant settings
+overrides are managed through the tenant surface (`PATCH /api/v1/settings/tenant/{key}`) by users
+holding `setting.update`.
 
 ## Reference (Laravel)
 
@@ -171,8 +346,10 @@ Horizon; we deliberately do not port them). Behavior bars:
 4. **Routes:** `/dev` + `/dev/*` (SPA shell/assets) and `/dev/api/*` (JSON), under
    `authn.Authenticate` → `tenancy.Exempt` (super-admin and developer are tenant-less).
    `/dev/api/*` paths are hand-written in `api/openapi.yaml` outside the generated regions (the
-   generator only emits `/api/v1`); drift excludes exact patterns `/dev` and `/dev/*` like
-   `/storage/*`. Unknown `/dev/api/*` returns problem+json 404, never the shell.
+       generator only emits `/api/v1`); drift excludes exact patterns `/dev` and `/dev/*` like
+       `/storage/*`. Unknown `/dev/api/*` returns problem+json 404, never the shell. Access is
+       developer-only: tenant users are never granted `dev.view`/`dev.manage`; tenant-facing
+       management belongs to the tenant dashboard (Phase 8).
 5. **Capture hooks, not a rewrite.** HTTP: non-blocking middleware after `AccessLog`. SQL: pgx
    `QueryTracer` via `poolCfg.ConnConfig.Tracer` in `database/registry.go`. Cache: decorator
    around `cache.Store`. Queue: decorator around `queue.Engine` + wrapper on `Definition.Handle`.
@@ -201,7 +378,8 @@ Horizon; we deliberately do not port them). Behavior bars:
 11. **Sessions manager semantics** (match the mock):
     - `USERS` = distinct users owning ≥1 non-expired token.
     - `ACTIVE TOKENS` = non-expired tokens.
-    - `TOKENS USED (24H)` = tokens with `last_used_at ≥ now-24h`.
+    - `TOKENS USED (24H)` = non-expired tokens with `last_used_at ≥ now-24h` (the used-24h
+      counter is a subset of active tokens, so it can never exceed `ACTIVE TOKENS`).
     - `IDLE TOKENS` = active tokens not used in the last 24h (never used counts as idle).
     - `INACTIVE (30D+)` = active tokens idle ≥ 30 days (or never used and created ≥ 30 days ago).
     - **Force logout all** deletes all tokens **except the caller's current token** (added
@@ -214,12 +392,13 @@ Horizon; we deliberately do not port them). Behavior bars:
     assignment and global/tenant values already exist; dev handlers **delegate to
     `settings.Service`** (`ListGroups/CreateGroup/UpdateGroup/DeleteGroup/AssignKeyGroup/SetTarget/
     DeleteTarget/EffectiveForTarget`) — no duplicated rules. Drag-and-drop = `AssignKeyGroup` +
-    group `sort_order`; keys stay registry-owned (`settings:sync`), the UI edits values/grouping
-    only. **Per-user overrides are the one backend dependency (in development):** the `settings`
-    table already has `target_type/target_id`, but `validateTarget` rejects `user` today. Required
-    extension: allow `user` for tenant-scoped keys, resolve **user → tenant → global → default**
-    (matching feature flags), add the `settings:blob:u:<id>` cache blob + invalidation. Until it
-    lands, the user-scope option is hidden in the UI (panel ships without it).
+     group `sort_order`; keys stay registry-owned (`settings:sync`), the UI edits values/grouping
+     only. **Per-user overrides are deferred (rev 8):** no `user` target is added to
+     `settings.Service`/the dev API, no `settings:blob:u:<id>`, and the UI has no user-scope
+     option. Tenant users manage their own tenant overrides on the tenant surface
+     (`GET /api/v1/settings`, `PATCH /api/v1/settings/tenant/{key}`, gated by `setting.update`).
+     The dashboard is developer-only; tenant users never reach it and get their own dashboard
+     (Phase 8).
 13. **Feature flags reuse Phase 11.** `feature_flags` + `internal/modules/featureflags` already
     support global/tenant/**user** targets (`Effective` user→tenant→global→default, 5m cache), the
     internal endpoints and `feature-flags:sync`. The dev panel is a thin API + UI on
@@ -232,12 +411,17 @@ Horizon; we deliberately do not port them). Behavior bars:
     for public, s3 and a future private disk) — none exist today. Delete goes through
     `files.Service.Delete` and is audited. No schema change required (optional
     `files(created_at)` index in the dev migration). Upload from the panel is an optional stretch.
-15. **Developers screen** lists users holding the hidden `Developer` role and assigns/unassigns it
-    through the identity service (audited; self-unassign is refused). Super-admin remains the
-    fallback, so lockout is impossible.
+15. **Developers screen creates dedicated accounts.** "New developer" creates a **tenantless
+    internal user** and assigns the hidden `Developer` role in one request (password required).
+    The role itself can be created/repaired from the panel (`EnsureDeveloperRole`: hidden global
+    system role + every catalog permission, mirroring Super-Admin) so a database seeded without it
+    is recoverable without shell access. Removal unassigns the role (the internal user record
+    remains); self-unassign is refused. Super-admin remains the fallback, so lockout is impossible.
+    Developers impersonate tenants through the normal `X-Acting-Tenant`/`X-Acting-Branch` headers.
 16. **Navigation mirrors the mock:** Overview · Settings · Feature Flags · Sessions · Files ·
     Queue · Backups · Developers · Telescope (Requests / Logs / Exceptions) · System (health +
-    scheduler) · Commands (one-off actions) · API Docs (link to `/docs`).
+    scheduler) · Commands (one-off actions) · Playground (local-only **Sandbox** section after
+    Management) · API Docs (link to `/docs`).
 17. **Backups follow Laravel-backup principles, DB-first (Deliverable J).**
     - `backup:run` streams a **`pg_dump --format=custom --compress=9 --no-owner --no-privileges`**
       dump into a `.tar.gz` with `manifest.json`; optional file paths (`BACKUP_INCLUDE_FILES`,
@@ -245,10 +429,12 @@ Horizon; we deliberately do not port them). Behavior bars:
       validated (`BACKUP_PG_DUMP_PATH`, default `pg_dump`) and its version recorded in the
       manifest. Credentials are passed through `PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE/
       PGSSLMODE` (parsed from the DSN), never in argv, so they cannot leak via process listings.
-    - **Destinations are independent:** local directory (`BACKUP_DIR`, 0700) and optional S3
-      object-storage prefix (`BACKUP_DESTINATIONS=local,s3`, key `BACKUP_S3_PREFIX/<env>/<file>`)
-      reusing the existing S3 disk. Every destination is attempted; a single failure records
-      `partial` instead of losing the successful copies (Laravel behavior).
+    - **Local is mandatory; remote is optional:** every run is written to the local directory
+      (`BACKUP_DIR`, 0700), and `BACKUP_DESTINATIONS` can add the S3-compatible disk (AWS S3,
+      Cloudflare R2, MinIO, B2 S3) at `BACKUP_S3_PREFIX/<env>/<file>`. Local is injected even when
+      omitted from the CSV. Every destination is attempted; a single failure records `partial`
+      instead of losing the successful copies (Laravel behavior). The same archive contains the DB
+      dump, so the remote copy is a full database backup too.
     - **One row per run** in `backup_runs` (status, trigger/actor, filename, size, SHA-256,
       `pg_dump` version, database, per-destination results, timings, error, soft-delete marker), so
       the dashboard can list/download/delete without an S3 List API. Runs execute as the
@@ -271,9 +457,9 @@ Horizon; we deliberately do not port them). Behavior bars:
 ## Deliverables
 
 Ten mergeable slices. A–D form the original core; E–I are the management panels and can ship
-after D's shell. B/C are parallel; F is blocked only on the per-user settings extension; E/G/H/I
-have no external blockers. **J (backups) is independent** and can ship anytime — it only needs a
-host `pg_dump`.
+after D's shell. B/C are parallel; E/F/G/I are complete, H has no external blockers, and per-user
+settings are deferred (rev 8). **J (backups) is independent** and can ship anytime — it only needs
+a host `pg_dump`.
 
 ### Deliverable A — Developer identity & access
 
@@ -354,22 +540,22 @@ current token id; no expired-token cleanup.
   force-logout-all card, clear-inactive card with threshold input + preview, searchable user
   directory with per-user counts/actions, right-hand device panel with per-device revoke.
 
-### Deliverable F — Settings manager (depends on per-user settings extension)
+### Deliverable F — Settings manager (global/tenant; per-user deferred)
 
 - Dev API delegating to `settings.Service` (`dev.view`/`dev.manage`, mutations audited):
   - `GET /dev/api/settings/groups`, `POST /dev/api/settings/groups`,
     `PATCH /dev/api/settings/groups/{id}` (incl. `sort_order`), `DELETE .../{id}`
-  - `GET /dev/api/settings?target_type=global|tenant|user&target_id=...` → registry metadata
+  - `GET /dev/api/settings?target_type=global|tenant&target_id=...` → registry metadata
     (type/default/description/scope/group) + effective value + source
   - `PATCH /dev/api/settings/{key}` (set value for target),
     `DELETE /dev/api/settings/{key}?target_type=&target_id=` (clear override)
   - `PATCH /dev/api/settings/{key}/group` `{group_id}` (drag-and-drop assignment)
-- Backend dependency (settings module, in development): accept `user` targets for tenant-scoped
-  keys, resolve **user → tenant → global → default**, cache blob `settings:blob:u:<id>` +
-  invalidation. The UI hides per-user editing until available (capability probe).
+- Per-user overrides are **out of scope** (rev 8): no `user` target and no
+  `settings:blob:u:<id>`. Tenant users manage tenant overrides on the tenant surface
+  (`GET /api/v1/settings`, `PATCH /api/v1/settings/tenant/{key}`) with `setting.update`.
 - UI: group columns with drag-and-drop (settings between groups, group reorder), per-key editor
-  with the resolution chain and override badges, target switcher (global / tenant search / user
-  search), sync button (`settings:sync`, audited). Key creation/deletion stays in the registry.
+  with the resolution chain and override badges, target switcher (global / tenant search), sync
+  button (`settings:sync`, audited). Key creation/deletion stays in the registry.
 
 ### Deliverable G — Feature flags manager
 
@@ -384,27 +570,36 @@ current token id; no expired-token cleanup.
 
 ### Deliverable H — File browser
 
-- New dev queries (no schema change; optional `files(created_at)` index): paginated list with
-  `search` (name/file_name), `type`, `disk`, `attached`, `owner_type`, `owner_id`, `created_by`,
-  date range, whitelisted `order_by` (`created_at`, `size`, `name`); aggregated stats
-  (count/size by type and disk).
-- Endpoints (`dev.view` reads, `dev.manage` mutations): `GET /dev/api/files`,
+- New dev queries (no schema change; the optional `files(created_at)` index was skipped to keep
+  `00017` for J): paginated list with `search` (name/file_name), `type`, `disk`, `attached`,
+  `owner_type`, `owner_id`, `created_by`, **`tenant_id`** (matched through the uploader's
+  `users.tenant_id`, because `files` is platform-global), date range, whitelisted `order_by`
+  (`created_at`, `size`, `name`); aggregated stats (count/size by type, disk and attachment state).
+- Endpoints (`dev.view` reads, `dev.manage` mutations): `GET /dev/api/files` (page/per_page),
   `GET /dev/api/files/stats`, `GET /dev/api/files/{id}/download` (`Content-Disposition:
-  attachment`; `?inline=1` for image preview), `DELETE /dev/api/files/{id}` (service delete + disk
-  object, audited). Optional stretch: `POST /dev/api/files` upload.
-- DTO enrichment: disk, path, owner (`type/id/collection`), uploader (`created_by` + name/email),
-  public URL/presigned URL, timestamps — the current files response omits these.
-- UI: file-manager grid/list with image thumbnails (inline preview), search + filters, pagination,
-  detail drawer (metadata, owner/attachment, storage), download, delete with confirm, header stat
-  cards (files/size by type), optional upload.
+  attachment`; `?inline=1` streams raster images, video, audio and PDF inline; SVG and unknown
+  types always download), `DELETE /dev/api/files/{id}` (service delete + disk object, audited).
+  Upload and bulk delete are out of scope in v1.
+- DTO enrichment: disk, path, owner (`type/id/collection` + user name/email), uploader
+  (`created_by` + name/email), tenant id/name, public URL/presigned URL, preview kind, timestamps —
+  the current files response omits these.
+- UI: file-manager grid/list (persisted toggle) with authenticated thumbnails and inline detail
+  preview, search + type/disk/attachment/tenant/date filters, sortable paging, detail drawer
+  (metadata, owner/attachment, storage), download, delete with confirm, header stat cards.
 
 ### Deliverable I — Developers screen
 
-- `GET /dev/api/developers?search=` (users holding the hidden `Developer` role),
-  `POST /dev/api/developers/{user_id}` (assign), `DELETE /dev/api/developers/{user_id}`
-  (unassign; self-unassign refused). Delegates to the identity role-assignment service; audited.
-- UI: developer list with search, assign/unassign with confirm; note that super-admins also access
-  the dashboard.
+- `GET /dev/api/developers?search=&page=&per_page=` (users holding the hidden `Developer` role,
+  with active-token counts), `GET /dev/api/developers/stats` (developer count, role status,
+  permission totals), `POST /dev/api/developers` (create a tenantless internal account with
+  `{name,email,password,is_active}` and assign the role), `POST /dev/api/developers/role`
+  (create/repair the hidden role with all catalog permissions), `DELETE
+  /dev/api/developers/{user_id}` (unassign; self-unassign refused). Delegates to the identity
+  account/role services; audited.
+- UI: stat cards (developers, role status, total permissions, role), a missing/out-of-sync role
+  card with the one-click provision/sync action, a searchable account table with status/tokens/
+  created/actions, and a create-account modal. Note that developers can impersonate tenants via
+  the acting headers and that super-admins also access the dashboard.
 
 ### Deliverable J — Database backups (Laravel-backup parity)
 
@@ -470,26 +665,29 @@ Dev UI:
   `id bigserial`, `request_id text NULL`, `tenant_id bigint NULL`, JSONB payloads, `created_at
   timestamptz`, indexes `(created_at)`, `(request_id)`; `dev_actions` also `actor_user_id`,
   `action`, `status`, `duration_ms`; optional `files(created_at)` index; **`00017`
-  `backup_runs`** (see Deliverable J). Per-user **settings**
-  needs **no** migration (existing `target_type/target_id` columns) — a settings-module service
-  extension (dependency, in development).
+  `backup_runs`** (see Deliverable J). Per-user settings are deferred (rev 8), so no migration or
+  service change is needed for settings targets.
 - **API endpoints (hand-written in `api/openapi.yaml`):** core — `GET /dev/api/me`,
   `GET /dev/api/health`, `GET /dev/api/requests`, `GET /dev/api/requests/{id}`,
   `GET /dev/api/logs`, `GET /dev/api/exceptions`, `GET /dev/api/queue/queues`
   (+ pause/resume), `GET /dev/api/queue/jobs` (+ get/retry/cancel/delete),
   `GET /dev/api/scheduler/tasks` (+ run), `GET /dev/api/actions`, `POST /dev/api/cache/clear`,
-  `POST /dev/api/sync/permissions|settings|feature-flags`; panels —
+  `POST /dev/api/sync/permissions|settings|feature-flags`; local-only playground —
+  `GET /dev/api/playground`, `POST /dev/api/playground/jobs`; panels —
   `GET /dev/api/sessions/stats`, `GET /dev/api/sessions/users`,
   `GET /dev/api/sessions/users/{id}/tokens`, `DELETE /dev/api/sessions/tokens/{id}`,
   `DELETE /dev/api/sessions/users/{id}`, `DELETE /dev/api/sessions`,
   `POST /dev/api/sessions/prune`;
   `GET/POST /dev/api/settings/groups`, `PATCH/DELETE /dev/api/settings/groups/{id}`,
   `GET /dev/api/settings`, `PATCH/DELETE /dev/api/settings/{key}`,
-  `PATCH /dev/api/settings/{key}/group`;
-  `GET /dev/api/flags`, `PATCH /dev/api/flags`, `DELETE /dev/api/flags/{key}`;
+  `PATCH /dev/api/settings/{key}/group`, `POST /dev/api/settings/sync`;
+  `GET /dev/api/targets`, `GET /dev/api/targets/stats`;
+  `GET /dev/api/flags`, `PATCH /dev/api/flags`, `DELETE /dev/api/flags/{key}`,
+  `POST /dev/api/flags/sync`;
   `GET /dev/api/files`, `GET /dev/api/files/stats`, `GET /dev/api/files/{id}/download`,
   `DELETE /dev/api/files/{id}`;
-  `GET /dev/api/developers`, `POST/DELETE /dev/api/developers/{user_id}`;
+  `GET /dev/api/developers`, `GET /dev/api/developers/stats`, `POST /dev/api/developers`,
+  `POST /dev/api/developers/role`, `DELETE /dev/api/developers/{user_id}`;
   `GET /dev/api/backups`, `POST /dev/api/backups`, `GET /dev/api/backups/{id}`,
   `GET /dev/api/backups/{id}/download`, `DELETE /dev/api/backups/{id}`,
   `POST /dev/api/backups/clean`, `GET /dev/api/backups/config`.
@@ -501,7 +699,8 @@ Dev UI:
   `DEV_DASHBOARD_MAX_BODY_BYTES` (default 65536), `DEV_DASHBOARD_REDACT_KEYS` (csv),
   `DEV_DASHBOARD_STORE` (`database` only in v1). `.env.example` updated.
   **Backups:** `BACKUP_ENABLED` (default false), `BACKUP_NAME` (default app name),
-  `BACKUP_DIR` (default `var/backups`), `BACKUP_DESTINATIONS` (csv, default `local`),
+  `BACKUP_DIR` (default `backups` under `APP_STORAGE_DIR`), `BACKUP_DESTINATIONS` (csv, default
+  `local`; local is always included),
   `BACKUP_S3_PREFIX` (default `backups`), `BACKUP_PG_DUMP_PATH` (default `pg_dump`),
   `BACKUP_TIMEOUT` (default 1h), `BACKUP_RUN_CRON` (default `30 1 * * *`),
   `BACKUP_CLEAN_CRON` (default `30 2 * * *`), `BACKUP_KEEP_ALL_DAYS` (7),
@@ -553,43 +752,45 @@ Deliverable D:
 
 Deliverable E (Sessions):
 
-- [ ] TokenID on Identity; token stats/directory/device queries; prune queries
-- [ ] `/dev/api/sessions/*` endpoints (force logout excludes caller; prune dry-run)
-- [ ] Sessions screen matching the mock (cards, force logout, clear inactive, directory, devices)
+- [x] TokenID on Identity; token stats/directory/device queries; prune queries
+- [x] `/dev/api/sessions/*` endpoints (force logout excludes caller; prune dry-run)
+- [x] Sessions screen matching the mock (cards, force logout, clear inactive, directory, devices)
 
 Deliverable F (Settings):
 
-- [ ] Dev settings/group endpoints delegating to `settings.Service` (audited mutations)
-- [ ] Drag-and-drop board + group reorder + resolution-chain editor + target switcher
-- [ ] Per-user override supported when the settings extension lands (UI capability probe)
+- [x] Dev settings/group endpoints delegating to `settings.Service` (audited mutations)
+- [x] Drag-and-drop board + group reorder + resolution-chain editor + target switcher
+- [x] Global/tenant targets only; per-user overrides deferred (rev 8)
 
 Deliverable G (Flags):
 
-- [ ] Dev flags endpoints (effective list, batch set/clear) + UI grouped toggles with override drawer
+- [x] Dev flags endpoints (effective list, batch set/clear) + UI grouped toggles with override drawer
 
 Deliverable H (Files):
 
-- [ ] Dev file queries (filters/order/stats) + enriched DTO
-- [ ] `download`/`preview` streaming endpoint (Disk.Get) + audited delete
-- [ ] File-manager UI (grid/list, thumbnails, filters, detail, download/delete, stats)
+- [x] Dev file queries (filters/order/stats) + enriched DTO + tenant filter via uploader
+- [x] `download`/`preview` streaming endpoint (Disk.Get) + audited delete
+- [x] File-manager UI (grid/list, thumbnails, filters, detail, download/delete, stats)
 
 Deliverable I (Developers):
 
-- [ ] Developers list/assign/unassign endpoints + screen (self-unassign refused, audited)
+- [x] Create-account endpoint creates a tenantless internal user + Developer role (audited)
+- [x] Role provisioning/sync endpoint + missing/out-of-sync card; self-unassign refused
+- [x] Developer list with status/tokens/created, stats header, search and create modal
 
 Deliverable J (Backups):
 
-- [ ] `config.Backup` + `.env.example` (destinations, retention, cron, pg_dump, timeouts)
-- [ ] `00017_create_backup_runs.sql` + sqlc queries + repository
-- [ ] `pg_dump` service (PG* env, custom format, validated binary, timeout) + tar.gz manifest +
+- [x] `config.Backup` + `.env.example` (destinations, retention, cron, pg_dump, timeouts)
+- [x] `00017_create_backup_runs.sql` + sqlc queries + repository
+- [x] `pg_dump` service (PG* env, custom format, validated binary, timeout) + tar.gz manifest +
       SHA-256
-- [ ] Local + S3 destinations with independent results and `partial` status
-- [ ] DefaultStrategy retention + `--dry-run` cleanup (never deletes the newest)
-- [ ] `backup.run` queue job + advisory lock + scheduler tasks + `Backups` health check
-- [ ] CLI `backup:run/list/clean/monitor`
-- [ ] `/dev/api/backups*` endpoints + Backups screen + command-center action + audit
-- [ ] Tests: retention table-driven, manifest/archive contents, DSN→PG* env, partial failure,
-      integration (skipped when `pg_dump` missing), e2e create/download/delete
+- [x] Local (mandatory) + optional S3/R2 destinations with independent results and `partial`
+- [x] DefaultStrategy retention + `--dry-run` cleanup (never deletes the newest)
+- [x] `backup.run` queue job + advisory lock + scheduler tasks + `Backups` health check
+- [x] CLI `backup:run/list/clean/monitor`
+- [x] `/dev/api/backups*` endpoints + Backups screen + command-center action + audit
+- [x] Tests: retention table-driven, manifest/archive contents, DSN→PG* env, partial failure,
+      repository integration; e2e create/download/delete is env-gated on `pg_dump`
 
 ## Out of scope
 
@@ -599,8 +800,9 @@ Deliverable J (Backups):
 - Cross-process telemetry fan-in beyond the shared DB store (no live websocket).
 - Billing package entitlements (`package_features`, `billing.Guard`) — feature flags here are
   runtime toggles only.
-- Settings key creation/deletion (registry-owned; `settings:sync`), file rename/move, generic
-  attachment CRUD (out of scope; avatar flow remains the only attachment producer).
+- Settings key creation/deletion (registry-owned; `settings:sync`), **per-user settings overrides**
+  (deferred; global/tenant only), file rename/move, generic attachment CRUD (out of scope; avatar
+  flow remains the only attachment producer).
 - CSP rework (`SecurityHeaders` deliberately sets none today); if added later, `/dev` and `/docs`
   need scoping.
 - **Backups v1:** restore / point-in-time recovery / WAL archiving, archive encryption, managed-DB
@@ -619,8 +821,12 @@ Deliverable J (Backups):
 - Sessions: stats match the documented formulas; revoke one device, revoke one user, force logout
   all (caller's current token survives), and prune with dry-run/execute; prune never deletes a
   token used within the threshold.
-- Settings: groups CRUD + drag assignment persist; effective values match
-  user → tenant → global → default once the per-user extension lands; every write audited.
+- Developers: creating an account creates a tenantless internal user and assigns the hidden
+  `Developer` role; the role can be created/repaired from the panel with all catalog permissions;
+  self-unassign is refused; every create/role/unassign action is audited.
+- Settings: groups CRUD + drag assignment persist; effective values match global → tenant →
+  default for the dev panel targets, and tenant users can set tenant overrides via
+  `PATCH /api/v1/settings/tenant/{key}`; every dev write audited.
 - Flags: toggling a flagship flag changes `Effective` for the target and resets cleanly; billing
   entitlements unaffected.
 - Files: list/filter/search/stats work over all uploads; download streams for public and s3 disks;
@@ -643,12 +849,13 @@ Deliverable J (Backups):
 
 ## Open questions
 
-- Timing of the per-user settings backend extension (owned by the settings module) — Deliverable F
-  ships globally/tenant-scoped first and enables user targets when available.
+- ~~Timing of the per-user settings backend extension~~ — resolved (rev 8): per-user settings are
+  deferred; global/tenant only, with tenant overrides on the tenant surface.
 - Whether session idle thresholds stay fixed (24h used / 30d inactive) or become config keys; the
   prune threshold is a request parameter either way.
-- Whether file upload from the panel is wanted in v1 (currently an optional stretch) and whether
-  bulk delete is needed; rename/move stay out of scope.
+- ~~Whether file upload from the panel is wanted in v1 and whether bulk delete is needed~~ —
+  resolved (rev 12): H ships browse/preview/download/delete only; upload, bulk delete and
+  rename/move stay out of scope.
 - Overhead budget verification method (recorded `bench/` smoke vs in-repo benchmark test); the
   ≤ 3% target stands.
 - Whether Phase 8 reuses `web/dev` scaffolding (TanStack Start basepath `/`) — Phase 8's spec

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"mime/multipart"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -165,6 +166,28 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	}
 	s.removeFromDisk(ctx, file.Disk, file.Path)
 	return nil
+}
+
+func (s *Service) Open(ctx context.Context, id int64) (io.ReadCloser, *File, error) {
+	file, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	disk, err := s.disks.Disk(file.Disk)
+	if err != nil {
+		return nil, nil, apperr.Wrap(apperr.ServiceUnavailable, "The file storage is not available.", err)
+	}
+	reader, err := disk.Get(ctx, file.Path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, apperr.Wrap(apperr.ResourceNotFound, "The file content is not available.", err)
+		}
+		if exists, existsErr := disk.Exists(ctx, file.Path); existsErr == nil && !exists {
+			return nil, nil, apperr.Wrap(apperr.ResourceNotFound, "The file content is not available.", err)
+		}
+		return nil, nil, apperr.Wrap(apperr.ServiceUnavailable, "The file content could not be read.", err)
+	}
+	return reader, file, nil
 }
 
 // URL resolves the public URL of a stored file; failures degrade to "".

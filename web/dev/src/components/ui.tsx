@@ -32,7 +32,16 @@ export type IconName =
   | 'clock'
   | 'activity'
   | 'terminal'
+  | 'playground'
+  | 'grip'
+  | 'plus'
+  | 'pencil'
+  | 'folder'
   | 'eye'
+  | 'grid'
+  | 'list'
+  | 'download'
+  | 'backup'
 
 const paths: Record<IconName, ReactNode> = {
   overview: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
@@ -64,7 +73,16 @@ const paths: Record<IconName, ReactNode> = {
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
   activity: <path d="M3 12h4l2.5-7 4 14 2.5-7h5" />,
   terminal: <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3M12.5 15H17" /></>,
+  playground: <><path d="M9 3h6M10 3v5L5.5 18.5A2 2 0 0 0 7.3 21h9.4a2 2 0 0 0 1.8-2.5L14 8V3" /><path d="M7.5 15h9" /></>,
+  grip: <><circle cx="9" cy="6" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="9" cy="18" r="1" /><circle cx="15" cy="18" r="1" /></>,
+  plus: <><path d="M12 5v14M5 12h14" /></>,
+  pencil: <><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10z" /><path d="m13.5 8.5 3 3" /></>,
+  folder: <><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></>,
   eye: <><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="3" /></>,
+  grid: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
+  list: <><path d="M8 6h13M8 12h13M8 18h13" /><circle cx="4" cy="6" r="1" /><circle cx="4" cy="12" r="1" /><circle cx="4" cy="18" r="1" /></>,
+  download: <><path d="M12 3v12M7 10l5 5 5-5" /><path d="M5 20h14" /></>,
+  backup: <><ellipse cx="12" cy="5" rx="7" ry="3" /><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5" /><path d="M5 11v6c0 1.7 3.1 3 7 3" /><path d="M17 16v6M14.5 19.5 17 22l2.5-2.5" /></>,
 }
 
 export function Icon({ name, className, style }: { name: IconName; className?: string; style?: React.CSSProperties }) {
@@ -320,6 +338,34 @@ export function CopyButton({ value, label }: { value: string; label?: string }) 
       <Icon name="copy" />
       {label ?? null}
     </button>
+  )
+}
+
+export function Modal({
+  open,
+  title,
+  description,
+  actions,
+  onClose,
+  children,
+}: {
+  open: boolean
+  title: ReactNode
+  description?: ReactNode
+  actions?: ReactNode
+  onClose: () => void
+  children: ReactNode
+}) {
+  if (!open) return null
+  return (
+    <div className="overlay center" onClick={onClose}>
+      <div className="modal" onClick={(event) => event.stopPropagation()}>
+        <h2 className="modal-title">{title}</h2>
+        {description ? <p className="modal-sub">{description}</p> : null}
+        <div className="modal-body">{children}</div>
+        {actions ? <div className="modal-actions">{actions}</div> : null}
+      </div>
+    </div>
   )
 }
 

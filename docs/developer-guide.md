@@ -62,10 +62,11 @@ headers on resolved routes are 403 at the middleware.
 whitelist ordering with `httpx.OrderParams(r, "id", "name", "created_at")`, respond with
 `responder.Paginated(w, r, status, data, meta, links)` where `meta, links := httpx.NewPagination(r, page, perPage, total)`.
 
-**Cursor pagination** — only the notification feed. It uses `limit` (default 20, max 100) +
-`cursor` (+ `unread_only`/`priority`), not `page`/`per_page`, and responds with
-`responder.Cursor(w, r, status, data, meta, links)`; links come from `httpx.CursorURL`.
-`per_page` is ignored on cursor endpoints on purpose.
+**Cursor pagination** — the notification feed and developer-dashboard streams (requests, logs,
+exceptions, jobs, sessions, actions, backups). They use `limit` (default 20/25, max 100) + `cursor`,
+not `page`/`per_page`, and respond with `responder.Cursor(w, r, status, data, meta, links)`; links
+come from `httpx.CursorURL`. Management lists (users, developers, targets, files) use
+`page`/`per_page`.
 
 **Transactions** — services own them: `s.tx.WithTx(ctx, func(q *dbgen.Queries) error { … })`.
 
@@ -79,8 +80,9 @@ and invalidate with `cachekeys.Bump(ctx, store, "ns")`.
 enqueue via the `queue.Engine` (prefer `EnqueueTx` with your write). Jobs re-resolve tenancy from the
 envelope.
 
-**Scheduled tasks** — register `{ID, Spec, Description, Timeout, Overflow, Run}` in
-`internal/app/platform.go`; they run in the `ims schedule` process.
+**Scheduled tasks** — register `{ID, Spec, Description, Timeout, Overlap, Run}` in
+`internal/app/platform.go`; `Overlap` is `scheduler.OverlapSkip` (default) or
+`scheduler.OverlapAllow`. Tasks run in the `ims schedule` process only.
 
 **Naming** — Go: `PascalCase` exported, package `snake`/single word. DB: `snake_case`, plural tables.
 JSON: `snake_case`. Migrations: `000NN_verb_noun.sql` (goose up/down). Rules listed in the
@@ -128,28 +130,98 @@ Rules of thumb:
 
 ## 5. Recipe — add a new CRUD module
 
-Step 1 — scaffold (migration + sqlc queries + module package, and it runs `sqlc generate`):
+The generator is intentionally conservative: it creates a **tenant-scoped, soft-deleted** module
+with `id`, `tenant_id`, audit columns and timestamps. Adapt it if the resource is global, branch
+scoped or read-only.
+
+Step 1 — scaffold:
 
 ```bash
-ims gen module --name=product --fields="name:string,description:text?,price:decimal,is_active:bool"
+# binary: ims gen module ...   |   from source: go run ./cmd/app gen module ...
+ims gen module --name=product \
+  --fields="name:string,description:text?,price:decimal,is_active:bool"
 ```
 
-Step 2 — fix up the generated SQL if needed, then regenerate generated code:
+This writes:
+
+- `migrations/000NN_create_products.sql` (goose up/down, tenant index, `deleted_at` soft delete)
+- `sql/queries/products.sql` (tenant-filtered CRUD)
+- `internal/modules/product/{model,repository,service,request,handler,routes}.go`
+- `internal/modules/product/service_test.go`
+- the managed `/api/v1/product` OpenAPI region
+
+It runs `sqlc generate` and refreshes the OpenAPI region by default. Supported field types:
+`string`, `text`, `int`, `bigint`, `bool`, `decimal`, `date`, `datetime`, `json`; append `?` for
+nullable (`notes:text?`). Use `--table`, `--package`, `--no-sqlc` or `--no-openapi` to override.
+The scaffold uses a naive plural table name (`product` → `products`).
+
+Step 2 — adjust the generated SQL if needed:
 
 ```bash
-make sqlc            # after editing sql/queries/product.sql or migrations/
+make sqlc            # after editing sql/queries/products.sql or migrations/000NN_*.sql
 ```
 
-Step 3 — wire it (the generated "next steps" remind you):
+Step 3 — wire the handler in `internal/app/wiring.go`:
 
-1. `internal/app/wiring.go` — construct the service/handler: add the field to `Dependencies` and
-   assign it in `newDependencies`.
-2. `internal/app/routes.go` — mount it in the right group:
-   - tenant-resolved → `d.Product.RegisterRoutes(r)` inside the `tenancy.Resolve` group
-   - tenant-exempt/global → the `tenancy.Exempt` group
-   - public → the public section
-3. `internal/authz/catalog.go` — add `product.view`, `product.create`, `product.update`,
-   `product.delete`; run `ims permission:sync` (or `make seed`).
+```go
+// Dependencies struct
+Products *product.Handler
+
+// NewDependencies, inside the deps literal:
+Products: product.NewHandler(
+    product.NewService(product.NewRepository(queries), checker),
+    binder, validator, responder,
+),
+```
+
+Mount it in `internal/app/routes.go` inside the tenant-resolved group:
+
+```go
+r.Use(tenancy.Resolve(d.TenancyOpts))
+// ...
+d.Products.RegisterRoutes(r)   // GET/POST /api/v1/product, GET/PATCH/DELETE /api/v1/product/{id}
+```
+
+For a global/tenant-exempt module, mount it in the `tenancy.Exempt` group **and** change the
+generated repository/service to stop filtering on `tenant_id` (the scaffold assumes tenant scope).
+Public routes go in the public section.
+
+Step 4 — register permissions in `internal/authz/catalog.go`:
+
+```go
+{Name: "product.view", Group: "product", Description: "Can view products"},
+{Name: "product.create", Group: "product", Description: "Can create products"},
+{Name: "product.update", Group: "product", Description: "Can update products"},
+{Name: "product.delete", Group: "product", Description: "Can delete products"},
+```
+
+Then run `ims permission:sync` (or `make seed`) and assign the permissions to the relevant roles.
+
+Step 5 — regenerate the HTTP contract:
+
+```bash
+make openapi          # internal/contract from api/openapi.yaml
+make openapi-check    # spec validity, route drift, region freshness
+```
+
+Step 6 — tests:
+
+- The generated `service_test.go` covers tenant scoping with a fake repository; extend it for your
+  business rules.
+- Add a `dbtest` repository integration test and a cross-tenant isolation test (model it on
+  `internal/modules/branches/isolation_integration_test.go`). Call `dbtest.Clean(t, pool, "products", ...)`
+  with the tables you own.
+- Add an HTTP flow to `internal/app/*_integration_test.go` for critical routes.
+
+Step 7 — verify:
+
+```bash
+make check                    # format-check + vet + lint + unit tests
+DATABASE_TEST_DSN="postgres://postgres:postgres@127.0.0.1:5432/ims_go_api_test?sslmode=disable" make test-integration
+make dev                      # log in and exercise the new routes
+```
+
+If you also touched the dashboard, run `make web-typecheck` and `make web-build`.
 
 > **Composition root has two wiring points.** Shared services are built and attached in
 > `internal/app/platform.go` (the `Platform` struct); HTTP handlers are attached in
@@ -157,21 +229,6 @@ Step 3 — wire it (the generated "next steps" remind you):
 > **both** — construct it *and* put it on `Platform`. Some handlers guard an optional dependency with
 > `if h.x == nil → 503 "… are not available"`, so a missed assignment surfaces as a misleading `503`
 > instead of a crash. `internal/app/platform_wiring_test.go` asserts the shared services are non-nil.
-
-Step 4 — tests:
-
-- Service unit test with a fake `Repository` (no mocking framework; see `internal/authn/service_test.go`).
-- Repository/service integration test via `internal/platform/database/dbtest`, gated by
-  `DATABASE_TEST_DSN` (skips when unset). Model isolation tests on
-  `internal/modules/branches/isolation_integration_test.go`.
-
-Step 5 — verify:
-
-```bash
-make check                    # format-check + vet + lint + unit tests
-make test-integration         # with DATABASE_TEST_DSN set
-make dev                      # then curl the new routes
-```
 
 ## 6. Recipe — add an endpoint to an existing module
 
@@ -181,8 +238,10 @@ make dev                      # then curl the new routes
 4. `repository.go` + `sql/queries/<name>.sql` — add the query (only if it needs new SQL); `make sqlc`.
 5. `routes.go` — register the path.
 6. `api/openapi.yaml` — document it by hand, or `ims gen openapi --module=<name>` if the module
-   follows the scaffold convention.
-7. Tests + `make check`.
+   follows the scaffold convention (this only refreshes the managed region).
+7. `make openapi` — regenerate `internal/contract` from the spec; `make openapi-check` verifies
+   route drift and freshness.
+8. Tests + `make check`.
 
 ## 7. Recipe — add a field to an existing resource
 
@@ -191,10 +250,12 @@ make dev                      # then curl the new routes
 3. `make sqlc` → `internal/dbgen` updates.
 4. `model.go` — add to the domain struct + row mapper.
 5. `request.go` — add to the request/response DTO (the `NewXResponse` mapper too).
-6. Update the OpenAPI schema, tests, and `api/openapi.yaml`.
+6. Update `api/openapi.yaml`, then run `make openapi` and `make openapi-check`.
+7. Update tests (including the generated response mapping tests) and finish with `make check`.
 
 > Cross-cutting rule: when you touch the DB, always finish with `make sqlc` and commit the regenerated
-> `internal/dbgen`. Never edit `internal/dbgen` by hand.
+> `internal/dbgen`; when you touch the API contract, run `make openapi`. Never edit `internal/dbgen`
+> or `internal/contract` by hand.
 
 ## 8. Where things live
 
@@ -213,7 +274,9 @@ make dev                      # then curl the new routes
 | Queue engines + registry | `internal/platform/queue` |
 | Scheduler + tasks | `internal/platform/scheduler`, `internal/app/platform.go` |
 | Storage disks, mail, i18n, health, metrics | `internal/platform/{storage,mail,i18n,health,metrics}` |
-| Business modules | `internal/modules/<name>` |
+| Business modules | `internal/modules/<name>` (`backup/` is transport-free) |
+| Developer dashboard SPA | `web/dev` (embedded by `web/dev/embed.go`) |
+| Module + OpenAPI generators | `internal/scaffold`, `ims gen` |
 | Generated (never edit) | `internal/dbgen`, `internal/contract` |
 | SQL schema / queries | `migrations/`, `sql/queries/` |
 | Canonical API contract | `api/openapi.yaml` |
@@ -225,6 +288,9 @@ make dev                      # then curl the new routes
 - [ ] Tenant-scoped reads/writes filter on the explicit tenant id (add an isolation test).
 - [ ] Related data is batch-loaded (no query per row in a list loop — see §4).
 - [ ] Handler is thin; business rules live in the service; no `httpx`/`authn` below the handler.
-- [ ] Endpoint documented in `api/openapi.yaml`.
+- [ ] Endpoint documented in `api/openapi.yaml`; `make openapi` + `make openapi-check` ran.
+- [ ] `make gen-check` green (sqlc/OpenAPI output committed).
 - [ ] `make check` green; `make test-integration` green when a DSN is available.
+- [ ] Dashboard touched → `make web-typecheck` + `make web-build` green.
+- [ ] Spec's implementation notes updated for behavior/scope changes.
 - [ ] No secrets logged; tokens/passwords never appear in logs or payloads.

@@ -149,3 +149,20 @@ func TestValidateRejectsBadPoolLimits(t *testing.T) {
 		t.Fatal("Validate() with min > max = nil error, want error")
 	}
 }
+
+func TestIsLocal(t *testing.T) {
+	cases := map[string]bool{
+		"local":       true,
+		"development": true,
+		"dev":         true,
+		"staging":     false,
+		"production":  false,
+		"":            false,
+	}
+	for env, want := range cases {
+		cfg := &Config{App: App{Env: env}}
+		if got := cfg.IsLocal(); got != want {
+			t.Errorf("IsLocal() with APP_ENV=%q = %v, want %v", env, got, want)
+		}
+	}
+}

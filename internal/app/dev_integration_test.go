@@ -35,7 +35,7 @@ func TestDeveloperDashboardEndToEnd(t *testing.T) {
 	}
 
 	dbtest.Clean(t, pool,
-		"personal_access_tokens", "role_has_permissions", "model_has_roles",
+		"dev_actions", "personal_access_tokens", "role_has_permissions", "model_has_roles",
 		"users", "roles", "permissions", "branches", "tenants",
 	)
 
@@ -109,6 +109,183 @@ func TestDeveloperDashboardEndToEnd(t *testing.T) {
 	if !permissions[authz.PermDevView] || !permissions[authz.PermDevManage] {
 		t.Fatalf("developer permissions missing dev.*: %v", me.Data.Permissions)
 	}
+	developerUserID := me.Data.UserID
+
+	// �"?�"? sessions: stats, directory, current-token flag and safe force logout �"?�?
+	tokenParts := strings.SplitN(devToken, "|", 2)
+	if len(tokenParts) != 2 {
+		t.Fatalf("developer token %q is not in id|secret form", devToken)
+	}
+	currentTokenID, err := strconv.ParseInt(tokenParts[0], 10, 64)
+	if err != nil {
+		t.Fatalf("developer token id %q: %v", tokenParts[0], err)
+	}
+
+	rec = apiRequest(t, router, http.MethodGet, "/dev/api/sessions/stats", "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sessions stats status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var stats struct {
+		Data struct {
+			Users        int64 `json:"users"`
+			ActiveTokens int64 `json:"active_tokens"`
+			Used24h      int64 `json:"used_24h"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &stats)
+	if stats.Data.Users < 1 || stats.Data.ActiveTokens < 1 || stats.Data.Used24h < 1 {
+		t.Fatalf("sessions stats = %+v, want the developer token counted", stats.Data)
+	}
+
+	rec = apiRequest(t, router, http.MethodGet, "/dev/api/sessions/users?search=developer", "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sessions users status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var sessionUsers struct {
+		Data []struct {
+			UserID       int64 `json:"user_id"`
+			ActiveTokens int64 `json:"active_tokens"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &sessionUsers)
+	foundDeveloper := false
+	for _, user := range sessionUsers.Data {
+		if user.UserID == me.Data.UserID && user.ActiveTokens > 0 {
+			foundDeveloper = true
+		}
+	}
+	if !foundDeveloper {
+		t.Fatalf("sessions users = %+v, want the developer user", sessionUsers.Data)
+	}
+
+	rec = apiRequest(t, router, http.MethodGet,
+		"/dev/api/sessions/users/"+strconv.FormatInt(me.Data.UserID, 10)+"/tokens", "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("sessions tokens status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var sessionTokens struct {
+		Data []struct {
+			ID      int64 `json:"id"`
+			Current bool  `json:"current"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &sessionTokens)
+	foundCurrent := false
+	for _, token := range sessionTokens.Data {
+		if token.ID == currentTokenID {
+			if !token.Current {
+				t.Fatalf("token %d is not flagged current: %+v", currentTokenID, sessionTokens.Data)
+			}
+			foundCurrent = true
+		}
+	}
+	if !foundCurrent {
+		t.Fatalf("sessions tokens = %+v, want token %d", sessionTokens.Data, currentTokenID)
+	}
+
+	rec = apiRequest(t, router, http.MethodGet, "/dev/api/sessions/users/99999999/tokens", "", devToken, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown session user status = %d, want 404", rec.Code)
+	}
+	rec = apiRequest(t, router, http.MethodDelete, "/dev/api/sessions/tokens/99999999", "", devToken, nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown session token status = %d, want 404", rec.Code)
+	}
+
+	rec = apiRequest(t, router, http.MethodPost, "/dev/api/sessions/prune",
+		`{"idle_days":1,"dry_run":true}`, devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("session prune dry-run status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var prune struct {
+		Data struct {
+			Affected int64 `json:"affected"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &prune)
+	if prune.Data.Affected != 0 {
+		t.Fatalf("session prune dry-run affected = %d, want 0 (current token is in use)", prune.Data.Affected)
+	}
+
+	// �"?�"? revoke one extra device token and one user's sessions (non-caller) �"?�?
+	var extraTokenID int64
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO personal_access_tokens (tokenable_type, tokenable_id, name, device, token)
+		 VALUES ('user', $1, 'extra', 'extra-device', md5('extra') || md5('extra-token')) RETURNING id`,
+		me.Data.UserID,
+	).Scan(&extraTokenID); err != nil {
+		t.Fatalf("insert extra session token: %v", err)
+	}
+	rec = apiRequest(t, router, http.MethodDelete,
+		"/dev/api/sessions/tokens/"+strconv.FormatInt(extraTokenID, 10), "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("revoke extra token status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	rec = apiRequest(t, router, http.MethodGet,
+		"/dev/api/sessions/users/"+strconv.FormatInt(me.Data.UserID, 10)+"/tokens", "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tokens after revoke status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var afterRevoke struct {
+		Data []struct {
+			ID int64 `json:"id"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &afterRevoke)
+	for _, token := range afterRevoke.Data {
+		if token.ID == extraTokenID {
+			t.Fatalf("revoked token %d still listed", extraTokenID)
+		}
+	}
+
+	var targetUserID int64
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO users (name, email, password, is_active)
+		 VALUES ('Session Target', 'session-target@example.test', 'hash', 1) RETURNING id`,
+	).Scan(&targetUserID); err != nil {
+		t.Fatalf("insert session target user: %v", err)
+	}
+	var targetTokenID int64
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO personal_access_tokens (tokenable_type, tokenable_id, name, device, token)
+		 VALUES ('user', $1, 'target', 'target-device', md5('target') || md5('target-token')) RETURNING id`,
+		targetUserID,
+	).Scan(&targetTokenID); err != nil {
+		t.Fatalf("insert target session token: %v", err)
+	}
+	rec = apiRequest(t, router, http.MethodDelete,
+		"/dev/api/sessions/users/"+strconv.FormatInt(targetUserID, 10), "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("revoke target user sessions status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var targetRevoked struct {
+		Data struct {
+			Revoked int64 `json:"revoked"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &targetRevoked)
+	if targetRevoked.Data.Revoked != 1 {
+		t.Fatalf("revoke target user sessions = %+v, want 1", targetRevoked.Data)
+	}
+
+	rec = apiRequest(t, router, http.MethodDelete, "/dev/api/sessions", "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("force logout all status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var revoked struct {
+		Data struct {
+			Revoked         int64 `json:"revoked"`
+			ExcludedTokenID int64 `json:"excluded_token_id"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &revoked)
+	if revoked.Data.Revoked != 0 || revoked.Data.ExcludedTokenID != currentTokenID {
+		t.Fatalf("force logout result = %+v, want 0 revoked and token %d preserved", revoked.Data, currentTokenID)
+	}
+	rec = apiRequest(t, router, http.MethodGet, "/dev/api/me", "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("caller token did not survive force logout: %d %s", rec.Code, rec.Body.String())
+	}
 
 	// ── super admin also reaches the surface and is flagged ─────────────
 	rec = apiRequest(t, router, http.MethodPost, "/api/v1/login",
@@ -140,6 +317,117 @@ func TestDeveloperDashboardEndToEnd(t *testing.T) {
 	decodeBody(t, rec, &me)
 	if !me.Data.IsSuperAdmin {
 		t.Fatalf("super admin me payload = %+v", me.Data)
+	}
+
+	// ── developers panel: stats, create internal account, self-unassign, revoke ──
+	rec = apiRequest(t, router, http.MethodGet, "/dev/api/developers/stats", "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("developer stats status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var devStats struct {
+		Data struct {
+			Developers       int64 `json:"developers"`
+			RoleExists       bool  `json:"role_exists"`
+			RolePermissions  int64 `json:"role_permissions"`
+			TotalPermissions int64 `json:"total_permissions"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &devStats)
+	if !devStats.Data.RoleExists || devStats.Data.TotalPermissions != int64(len(authz.Catalog)) {
+		t.Fatalf("developer stats = %+v, want an existing role with %d permissions", devStats.Data, len(authz.Catalog))
+	}
+	if devStats.Data.Developers < 1 || devStats.Data.RolePermissions != int64(len(authz.Catalog)) {
+		t.Fatalf("developer stats counts = %+v", devStats.Data)
+	}
+
+	rec = apiRequest(t, router, http.MethodPost, "/dev/api/developers",
+		`{"name":"Dev Created","email":"dev-created@example.test","password":"secret123","is_active":true}`,
+		devToken, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create developer status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var createdDeveloper struct {
+		Data struct {
+			UserID       int64 `json:"user_id"`
+			IsSelf       bool  `json:"is_self"`
+			ActiveTokens int64 `json:"active_tokens"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &createdDeveloper)
+	createdID := createdDeveloper.Data.UserID
+	if createdID < 1 || createdDeveloper.Data.IsSelf || createdDeveloper.Data.ActiveTokens != 0 {
+		t.Fatalf("created developer = %+v", createdDeveloper.Data)
+	}
+
+	type developerPage struct {
+		Data []struct {
+			UserID       int64 `json:"user_id"`
+			IsSelf       bool  `json:"is_self"`
+			ActiveTokens int64 `json:"active_tokens"`
+		} `json:"data"`
+		Meta struct {
+			Total int64 `json:"total"`
+		} `json:"meta"`
+	}
+	rec = apiRequest(t, router, http.MethodGet, "/dev/api/developers?search=dev-created", "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("developers list status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var developers developerPage
+	decodeBody(t, rec, &developers)
+	foundCreated := false
+	for _, item := range developers.Data {
+		if item.UserID == createdID {
+			foundCreated = true
+			if item.ActiveTokens != 0 {
+				t.Fatalf("created developer tokens = %d, want 0", item.ActiveTokens)
+			}
+		}
+	}
+	if !foundCreated || developers.Meta.Total != 1 {
+		t.Fatalf("developers = %+v total=%d, want created user %d", developers.Data, developers.Meta.Total, createdID)
+	}
+
+	rec = apiRequest(t, router, http.MethodPost, "/api/v1/login",
+		`{"email":"dev-created@example.test","password":"secret123","device":"dev-created-suite"}`, "", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("created developer login status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var createdLogin struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	decodeBody(t, rec, &createdLogin)
+	createdToken := createdLogin.Data.Token
+	if createdToken == "" {
+		t.Fatal("created developer login token missing")
+	}
+	rec = apiRequest(t, router, http.MethodGet, "/dev/api/me", "", createdToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("created developer me status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	// Self-unassign is refused for the seeded developer and for a newly created one.
+	rec = apiRequest(t, router, http.MethodDelete,
+		"/dev/api/developers/"+strconv.FormatInt(developerUserID, 10), "", devToken, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("seeded self-unassign status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
+	}
+	rec = apiRequest(t, router, http.MethodDelete,
+		"/dev/api/developers/"+strconv.FormatInt(createdID, 10), "", createdToken, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("created self-unassign status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
+	}
+
+	rec = apiRequest(t, router, http.MethodDelete,
+		"/dev/api/developers/"+strconv.FormatInt(createdID, 10), "", devToken, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remove developer status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	rec = apiRequest(t, router, http.MethodGet, "/dev/api/me", "", createdToken, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("created developer access after revoke = %d, want 403 (body %s)", rec.Code, rec.Body.String())
 	}
 
 	// ── the hidden role is absent from role listings ────────────────────
@@ -187,12 +475,19 @@ func TestDeveloperDashboardEndToEnd(t *testing.T) {
 	}
 	var actions struct {
 		Data []struct {
-			ID int64 `json:"id"`
+			ID     int64  `json:"id"`
+			Action string `json:"action"`
 		} `json:"data"`
 	}
 	decodeBody(t, rec, &actions)
-	if len(actions.Data) != 0 {
-		t.Fatalf("actions = %+v, want empty", actions.Data)
+	auditedLogout := false
+	for _, action := range actions.Data {
+		if action.Action == "sessions.logout_all" {
+			auditedLogout = true
+		}
+	}
+	if !auditedLogout {
+		t.Fatalf("actions = %+v, want the audited sessions.logout_all action", actions.Data)
 	}
 
 	// ── captured request detail returns arrays, never null ───────────────────

@@ -8,6 +8,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type BackupRun struct {
+	ID             int64              `json:"id"`
+	Uuid           pgtype.UUID        `json:"uuid"`
+	Status         string             `json:"status"`
+	TriggerKind    string             `json:"trigger_kind"`
+	ActorUserID    *int64             `json:"actor_user_id"`
+	Filename       string             `json:"filename"`
+	Scope          string             `json:"scope"`
+	SizeBytes      int64              `json:"size_bytes"`
+	ChecksumSha256 *string            `json:"checksum_sha256"`
+	PgDumpVersion  *string            `json:"pg_dump_version"`
+	DatabaseName   *string            `json:"database_name"`
+	Destinations   []byte             `json:"destinations"`
+	Error          *string            `json:"error"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type Branch struct {
 	ID          int64              `json:"id"`
 	TenantID    int64              `json:"tenant_id"`

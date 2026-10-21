@@ -11,6 +11,65 @@ export type DevException = components['schemas']['DevException']
 export type DevQuery = components['schemas']['DevQuery']
 export type DevCacheEvent = components['schemas']['DevCacheEvent']
 export type DevQueueEvent = components['schemas']['DevQueueEvent']
+export type DevSessionStats = components['schemas']['DevSessionStats']
+export type DevSessionUser = components['schemas']['DevSessionUser']
+export type DevSessionToken = components['schemas']['DevSessionToken']
+export type DevDeveloper = components['schemas']['DevDeveloper']
+export type DevDeveloperPage = components['schemas']['DevDeveloperPageEnvelope']
+export type DevDeveloperStats = components['schemas']['DevDeveloperStats']
+export type DevTarget = components['schemas']['DevTarget']
+export type DevTargetStats = components['schemas']['DevTargetStats']
+export type DevTargetPage = components['schemas']['DevTargetPageEnvelope']
+export type DevFile = components['schemas']['DevFile']
+export type DevFilePage = components['schemas']['DevFilePageEnvelope']
+export type DevFileStats = components['schemas']['DevFileStats']
+export type DevBackupRun = components['schemas']['DevBackupRun']
+export type DevBackupList = components['schemas']['DevBackupListEnvelope']
+export type DevBackupStats = components['schemas']['DevBackupStats']
+export type DevBackupConfig = components['schemas']['DevBackupConfig']
+export type DevBackupCleanResult = components['schemas']['DevBackupCleanEnvelope']['data']
+export interface SettingsGroup {
+  id: number
+  slug: string
+  name: string
+  description?: string
+  sort_order: number
+  is_system: boolean
+}
+
+export interface SettingsItem {
+  id: number
+  key: string
+  type: 'string' | 'int' | 'bool' | 'json'
+  value: unknown
+  default: unknown
+  description: string
+  source: 'default' | 'global' | 'tenant'
+  scope: 'global' | 'tenant'
+  editable: boolean
+  overridden: boolean
+  sort_order: number
+  group: SettingsGroup
+}
+export type DevFlag = components['schemas']['DevFlag']
+export type PageMeta = components['schemas']['PaginationMeta']
+
+export interface Page<T> {
+  data: T[]
+  links: components['schemas']['PaginationLinks']
+  meta: PageMeta
+}
+
+export interface DevSessionRevokeResult {
+  revoked: number
+  excluded_token_id?: number
+}
+
+export interface DevSessionPruneResult {
+  idle_days: number
+  dry_run: boolean
+  affected: number
+}
 
 export interface Me {
   user_id: number
@@ -19,7 +78,26 @@ export interface Me {
   tenant_id?: number | null
   branch_id?: number | null
   is_super_admin: boolean
+  playground: boolean
   permissions: string[]
+}
+
+export interface PlaygroundInfo {
+  enabled: boolean
+  queue_driver: string
+  job_kind: string
+  queues: string[]
+  jobs: string[]
+}
+
+export interface PlaygroundQueueResult {
+  enqueued: number
+  kind: string
+  queue: string
+  driver: string
+  fail_on_purpose?: boolean
+  processing_job_id?: number
+  job_id?: string
 }
 
 export interface CursorPage<T> {
