@@ -43,6 +43,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           version: v1.64.8
+          install-mode: goinstall # build with the toolchain from setup-go (targets Go 1.26)
 
   web:
     runs-on: ubuntu-latest
