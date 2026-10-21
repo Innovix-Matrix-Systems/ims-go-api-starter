@@ -23,6 +23,8 @@ Exactly **one** scheduler and **one** (or more) worker per environment.
 cp .env.example .env          # .env is git-ignored
 make tools                    # install air + golangci-lint
 npm --prefix web/dev ci       # dashboard dependencies (Vite/React)
+git config core.hooksPath .githooks   # enable pre-commit/pre-push hooks
+chmod +x .githooks/pre-commit .githooks/pre-push   # macOS/Linux only
 
 make db-up                    # start Postgres via docker compose (or use your own)
 # compose DB is ims_go_api_test; either point DATABASE_DSN at it, or create the
