@@ -45,7 +45,7 @@ help:
 	@echo --- Setup ---
 	@echo   make tools             Install dev tools: air, golangci-lint
 	@echo --- Develop ---
-	@echo   make dev               Run API + SPA with hot reload (air + Vite)
+	@echo   make dev               Run SPA :8080 (Vite HMR) + API :8081 (air)
 	@echo   make dev-api           Run the API only with air
 	@echo   make run               Run the API once with go run
 	@echo   make queue             Run the queue worker with go run
@@ -77,7 +77,7 @@ help:
 	@echo   make migrate           Apply pending migrations
 	@echo   make migrate-status    Show migration status
 	@echo   make migrate-rollback  Roll back the most recent migration
-	@echo   make seed              Seed permissions, tenant/branch/roles, super-admin
+	@echo   make seed              Seed permissions, tenant/branch/roles, admin + developer
 	@echo   make fresh             Roll back everything, migrate and seed - destructive
 	@echo --- Operations ---
 	@echo   make health            Run the health checks
@@ -111,7 +111,7 @@ web-typecheck: ## Type-check the developer SPA.
 dev-web: ## Run the SPA dev server on :5173 with /dev/api proxied to :8080.
 	npm --prefix web/dev run dev
 
-dev: env ## Run the API and the SPA dev server with hot reload.
+dev: env ## Run the SPA dev server (:8080, HMR) and the API (:8081, air).
 	go run ./cmd/app migrate
 	node web/dev/scripts/dev.mjs
 
@@ -205,7 +205,7 @@ migrate-status: ## Show applied and pending migrations.
 migrate-rollback: ## Roll back the most recent migration.
 	go run ./cmd/app migrate:rollback
 
-seed: ## Seed permissions, default tenant/branch/roles and the super-admin user.
+seed: ## Seed permissions, default tenant/branch/roles, super-admin and developer users.
 	go run ./cmd/app db:seed
 
 fresh: ## Roll back everything, migrate and seed. Destructive.

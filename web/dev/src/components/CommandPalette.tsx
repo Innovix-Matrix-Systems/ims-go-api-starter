@@ -2,8 +2,8 @@ import { Command } from 'cmdk'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouter } from '@tanstack/react-router'
 import { useEffect } from 'react'
-import { api, logoutRedirect } from '../api/client'
-import type { CursorPage, DevException, DevJob, DevRequestSummary } from '../api/types'
+import { api, fetchMe, getCachedMe, logoutRedirect } from '../api/client'
+import type { CursorPage, DevBackupRun, DevException, DevJob, DevRequestSummary } from '../api/types'
 import { useToast } from './Toasts'
 import { Icon, type IconName } from './ui'
 import { formatDuration } from '../format'
@@ -14,6 +14,7 @@ const pages = [
   { to: '/logs', label: 'Logs', icon: 'logs' },
   { to: '/exceptions', label: 'Exceptions', icon: 'exceptions' },
   { to: '/queue', label: 'Queue', icon: 'queue' },
+  { to: '/backups', label: 'Backups', icon: 'backup' },
   { to: '/actions', label: 'Commands', icon: 'actions' },
   { to: '/system', label: 'System health', icon: 'system' },
   { to: '/sessions', label: 'Sessions', icon: 'sessions' },
@@ -21,7 +22,8 @@ const pages = [
   { to: '/flags', label: 'Feature flags', icon: 'flags' },
   { to: '/files', label: 'Files', icon: 'files' },
   { to: '/developers', label: 'Developers', icon: 'developers' },
-] as const satisfies ReadonlyArray<{ to: string; label: string; icon: IconName }>
+  { to: '/playground', label: 'Playground', icon: 'playground', localOnly: true },
+] as const satisfies ReadonlyArray<{ to: string; label: string; icon: IconName; localOnly?: boolean }>
 
 const links = [
   { label: 'API docs (Scalar)', url: '/docs' },
@@ -41,6 +43,13 @@ export function CommandPalette({
   const router = useRouter()
   const queryClient = useQueryClient()
   const { push } = useToast()
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: fetchMe,
+    staleTime: 60_000,
+    retry: false,
+    placeholderData: getCachedMe() ?? undefined,
+  })
 
   const requests = useQuery({
     queryKey: ['commands', 'requests'],
@@ -113,6 +122,19 @@ export function CommandPalette({
     }
   }
 
+  const createBackup = async () => {
+    try {
+      const run = await api<DevBackupRun>('/dev/api/backups', { method: 'POST' })
+      push(`Backup #${run.id} ${run.status}`, run.status === 'completed' ? 'success' : 'info')
+      for (const key of ['backups', 'overview', 'actions']) {
+        void queryClient.invalidateQueries({ queryKey: [key] })
+      }
+      close()
+    } catch (error) {
+      push(error instanceof Error ? error.message : 'Unable to create a backup', 'error')
+    }
+  }
+
   return (
     <div className="command-overlay" role="presentation" onClick={close}>
       <div className="command-dialog" onClick={(event) => event.stopPropagation()}>
@@ -132,7 +154,7 @@ export function CommandPalette({
             </Command.Empty>
 
             <Command.Group heading="Pages">
-              {pages.map((page) => (
+              {pages.filter((page) => !('localOnly' in page && page.localOnly) || me.data?.playground).map((page) => (
                 <Command.Item
                   key={page.to}
                   value={`${page.label} ${page.to}`}
@@ -182,6 +204,13 @@ export function CommandPalette({
                 onSelect={() => select(() => void simulate(1, 'error', true))}
               >
                 <Icon name="alert" /> Generate log + exception
+              </Command.Item>
+              <Command.Item
+                value="create backup database archive"
+                className="command-item"
+                onSelect={() => select(() => void createBackup())}
+              >
+                <Icon name="backup" /> Create database backup
               </Command.Item>
               <Command.Item
                 value="refresh reload data"

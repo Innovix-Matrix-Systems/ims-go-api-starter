@@ -96,3 +96,11 @@ WHERE name = ANY(@names::text[])
     OR (@tenant_id::bigint = 0 AND tenant_id IS NULL)
   )
 ORDER BY id;
+-- name: RemoveUserRole :execrows
+DELETE FROM model_has_roles
+WHERE role_id = @role_id
+  AND model_type = @model_type
+  AND model_id = @model_id;
+
+-- name: CountRolePermissions :one
+SELECT count(*) FROM role_has_permissions WHERE role_id = @role_id;

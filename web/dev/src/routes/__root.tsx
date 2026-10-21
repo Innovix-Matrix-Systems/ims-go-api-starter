@@ -17,6 +17,10 @@ function RootDocument() {
         <meta name="color-scheme" content="dark" />
         <meta name="robots" content="noindex, nofollow" />
         <title>Dev Dashboard — IMS</title>
+        {/* TanStack Start's dev HTML bypasses Vite's index.html transform; load the HMR client explicitly. */}
+        {import.meta.env.DEV ? (
+          <script type="module" src={`${import.meta.env.BASE_URL}@vite/client`} />
+        ) : null}
         <HeadContent />
       </head>
       <body>

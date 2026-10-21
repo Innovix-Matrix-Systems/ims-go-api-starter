@@ -35,6 +35,7 @@ type GroupInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	SortOrder   int    `json:"sort_order"`
+	IsSystem    bool   `json:"is_system"`
 }
 
 // EffectiveSetting is one catalog key resolved for a target. ID is the global
@@ -334,6 +335,11 @@ func (s *Service) UpdateGroup(ctx context.Context, actorID, id int64, input Grou
 	if slug == "" {
 		return nil, apperr.Validation(map[string][]string{"name": {"The name must contain at least one alphanumeric character."}})
 	}
+	// System groups keep their catalog slug even when renamed in the panel;
+	// `settings:sync` matches them by slug and restores catalog metadata.
+	if existing.IsSystem {
+		slug = existing.Slug
+	}
 	other, err := s.repo.GetGroupBySlug(ctx, slug)
 	if err == nil && other.ID != id {
 		return nil, apperr.Validation(map[string][]string{"name": {"A settings group with this name already exists."}})
@@ -586,7 +592,7 @@ func (s *Service) buildGroups(ctx context.Context) (*groupsSnapshot, error) {
 	bySlug := make(map[string]GroupInfo, len(rows))
 	byID := make(map[int64]string, len(rows))
 	for _, row := range rows {
-		info := GroupInfo{ID: row.ID, Slug: row.Slug, Name: row.Name, SortOrder: row.SortOrder}
+		info := GroupInfo{ID: row.ID, Slug: row.Slug, Name: row.Name, SortOrder: row.SortOrder, IsSystem: row.IsSystem}
 		if row.Description != nil {
 			info.Description = *row.Description
 		}

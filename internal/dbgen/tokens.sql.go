@@ -11,6 +11,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countPrunableSessionTokens = `-- name: CountPrunableSessionTokens :one
+SELECT count(*) FROM personal_access_tokens
+WHERE tokenable_type = 'user'
+  AND (
+    (expires_at IS NOT NULL AND expires_at < now())
+    OR COALESCE(last_used_at, created_at) < now() - ($1::int * interval '1 day')
+  )
+`
+
+func (q *Queries) CountPrunableSessionTokens(ctx context.Context, idleDays int32) (int64, error) {
+	row := q.db.QueryRow(ctx, countPrunableSessionTokens, idleDays)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createToken = `-- name: CreateToken :one
 INSERT INTO personal_access_tokens (tokenable_type, tokenable_id, name, device, token, abilities, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -52,6 +68,64 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Perso
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deleteAllSessionTokensExcept = `-- name: DeleteAllSessionTokensExcept :execrows
+DELETE FROM personal_access_tokens
+WHERE tokenable_type = 'user'
+  AND id <> $1
+`
+
+func (q *Queries) DeleteAllSessionTokensExcept(ctx context.Context, keepID int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAllSessionTokensExcept, keepID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deletePrunableSessionTokens = `-- name: DeletePrunableSessionTokens :execrows
+DELETE FROM personal_access_tokens
+WHERE tokenable_type = 'user'
+  AND (
+    (expires_at IS NOT NULL AND expires_at < now())
+    OR COALESCE(last_used_at, created_at) < now() - ($1::int * interval '1 day')
+  )
+`
+
+func (q *Queries) DeletePrunableSessionTokens(ctx context.Context, idleDays int32) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePrunableSessionTokens, idleDays)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSessionToken = `-- name: DeleteSessionToken :execrows
+DELETE FROM personal_access_tokens
+WHERE id = $1 AND tokenable_type = 'user'
+`
+
+func (q *Queries) DeleteSessionToken(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSessionToken, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSessionUserTokens = `-- name: DeleteSessionUserTokens :execrows
+DELETE FROM personal_access_tokens
+WHERE tokenable_type = 'user'
+  AND tokenable_id = $1
+`
+
+func (q *Queries) DeleteSessionUserTokens(ctx context.Context, userID int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSessionUserTokens, userID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteTokenByDevice = `-- name: DeleteTokenByDevice :execrows
@@ -116,6 +190,168 @@ func (q *Queries) GetToken(ctx context.Context, id int64) (PersonalAccessToken, 
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listSessionTokens = `-- name: ListSessionTokens :many
+SELECT id, tokenable_type, tokenable_id, name, device, token, abilities, last_used_at, expires_at, created_at, updated_at FROM personal_access_tokens
+WHERE tokenable_type = 'user'
+  AND tokenable_id = $1
+ORDER BY last_used_at DESC NULLS LAST, id DESC
+`
+
+func (q *Queries) ListSessionTokens(ctx context.Context, userID int64) ([]PersonalAccessToken, error) {
+	rows, err := q.db.Query(ctx, listSessionTokens, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PersonalAccessToken{}
+	for rows.Next() {
+		var i PersonalAccessToken
+		if err := rows.Scan(
+			&i.ID,
+			&i.TokenableType,
+			&i.TokenableID,
+			&i.Name,
+			&i.Device,
+			&i.Token,
+			&i.Abilities,
+			&i.LastUsedAt,
+			&i.ExpiresAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSessionUsers = `-- name: ListSessionUsers :many
+SELECT
+    u.id AS user_id,
+    u.name,
+    u.email,
+    u.tenant_id,
+    count(t.id) FILTER (WHERE t.expires_at IS NULL OR t.expires_at > now()) AS active_tokens,
+    count(t.id) AS total_tokens,
+    max(t.last_used_at) FILTER (WHERE t.expires_at IS NULL OR t.expires_at > now())::timestamptz AS last_used_at
+FROM users u
+JOIN personal_access_tokens t
+    ON t.tokenable_type = 'user' AND t.tokenable_id = u.id
+WHERE u.deleted_at IS NULL
+  AND ($1::bigint = 0 OR u.id < $1::bigint)
+  AND (
+    $2::text IS NULL
+    OR u.name ILIKE '%' || $2::text || '%'
+    OR u.email ILIKE '%' || $2::text || '%'
+  )
+GROUP BY u.id
+HAVING count(t.id) FILTER (WHERE t.expires_at IS NULL OR t.expires_at > now()) > 0
+ORDER BY u.id DESC
+LIMIT $3
+`
+
+type ListSessionUsersParams struct {
+	BeforeID int64   `json:"before_id"`
+	Search   *string `json:"search"`
+	RowLimit int32   `json:"row_limit"`
+}
+
+type ListSessionUsersRow struct {
+	UserID       int64              `json:"user_id"`
+	Name         string             `json:"name"`
+	Email        string             `json:"email"`
+	TenantID     *int64             `json:"tenant_id"`
+	ActiveTokens int64              `json:"active_tokens"`
+	TotalTokens  int64              `json:"total_tokens"`
+	LastUsedAt   pgtype.Timestamptz `json:"last_used_at"`
+}
+
+func (q *Queries) ListSessionUsers(ctx context.Context, arg ListSessionUsersParams) ([]ListSessionUsersRow, error) {
+	rows, err := q.db.Query(ctx, listSessionUsers, arg.BeforeID, arg.Search, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSessionUsersRow{}
+	for rows.Next() {
+		var i ListSessionUsersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.Name,
+			&i.Email,
+			&i.TenantID,
+			&i.ActiveTokens,
+			&i.TotalTokens,
+			&i.LastUsedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const sessionTokenStats = `-- name: SessionTokenStats :one
+WITH tokens AS (
+    SELECT
+        tokenable_id,
+        t.last_used_at,
+        t.created_at,
+        (t.expires_at IS NULL OR t.expires_at > now()) AS active
+    FROM personal_access_tokens t
+    JOIN users u ON u.id = t.tokenable_id AND u.deleted_at IS NULL
+    WHERE t.tokenable_type = 'user'
+)
+SELECT
+    count(DISTINCT tokenable_id) FILTER (WHERE active) AS users,
+    count(*) FILTER (WHERE active) AS active_tokens,
+    count(*) FILTER (WHERE active AND last_used_at >= now() - interval '24 hours') AS used_24h,
+    count(*) FILTER (WHERE active AND (last_used_at IS NULL OR last_used_at < now() - interval '24 hours')) AS idle_tokens,
+    count(*) FILTER (WHERE active AND COALESCE(last_used_at, created_at) < now() - interval '30 days') AS inactive_30d
+FROM tokens
+`
+
+type SessionTokenStatsRow struct {
+	Users        int64 `json:"users"`
+	ActiveTokens int64 `json:"active_tokens"`
+	Used24h      int64 `json:"used_24h"`
+	IdleTokens   int64 `json:"idle_tokens"`
+	Inactive30d  int64 `json:"inactive_30d"`
+}
+
+func (q *Queries) SessionTokenStats(ctx context.Context) (SessionTokenStatsRow, error) {
+	row := q.db.QueryRow(ctx, sessionTokenStats)
+	var i SessionTokenStatsRow
+	err := row.Scan(
+		&i.Users,
+		&i.ActiveTokens,
+		&i.Used24h,
+		&i.IdleTokens,
+		&i.Inactive30d,
+	)
+	return i, err
+}
+
+const sessionUserExists = `-- name: SessionUserExists :one
+SELECT EXISTS (
+    SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL
+)
+`
+
+func (q *Queries) SessionUserExists(ctx context.Context, id int64) (bool, error) {
+	row := q.db.QueryRow(ctx, sessionUserExists, id)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const touchToken = `-- name: TouchToken :execrows

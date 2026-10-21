@@ -1,62 +1,76 @@
 package dev
 
 import (
-	"log/slog"
 	"net/http"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
+	filesmod "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/files"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/identity"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/settings"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/queue"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/telemetry"
 )
 
 // Handler serves the developer dashboard JSON API at /dev/api.
 type Handler struct {
-	checker       *authz.Checker
-	permissions   *access.PermissionService
-	queueAdmin    queue.Admin
-	actions       ActionRepository
-	telemetry     TelemetryRepository
-	collector     *telemetry.Collector
-	logger        *slog.Logger
-	retentionDays int
-	binder        *httpx.Binder
-	validator     *httpx.Validator
-	responder     *httpx.Responder
+	panelBase
+	queueAdmin        queue.Admin
+	queue             queue.Engine
+	playgroundEnabled bool
+	telemetry         TelemetryRepository
+	sessions          SessionRepository
+	developers        DeveloperRepository
+	files             FileRepository
+	fileService       *filesmod.Service
+	backups           *backup.Service
+	targets           TargetRepository
+	flags             *featureflags.Service
+	settings          *settings.Service
+	identity          *identity.Service
+	exchange          *identity.ExchangeService
+	roles             access.RoleRepository
+	roleService       *access.RoleService
+	collector         *telemetry.Collector
+	retentionDays     int
 }
 
 // NewHandler creates the developer dashboard handler.
-func NewHandler(
-	checker *authz.Checker,
-	permissions *access.PermissionService,
-	queueAdmin queue.Admin,
-	actions ActionRepository,
-	telemetryRepo TelemetryRepository,
-	collector *telemetry.Collector,
-	logger *slog.Logger,
-	retentionDays int,
-	binder *httpx.Binder,
-	validator *httpx.Validator,
-	responder *httpx.Responder,
-) *Handler {
-	if retentionDays < 1 {
-		retentionDays = 7
+func NewHandler(deps Deps) *Handler {
+	if deps.RetentionDays < 1 {
+		deps.RetentionDays = 7
 	}
 	return &Handler{
-		checker:       checker,
-		permissions:   permissions,
-		queueAdmin:    queueAdmin,
-		actions:       actions,
-		telemetry:     telemetryRepo,
-		collector:     collector,
-		logger:        logger,
-		retentionDays: retentionDays,
-		binder:        binder,
-		validator:     validator,
-		responder:     responder,
+		panelBase: panelBase{
+			checker:     deps.Checker,
+			permissions: deps.Permissions,
+			actions:     deps.Actions,
+			logger:      deps.Logger,
+			binder:      deps.Binder,
+			validator:   deps.Validator,
+			responder:   deps.Responder,
+		},
+		queueAdmin:        deps.QueueAdmin,
+		queue:             deps.Queue,
+		playgroundEnabled: deps.Playground,
+		telemetry:         deps.Telemetry,
+		sessions:          deps.Sessions,
+		developers:        deps.Developers,
+		files:             deps.Files,
+		fileService:       deps.FileService,
+		backups:           deps.Backups,
+		targets:           deps.Targets,
+		flags:             deps.FeatureFlags,
+		settings:          deps.Settings,
+		identity:          deps.Identity,
+		exchange:          deps.Exchange,
+		roles:             deps.Roles,
+		roleService:       deps.RoleService,
+		collector:         deps.Collector,
+		retentionDays:     deps.RetentionDays,
 	}
 }
 
@@ -70,6 +84,7 @@ type MeResponse struct {
 	TenantID     *int64   `json:"tenant_id"`
 	BranchID     *int64   `json:"branch_id"`
 	IsSuperAdmin bool     `json:"is_super_admin"`
+	Playground   bool     `json:"playground"`
 	Permissions  []string `json:"permissions"`
 }
 
@@ -110,6 +125,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		TenantID:     tenantID,
 		BranchID:     branchID,
 		IsSuperAdmin: super,
+		Playground:   h.playgroundEnabled,
 		Permissions:  names,
 	})
 }

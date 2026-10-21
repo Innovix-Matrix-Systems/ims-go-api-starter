@@ -29,6 +29,7 @@ type Config struct {
 	Storage      Storage
 	Files        Files
 	Processing   Processing
+	Backup       Backup
 	Mail         Mail
 	Ops          Ops
 	Security     Security
@@ -215,6 +216,30 @@ type Processing struct {
 	BasePath string
 }
 
+// Backup holds the database backup settings. Local storage is mandatory;
+// S3/R2 object storage is optional.
+type Backup struct {
+	Enabled           bool
+	Name              string
+	Environment       string
+	Dir               string
+	Destinations      []string
+	S3Prefix          string
+	PgDumpPath        string
+	Timeout           time.Duration
+	RunCron           string
+	CleanCron         string
+	KeepAllDays       int
+	KeepDailyDays     int
+	KeepWeeklyWeeks   int
+	KeepMonthlyMonths int
+	KeepYearlyYears   int
+	MaxTotalMB        int64
+	MaxAgeHours       int
+	IncludeFiles      bool
+	FilesPaths        []string
+}
+
 // Mail holds the mail driver settings.
 type Mail struct {
 	Driver      string
@@ -281,6 +306,17 @@ func (c *Config) IsProduction() bool {
 	return strings.EqualFold(c.App.Env, "production")
 }
 
+// IsLocal reports whether the app is running on a developer machine. The
+// developer Playground is only exposed in local/development environments.
+func (c *Config) IsLocal() bool {
+	switch strings.ToLower(strings.TrimSpace(c.App.Env)) {
+	case "local", "development", "dev":
+		return true
+	default:
+		return false
+	}
+}
+
 // IsDebug reports whether verbose/debug behavior is enabled and allowed.
 func (c *Config) IsDebug() bool {
 	return c.App.Debug && !c.IsProduction()
@@ -341,6 +377,9 @@ func Load(envFile string) (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.loadProcessing(); err != nil {
+		return nil, err
+	}
+	if err := cfg.loadBackup(); err != nil {
 		return nil, err
 	}
 	if err := cfg.loadMail(); err != nil {
@@ -440,6 +479,33 @@ func (c *Config) Validate() error {
 	}
 	if c.Processing.Disk == "s3" && !c.Storage.S3.Configured() {
 		return errors.New("DATA_PROCESSING_DISK=s3 requires S3_REGION, S3_BUCKET, S3_ACCESS_KEY and S3_SECRET_KEY")
+	}
+	if c.Backup.Dir == "" {
+		return errors.New("BACKUP_DIR must not be empty")
+	}
+	if c.Backup.Timeout <= 0 {
+		return errors.New("BACKUP_TIMEOUT must be greater than zero")
+	}
+	if len(c.Backup.Destinations) == 0 {
+		return errors.New("BACKUP_DESTINATIONS must include at least local")
+	}
+	for _, destination := range c.Backup.Destinations {
+		switch destination {
+		case "local":
+		case "s3":
+			if !c.Storage.S3.Configured() {
+				return errors.New("BACKUP_DESTINATIONS=s3 requires S3_REGION, S3_BUCKET, S3_ACCESS_KEY and S3_SECRET_KEY")
+			}
+		default:
+			return fmt.Errorf("BACKUP_DESTINATIONS %q is not supported (local|s3)", destination)
+		}
+	}
+	if c.Backup.KeepAllDays < 0 || c.Backup.KeepDailyDays < 0 || c.Backup.KeepWeeklyWeeks < 0 ||
+		c.Backup.KeepMonthlyMonths < 0 || c.Backup.KeepYearlyYears < 0 {
+		return errors.New("BACKUP_KEEP_* values must not be negative")
+	}
+	if c.Backup.MaxTotalMB < 0 {
+		return errors.New("BACKUP_MAX_TOTAL_MB must not be negative")
 	}
 	switch c.Mail.Driver {
 	case "log", "smtp":
@@ -824,6 +890,89 @@ func (c *Config) loadProcessing() error {
 		BasePath: strings.Trim(getString("DATA_PROCESSING_BASE_PATH", "jobs"), "/"),
 	}
 	return nil
+}
+
+func (c *Config) loadBackup() error {
+	enabled, err := getBool("BACKUP_ENABLED", false)
+	if err != nil {
+		return err
+	}
+	timeout, err := getDuration("BACKUP_TIMEOUT", time.Hour)
+	if err != nil {
+		return err
+	}
+	maxTotalMB, err := getInt64("BACKUP_MAX_TOTAL_MB", 0)
+	if err != nil {
+		return err
+	}
+	maxAgeHours, err := getInt("BACKUP_MAX_AGE_HOURS", 26)
+	if err != nil {
+		return err
+	}
+	includeFiles, err := getBool("BACKUP_INCLUDE_FILES", false)
+	if err != nil {
+		return err
+	}
+	keepAllDays, err := getInt("BACKUP_KEEP_ALL_DAYS", 7)
+	if err != nil {
+		return err
+	}
+	keepDailyDays, err := getInt("BACKUP_KEEP_DAILY_DAYS", 16)
+	if err != nil {
+		return err
+	}
+	keepWeeklyWeeks, err := getInt("BACKUP_KEEP_WEEKLY_WEEKS", 8)
+	if err != nil {
+		return err
+	}
+	keepMonthlyMonths, err := getInt("BACKUP_KEEP_MONTHLY_MONTHS", 4)
+	if err != nil {
+		return err
+	}
+	keepYearlyYears, err := getInt("BACKUP_KEEP_YEARLY_YEARS", 2)
+	if err != nil {
+		return err
+	}
+	dir := getString("BACKUP_DIR", "backups")
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(c.App.StorageDir, dir)
+	}
+	c.Backup = Backup{
+		Enabled:           enabled,
+		Name:              getString("BACKUP_NAME", c.App.Name),
+		Environment:       c.App.Env,
+		Dir:               filepath.Clean(dir),
+		Destinations:      backupDestinations(getString("BACKUP_DESTINATIONS", "local")),
+		S3Prefix:          strings.Trim(getString("BACKUP_S3_PREFIX", "backups"), "/"),
+		PgDumpPath:        getString("BACKUP_PG_DUMP_PATH", "pg_dump"),
+		Timeout:           timeout,
+		RunCron:           getString("BACKUP_RUN_CRON", "30 1 * * *"),
+		CleanCron:         getString("BACKUP_CLEAN_CRON", "30 2 * * *"),
+		KeepAllDays:       keepAllDays,
+		KeepDailyDays:     keepDailyDays,
+		KeepWeeklyWeeks:   keepWeeklyWeeks,
+		KeepMonthlyMonths: keepMonthlyMonths,
+		KeepYearlyYears:   keepYearlyYears,
+		MaxTotalMB:        maxTotalMB,
+		MaxAgeHours:       maxAgeHours,
+		IncludeFiles:      includeFiles,
+		FilesPaths:        splitCSV(getString("BACKUP_FILES_PATHS", "")),
+	}
+	return nil
+}
+
+func backupDestinations(raw string) []string {
+	seen := map[string]bool{"local": true}
+	destinations := []string{"local"}
+	for _, name := range splitCSV(raw) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		destinations = append(destinations, name)
+	}
+	return destinations
 }
 
 func (c *Config) loadMail() error {

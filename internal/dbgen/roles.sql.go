@@ -65,6 +65,17 @@ func (q *Queries) ClearUserRoles(ctx context.Context, arg ClearUserRolesParams) 
 	return err
 }
 
+const countRolePermissions = `-- name: CountRolePermissions :one
+SELECT count(*) FROM role_has_permissions WHERE role_id = $1
+`
+
+func (q *Queries) CountRolePermissions(ctx context.Context, roleID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countRolePermissions, roleID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countUsersWithRole = `-- name: CountUsersWithRole :one
 SELECT count(*) FROM model_has_roles
 WHERE model_type = $1 AND role_id = $2
@@ -330,6 +341,27 @@ func (q *Queries) ListUserIDsWithRole(ctx context.Context, arg ListUserIDsWithRo
 		return nil, err
 	}
 	return items, nil
+}
+
+const removeUserRole = `-- name: RemoveUserRole :execrows
+DELETE FROM model_has_roles
+WHERE role_id = $1
+  AND model_type = $2
+  AND model_id = $3
+`
+
+type RemoveUserRoleParams struct {
+	RoleID    int64  `json:"role_id"`
+	ModelType string `json:"model_type"`
+	ModelID   int64  `json:"model_id"`
+}
+
+func (q *Queries) RemoveUserRole(ctx context.Context, arg RemoveUserRoleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeUserRole, arg.RoleID, arg.ModelType, arg.ModelID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const roleAssignableToTenant = `-- name: RoleAssignableToTenant :one

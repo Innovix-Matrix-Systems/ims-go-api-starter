@@ -12,6 +12,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/auth"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/branches"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/dataprocessing"
@@ -106,6 +107,9 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	healthRegistry.Add(cache.HealthCheck{Store: store})
 	healthRegistry.Add(queue.HealthCheck{Pool: platform.DB.Primary().Pool})
 	healthRegistry.Add(scheduler.HealthCheck{Store: store})
+	if cfg.Backup.Enabled && platform.Backup != nil {
+		healthRegistry.Add(backup.HealthCheck{Service: platform.Backup})
+	}
 	healthHandler := health.NewHandler(healthRegistry, 30*time.Second)
 
 	limiter := ratelimit.NewCacheLimiter(store, cfg.RateLimit.PerMinute, time.Minute)
@@ -180,8 +184,34 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 		Processing:    dataprocessing.NewHandler(platform.Processing, platform.Settings, checker, binder, validator, responder),
 		Settings:      settings.NewHandler(platform.Settings, checker, binder, validator, responder),
 		Flags:         featureflags.NewHandler(platform.FeatureFlags, checker, binder, validator, responder),
-		Dev:           dev.NewHandler(checker, permissionService, platform.QueueAdmin, dev.NewActionRepository(queries), dev.NewTelemetryRepository(queries), platform.Telemetry, logger, cfg.DevDashboard.RetentionDays, binder, validator, responder),
-		DevUI:         devUI,
+		Dev: dev.NewHandler(dev.Deps{
+			Checker:       checker,
+			Permissions:   permissionService,
+			QueueAdmin:    platform.QueueAdmin,
+			Queue:         platform.Queue,
+			Playground:    cfg.IsLocal(),
+			Actions:       dev.NewActionRepository(queries),
+			Telemetry:     dev.NewTelemetryRepository(queries),
+			Sessions:      dev.NewSessionRepository(queries),
+			Developers:    dev.NewDeveloperRepository(queries),
+			Files:         dev.NewFileRepository(queries),
+			FileService:   platform.Files,
+			Backups:       platform.Backup,
+			Targets:       dev.NewTargetRepository(queries),
+			FeatureFlags:  platform.FeatureFlags,
+			Settings:      platform.Settings,
+			Identity:      platform.Identity,
+			Exchange:      platform.Exchange,
+			Roles:         roleRepo,
+			RoleService:   roleService,
+			Collector:     platform.Telemetry,
+			Logger:        logger,
+			RetentionDays: cfg.DevDashboard.RetentionDays,
+			Binder:        binder,
+			Validator:     validator,
+			Responder:     responder,
+		}),
+		DevUI: devUI,
 		Billing: billing.NewHandler(
 			platform.BillingPackages,
 			platform.BillingSubs,

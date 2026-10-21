@@ -12,13 +12,13 @@ interface NavItem {
   label: string
   icon: IconName
   soon?: boolean
+  localOnly?: boolean
 }
 
 interface NavGroup {
   section: string
   items: NavItem[]
 }
-
 const navigation: NavGroup[] = [
   {
     section: 'Monitor',
@@ -33,6 +33,7 @@ const navigation: NavGroup[] = [
     section: 'Operations',
     items: [
       { to: '/queue', label: 'Queue', icon: 'queue' },
+      { to: '/backups', label: 'Backups', icon: 'backup' },
       { to: '/actions', label: 'Commands', icon: 'actions' },
       { to: '/system', label: 'System', icon: 'system' },
     ],
@@ -40,12 +41,16 @@ const navigation: NavGroup[] = [
   {
     section: 'Management',
     items: [
-      { to: '/sessions', label: 'Sessions', icon: 'sessions', soon: true },
-      { to: '/settings', label: 'Settings', icon: 'settings', soon: true },
-      { to: '/flags', label: 'Feature Flags', icon: 'flags', soon: true },
-      { to: '/files', label: 'Files', icon: 'files', soon: true },
-      { to: '/developers', label: 'Developers', icon: 'developers', soon: true },
+      { to: '/sessions', label: 'Sessions', icon: 'sessions' },
+      { to: '/settings', label: 'Settings', icon: 'settings' },
+      { to: '/flags', label: 'Feature Flags', icon: 'flags' },
+      { to: '/files', label: 'Files', icon: 'files' },
+      { to: '/developers', label: 'Developers', icon: 'developers' },
     ],
+  },
+  {
+    section: 'Sandbox',
+    items: [{ to: '/playground', label: 'Playground', icon: 'playground', localOnly: true }],
   },
 ]
 
@@ -119,24 +124,28 @@ export function AppShell() {
           </div>
         </div>
         <nav className="nav">
-          {navigation.map((group) => (
-            <div key={group.section}>
-              <div className="nav-section">{group.section}</div>
-              {group.items.map((item) => (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className="nav-item"
-                  activeProps={{ className: 'nav-item active' }}
-                  activeOptions={{ exact: item.to === '/' }}
-                >
-                  <Icon name={item.icon} />
-                  <span>{item.label}</span>
-                  {item.soon ? <span className="nav-badge">soon</span> : null}
-                </Link>
-              ))}
-            </div>
-          ))}
+          {navigation.map((group) => {
+            const items = group.items.filter((item) => !item.localOnly || me?.playground)
+            if (items.length === 0) return null
+            return (
+              <div key={group.section}>
+                <div className="nav-section">{group.section}</div>
+                {items.map((item) => (
+                  <Link
+                    key={item.to}
+                    to={item.to}
+                    className="nav-item"
+                    activeProps={{ className: 'nav-item active' }}
+                    activeOptions={{ exact: item.to === '/' }}
+                  >
+                    <Icon name={item.icon} />
+                    <span>{item.label}</span>
+                    {item.soon ? <span className="nav-badge">soon</span> : null}
+                  </Link>
+                ))}
+              </div>
+            )
+          })}
           <div className="nav-section">Reference</div>
           <a className="nav-item external" href="/docs" target="_blank" rel="noreferrer">
             <Icon name="docs" />

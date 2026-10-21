@@ -29,6 +29,8 @@ type Repository interface {
 	PhoneExists(ctx context.Context, phone string, excludeID int64) (bool, error)
 	ClearRoles(ctx context.Context, userID int64) error
 	AssignRoles(ctx context.Context, userID int64, roleIDs []int64) error
+	AddRole(ctx context.Context, userID, roleID int64) error
+	RemoveRole(ctx context.Context, userID, roleID int64) (bool, error)
 	ListForExport(ctx context.Context, filter ExportFilter) ([]ExportRow, error)
 
 	// authn.UserLookup
@@ -323,6 +325,29 @@ func (r *repository) AssignRoles(ctx context.Context, userID int64, roleIDs []in
 		return database.MapError("users.assign_roles", err)
 	}
 	return nil
+}
+
+func (r *repository) AddRole(ctx context.Context, userID, roleID int64) error {
+	if err := r.queries.AssignUserRoles(ctx, dbgen.AssignUserRolesParams{
+		RoleIds:   []int64{roleID},
+		ModelType: authz.ModelTypeUser,
+		ModelID:   userID,
+	}); err != nil {
+		return database.MapError("users.add_role", err)
+	}
+	return nil
+}
+
+func (r *repository) RemoveRole(ctx context.Context, userID, roleID int64) (bool, error) {
+	removed, err := r.queries.RemoveUserRole(ctx, dbgen.RemoveUserRoleParams{
+		RoleID:    roleID,
+		ModelType: authz.ModelTypeUser,
+		ModelID:   userID,
+	})
+	if err != nil {
+		return false, database.MapError("users.remove_role", err)
+	}
+	return removed > 0, nil
 }
 
 func (r *repository) FindByEmail(ctx context.Context, email string) (*authn.UserRecord, error) {

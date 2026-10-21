@@ -5,7 +5,7 @@ processes started from the same binary, so a full local stack means three shells
 
 | Process | Command | Purpose |
 |---|---|---|
-| API | `ims serve` (or `make dev`) | HTTP on `:8080` |
+| API | `ims serve` (or `make dev`) | HTTP on `:8080`; `make dev` puts Vite HMR on `:8080` and the API on `:8081` |
 | Worker | `ims queue:work` | processes River jobs (`critical`/`default`/`heavy`) |
 | Scheduler | `ims schedule` | runs cron tasks (heartbeat, billing, cleanup) |
 
@@ -14,24 +14,33 @@ Exactly **one** scheduler and **one** (or more) worker per environment.
 ## Prerequisites
 
 - Go 1.26+, PostgreSQL 16+, GNU Make
+- Node.js 20.19+ with npm (developer dashboard dev/build)
 - Optional: Docker (throwaway Postgres); `air` + `golangci-lint` via `make tools`
 
 ## First-time setup
 
 ```bash
-cp .env.example .env      # .env is git-ignored
-make tools                # install air + golangci-lint
+cp .env.example .env          # .env is git-ignored
+make tools                    # install air + golangci-lint
+npm --prefix web/dev ci       # dashboard dependencies (Vite/React)
 
-make db-up                # start Postgres via docker compose (or use your own)
+make db-up                    # start Postgres via docker compose (or use your own)
 # compose DB is ims_go_api_test; either point DATABASE_DSN at it, or create the
 # database the template defaults to:
 #   createdb ims_go_api
 
-make migrate              # goose migrations AND River's tables
-make seed                 # permissions, Super-Admin role, default tenant+branch, tenant Admin
+make migrate                  # goose migrations AND River's tables
+make seed                     # permissions, roles, tenant+branch, admin + developer users
 ```
 
-Seeded login: `superadmin@ims.com` / `123456` (`AUTH_DEFAULT_PASSWORD`), tenant `1`, branch `1`.
+Seeded accounts (both use `AUTH_DEFAULT_PASSWORD`, default `123456`):
+
+| Account | Role | Purpose |
+|---|---|---|
+| `superadmin@ims.com` | Super-Admin | full API + dashboard access |
+| `developer@ims.com` | hidden Developer | developer dashboard without using the super-admin account |
+
+The default tenant/branch are `1` / `1`. `make seed` is idempotent.
 
 Set a shared cache driver so the three processes see the same counters and scheduler heartbeat:
 
@@ -47,8 +56,11 @@ QUEUE_DRIVER=river        # river (durable, needs the worker) | sync (inline, no
 Three shells, same working directory:
 
 ```bash
-# Shell A — HTTP API with hot reload on :8080
-make dev                  # = migrate + air; use `make run` for a one-shot run
+# Shell A — HTTP API + developer dashboard with hot reload
+make dev                  # = migrate + Vite HMR (:8080) + air API (:8081)
+# Open http://localhost:8080/dev/ for the dashboard (HMR). Vite proxies
+# /api, /dev/api, /storage and /docs to the API on :8081. `make dev-api`
+# still runs the API alone on :8080 with the embedded production build.
 
 # Shell B — queue worker
 make queue                # = go run ./cmd/app queue:work
@@ -59,14 +71,24 @@ make queue                # = go run ./cmd/app queue:work
 make schedule             # = go run ./cmd/app schedule
 ```
 
-After `make build` the same roles are `bin/ims serve`, `bin/ims queue:work`, `bin/ims schedule`.
+After `make build-all` the same roles are `bin/ims serve`, `bin/ims queue:work`, `bin/ims schedule`.
+(`make build` alone assumes `web/dev/dist` was already built; use `build-all` for a release.)
+
+`make dev` puts Vite on the canonical `:8080` so the dashboard, API docs and proxied API all share
+one origin and HMR works in the browser. Override the pair with `IMS_WEB_PORT` (default `8080`) and
+`IMS_API_PORT` (default `8081`).
+
+For the standalone SPA dev server on `:5173`, run `make dev-api` (API on `:8080`) in one shell and
+`make dev-web` in another; `IMS_API_ORIGIN` defaults to `http://127.0.0.1:8080`. Do not combine
+`make dev-web` with `make dev`, because `make dev` already uses `:8080` for Vite.
 
 ## Verify
 
 ```bash
 curl http://localhost:8080/up
-curl http://localhost:8080/api/health             # DB, cache, queue and heartbeat checks
+curl http://localhost:8080/api/health             # DB, cache, queue, scheduler and backup checks
 curl http://localhost:8080/api/v1/system/info
+# Dashboard: http://localhost:8080/dev/  (developer@ims.com or superadmin@ims.com)
 # API docs UI (enabled outside production): http://localhost:8080/docs
 
 # log in and use the token
@@ -75,12 +97,17 @@ curl -X POST http://localhost:8080/api/v1/login \
   -d '{"email":"superadmin@ims.com","password":"123456","device":"cli"}'
 curl http://localhost:8080/api/v1/user -H "Authorization: Bearer <id|secret>"
 
+make health                                       # or: go run ./cmd/app health:check
+make config                                       # secrets masked
 go run ./cmd/app queue:stats                      # QUEUE / TOTAL / ACTIVE / FAILED
 go run ./cmd/app schedule:list
 go run ./cmd/app schedule:run scheduler.heartbeat
-go run ./cmd/app health:check
-go run ./cmd/app config:show
+go run ./cmd/app backup:list
 ```
+
+`DEV_DASHBOARD_ENABLED` defaults to true outside production; set it to `false` to make `/dev` and
+`/dev/api/*` return 404. The hidden `Developer` account holds every catalog permission, equivalent
+to a second super-admin — rotate it outside local use.
 
 To watch a job end-to-end, trigger a background user export (`POST /api/v1/user/export-background`),
 watch Shell B process it, then check `queue:stats` and the job status.
@@ -93,6 +120,8 @@ watch Shell B process it, then check `queue:stats` and the job status.
 | `dataprocessing.cleanup-completed` | `0 2 * * *` | prune completed import/export jobs |
 | `billing.expire-subscriptions` | `0 */6 * * *` | mark overdue subscriptions expired |
 | `billing.send-renewal-reminders` | `0 8 * * *` | 7/3/1-day renewal reminders |
+| `backup.run` | `30 1 * * *` | database backup (when `BACKUP_ENABLED=true`) |
+| `backup.clean` | `30 2 * * *` | backup retention cleanup (when enabled) |
 
 Times use `SCHEDULE_TIMEZONE` (falls back to `APP_TIMEZONE`).
 
@@ -103,11 +132,17 @@ make help
 make run                  # API once (no hot reload)
 make test                 # unit tests
 make check                # format-check + vet + lint + tests
+make web-typecheck        # dashboard TypeScript
+make build-all            # SPA + Go binary (use for release)
 make migrate-status       # goose + River migration state
-make generate             # regenerate sqlc + OpenAPI code
+make generate             # sqlc + OpenAPI contract + generated regions
+make openapi-check        # spec validity + route drift + region freshness
+make gen-check            # fail on generated-code drift
 go run ./cmd/app permission:sync
 go run ./cmd/app settings:sync
+go run ./cmd/app feature-flags:sync
 go run ./cmd/app cache:clear
+go run ./cmd/app backup:run
 ```
 
 ## Feature knobs (`.env`)
@@ -117,10 +152,12 @@ go run ./cmd/app cache:clear
 | Durable jobs | `QUEUE_DRIVER=river` + run the worker |
 | Inline jobs, no worker | `QUEUE_DRIVER=sync` |
 | Shared cache / counters / heartbeat | `CACHE_DRIVER=database` (or `redis` + `REDIS_*`) |
-| Email | `MAIL_DRIVER=log` (default) or `smtp` + `SMTP_*` |
+| Email | `MAIL_DRIVER=log` (default) or `smtp` + `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD` |
 | Uploads | `FILES_DISK=public`, `APP_STORAGE_DIR`, `STORAGE_*` |
 | Metrics / docs | `METRICS_ENABLED=true` (`/metrics`), `DOCS_ENABLED=true` (`/docs`) |
+| Developer dashboard | `DEV_DASHBOARD_ENABLED=true` (default outside production); `/dev` |
 | Billing gateways | `BKASH_*`, `NAGAD_*`, `BANK_TRANSFER_*` |
+| Database backups | `BACKUP_ENABLED=true`, `BACKUP_DIR`, `BACKUP_DESTINATIONS=local,s3` + `S3_*` (see `backups.md`) |
 
 Use a specific file with `ims --env-file /path/to/.env serve` (flag → `APP_ENV_FILE` → `./.env`;
 real environment variables always override file values).
@@ -132,6 +169,11 @@ real environment variables always override file values).
 - Health shows a stale-scheduler warning: `CACHE_DRIVER=memory` is per-process — set `database`/`redis`.
 - `migrate` fails: it creates the schema, not the database. Create the database first, or repoint
   `DATABASE_DSN`.
+- `make dev` cannot find Vite: run `npm --prefix web/dev ci` once (Node.js 20.19+).
+- `/dev` returns 404: set `DEV_DASHBOARD_ENABLED=true`; the dashboard is off in production by default.
+- Dashboard login fails: run `make seed` (it creates `developer@ims.com` and the hidden role).
 - Integration tests: set `DATABASE_TEST_DSN` (they skip, never fail, when it is unset).
+- `backup:run` fails: install PostgreSQL client tools and point `BACKUP_PG_DUMP_PATH` at a
+  `pg_dump` version matching or exceeding the server; see [`backups.md`](backups.md).
 
 Production is a separate runbook: see [`deploy.md`](deploy.md).

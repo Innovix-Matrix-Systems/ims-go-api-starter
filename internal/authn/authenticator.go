@@ -125,6 +125,7 @@ func (a *OpaqueAuthenticator) Verify(ctx context.Context, raw string) (*Identity
 
 	return &Identity{
 		UserID:         record.ID,
+		TokenID:        row.ID,
 		Name:           record.Name,
 		Email:          record.Email,
 		TenantID:       record.TenantID,

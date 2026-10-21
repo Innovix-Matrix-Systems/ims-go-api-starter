@@ -73,6 +73,62 @@ func (s *RoleService) CreateInternal(ctx context.Context, tenantID *int64, actor
 	})
 }
 
+// EnsureDeveloperRole creates the hidden global Developer role when missing,
+// marks an existing role hidden, and syncs every catalog permission onto it.
+// It is idempotent and mirrors the seeder's Super-Admin permission sync.
+func (s *RoleService) EnsureDeveloperRole(ctx context.Context, actorID int64) (*Role, int64, error) {
+	role, err := s.roles.GetSystemByName(ctx, authz.DeveloperRole)
+	if err != nil {
+		if !apperr.Is(err, apperr.ResourceNotFound) {
+			return nil, 0, err
+		}
+		description := "Developer dashboard access (hidden)"
+		var actor *int64
+		if actorID > 0 {
+			actor = &actorID
+		}
+		role, err = s.roles.Create(ctx, CreateRoleInput{
+			Name:        authz.DeveloperRole,
+			IsSystem:    true,
+			Hidden:      true,
+			Description: &description,
+			ActorID:     actor,
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+	} else if !role.Hidden {
+		if err := s.roles.SetHidden(ctx, role.ID, true); err != nil {
+			return nil, 0, err
+		}
+		role.Hidden = true
+	}
+
+	if _, err := s.perms.Upsert(ctx, authz.Catalog); err != nil {
+		return nil, 0, err
+	}
+	names := make([]string, 0, len(authz.Catalog))
+	for _, permission := range authz.Catalog {
+		names = append(names, permission.Name)
+	}
+	permissions, err := s.perms.GetByNames(ctx, names)
+	if err != nil {
+		return nil, 0, err
+	}
+	ids := make([]int64, 0, len(permissions))
+	for _, permission := range permissions {
+		ids = append(ids, permission.ID)
+	}
+	if err := s.roles.ClearPermissions(ctx, role.ID); err != nil {
+		return nil, 0, err
+	}
+	if err := s.roles.AssignPermissions(ctx, role.ID, ids); err != nil {
+		return nil, 0, err
+	}
+	_ = s.checker.InvalidateRole(ctx, role.ID)
+	return role, int64(len(ids)), nil
+}
+
 // Update modifies a tenant role; system roles are protected.
 func (s *RoleService) Update(ctx context.Context, tenantID, id, actorID int64, name string, description *string) (*Role, error) {
 	role, err := s.roles.Get(ctx, tenantID, id)

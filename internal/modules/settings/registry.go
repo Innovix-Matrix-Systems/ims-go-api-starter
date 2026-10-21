@@ -51,6 +51,7 @@ type Group struct {
 
 // Groups is the catalog-owned group set; `settings:sync` upserts them.
 var Groups = []Group{
+	{Slug: "ungrouped", Name: "Ungrouped", Description: "Settings parked outside a functional group.", SortOrder: 0},
 	{Slug: "general", Name: "General", Description: "Core application settings.", SortOrder: 1},
 	{Slug: "notifications", Name: "Notifications", Description: "Outbound notification behavior.", SortOrder: 2},
 	{Slug: "data-processing", Name: "Data Processing", Description: "Import/export retention and processing.", SortOrder: 3},

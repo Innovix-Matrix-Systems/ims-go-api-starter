@@ -13,9 +13,11 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppActionsRouteImport } from './routes/_app.actions'
+import { Route as AppBackupsRouteImport } from './routes/_app.backups'
 import { Route as AppDevelopersRouteImport } from './routes/_app.developers'
 import { Route as AppFilesRouteImport } from './routes/_app.files'
 import { Route as AppFlagsRouteImport } from './routes/_app.flags'
+import { Route as AppPlaygroundRouteImport } from './routes/_app.playground'
 import { Route as AppQueueRouteImport } from './routes/_app.queue'
 import { Route as AppSessionsRouteImport } from './routes/_app.sessions'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
@@ -47,6 +49,11 @@ const AppActionsRoute = AppActionsRouteImport.update({
   path: '/actions',
   getParentRoute: () => AppRoute,
 } as any)
+const AppBackupsRoute = AppBackupsRouteImport.update({
+  id: '/backups',
+  path: '/backups',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppDevelopersRoute = AppDevelopersRouteImport.update({
   id: '/developers',
   path: '/developers',
@@ -60,6 +67,11 @@ const AppFilesRoute = AppFilesRouteImport.update({
 const AppFlagsRoute = AppFlagsRouteImport.update({
   id: '/flags',
   path: '/flags',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPlaygroundRoute = AppPlaygroundRouteImport.update({
+  id: '/playground',
+  path: '/playground',
   getParentRoute: () => AppRoute,
 } as any)
 const AppQueueRoute = AppQueueRouteImport.update({
@@ -122,9 +134,11 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/actions': typeof AppActionsRoute
+  '/backups': typeof AppBackupsRoute
   '/developers': typeof AppDevelopersRoute
   '/files': typeof AppFilesRoute
   '/flags': typeof AppFlagsRoute
+  '/playground': typeof AppPlaygroundRoute
   '/queue': typeof AppQueueRoute
   '/sessions': typeof AppSessionsRoute
   '/settings': typeof AppSettingsRoute
@@ -140,9 +154,11 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/actions': typeof AppActionsRoute
+  '/backups': typeof AppBackupsRoute
   '/developers': typeof AppDevelopersRoute
   '/files': typeof AppFilesRoute
   '/flags': typeof AppFlagsRoute
+  '/playground': typeof AppPlaygroundRoute
   '/queue': typeof AppQueueRoute
   '/sessions': typeof AppSessionsRoute
   '/settings': typeof AppSettingsRoute
@@ -161,9 +177,11 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/actions': typeof AppActionsRoute
+  '/_app/backups': typeof AppBackupsRoute
   '/_app/developers': typeof AppDevelopersRoute
   '/_app/files': typeof AppFilesRoute
   '/_app/flags': typeof AppFlagsRoute
+  '/_app/playground': typeof AppPlaygroundRoute
   '/_app/queue': typeof AppQueueRoute
   '/_app/sessions': typeof AppSessionsRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -183,9 +201,11 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/actions'
+    | '/backups'
     | '/developers'
     | '/files'
     | '/flags'
+    | '/playground'
     | '/queue'
     | '/sessions'
     | '/settings'
@@ -201,9 +221,11 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/actions'
+    | '/backups'
     | '/developers'
     | '/files'
     | '/flags'
+    | '/playground'
     | '/queue'
     | '/sessions'
     | '/settings'
@@ -221,9 +243,11 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/_app/actions'
+    | '/_app/backups'
     | '/_app/developers'
     | '/_app/files'
     | '/_app/flags'
+    | '/_app/playground'
     | '/_app/queue'
     | '/_app/sessions'
     | '/_app/settings'
@@ -273,6 +297,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppActionsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/backups': {
+      id: '/_app/backups'
+      path: '/backups'
+      fullPath: '/backups'
+      preLoaderRoute: typeof AppBackupsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/developers': {
       id: '/_app/developers'
       path: '/developers'
@@ -292,6 +323,13 @@ declare module '@tanstack/react-router' {
       path: '/flags'
       fullPath: '/flags'
       preLoaderRoute: typeof AppFlagsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/playground': {
+      id: '/_app/playground'
+      path: '/playground'
+      fullPath: '/playground'
+      preLoaderRoute: typeof AppPlaygroundRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/queue': {
@@ -376,9 +414,11 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppActionsRoute: typeof AppActionsRoute
+  AppBackupsRoute: typeof AppBackupsRoute
   AppDevelopersRoute: typeof AppDevelopersRoute
   AppFilesRoute: typeof AppFilesRoute
   AppFlagsRoute: typeof AppFlagsRoute
+  AppPlaygroundRoute: typeof AppPlaygroundRoute
   AppQueueRoute: typeof AppQueueRoute
   AppSessionsRoute: typeof AppSessionsRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -395,9 +435,11 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppActionsRoute: AppActionsRoute,
+  AppBackupsRoute: AppBackupsRoute,
   AppDevelopersRoute: AppDevelopersRoute,
   AppFilesRoute: AppFilesRoute,
   AppFlagsRoute: AppFlagsRoute,
+  AppPlaygroundRoute: AppPlaygroundRoute,
   AppQueueRoute: AppQueueRoute,
   AppSessionsRoute: AppSessionsRoute,
   AppSettingsRoute: AppSettingsRoute,

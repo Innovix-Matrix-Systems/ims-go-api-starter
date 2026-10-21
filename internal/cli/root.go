@@ -70,6 +70,7 @@ func BuildRoot(state *State) (*cobra.Command, error) {
 		registerSettingsCommands,
 		registerDataProcessingCommands,
 		registerBillingCommands,
+		registerBackupCommands,
 		registerDevCommands,
 		registerGenCommands,
 		registerAppCommands,

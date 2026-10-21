@@ -39,7 +39,7 @@ function OverviewPage() {
   const exceptions = useQuery({
     queryKey: ['overview', 'exceptions'],
     queryFn: ({ signal }) =>
-      api<CursorPage<DevException>>('/dev/api/exceptions', { query: { limit: 5 }, signal, unwrap: false }),
+      api<CursorPage<DevException>>('/dev/api/exceptions', { query: { limit: 2 }, signal, unwrap: false }),
     refetchInterval: 15_000,
   })
   const actions = useQuery({
@@ -164,23 +164,29 @@ function OverviewPage() {
               title="Recent exceptions"
               actions={
                 <Link to="/exceptions" className="btn ghost sm">
-                  All <Icon name="chevron" className="icon-inline" />
+                  View all <Icon name="chevron" className="icon-inline" />
                 </Link>
               }
             />
             {recentExceptions.length === 0 ? (
-              <div className="muted small" style={{ padding: '8px 0' }}>No exceptions captured. 🎉</div>
+              <div className="muted small" style={{ padding: '8px 0' }}>No exceptions captured.</div>
             ) : (
               <div className="stack-tight">
-                {recentExceptions.slice(0, 4).map((exception) => (
-                  <div key={exception.id} className="stack-tight" style={{ padding: '6px 0' }}>
+                {recentExceptions.slice(0, 2).map((exception) => (
+                  <Link
+                    key={exception.id}
+                    to="/exceptions/$id"
+                    params={{ id: String(exception.id) }}
+                    className="stack-tight"
+                    style={{ padding: '6px 0' }}
+                  >
                     <div className="flex">
                       <Chip tone="red">{exception.class}</Chip>
                       <span className="spacer" />
                       <span className="small dim">{relativeTime(exception.created_at)}</span>
                     </div>
                     <div className="small truncate" style={{ color: 'var(--text-soft)' }}>{exception.message}</div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
