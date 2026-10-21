@@ -146,10 +146,21 @@ DATABASE_TEST_DSN="postgres://postgres:postgres@127.0.0.1:5432/ims_go_api_test?s
 
 Every test package gets its own schema, so integration packages are parallel-safe.
 
+### Git hooks
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit .githooks/pre-push   # macOS/Linux (once)
+```
+
+`pre-commit` fails when Go files are not `gofmt`-clean; `pre-push` runs `make check`,
+`make openapi-check` and the dashboard type-check (when `web/dev/node_modules` exists).
+
 ## Project layout
 
 ```text
 cmd/app/            single-binary entry point
+.githooks/          pre-commit (gofmt) + pre-push (check/OpenAPI/typecheck) hooks
 internal/app/       composition root: platform, wiring, routes, lifecycle
 internal/modules/   feature modules (identity, access, tenancy, billing, settings, files, backup, ...)
 internal/platform/  database, cache, queue, scheduler, httpx, storage, mail, i18n, health, metrics
