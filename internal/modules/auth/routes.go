@@ -14,7 +14,7 @@ func (h *Handler) RegisterPublicRoutes(r chi.Router) {
 	}
 }
 
-// RegisterRoutes mounts authenticated auth routes (tenant-resolved group).
+// RegisterRoutes mounts authenticated session routes (no tenant resolution).
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/logout", h.logout)
 }

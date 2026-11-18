@@ -142,6 +142,16 @@ func TestIdentityWriteRules(t *testing.T) {
 		}
 	})
 
+	t.Run("tenantless accounts can sign out", func(t *testing.T) {
+		token := loginToken(t, router, "superadmin@ims.com", "secret123", "rules-logout")
+		if rec := apiRequest(t, router, http.MethodPost, "/api/v1/logout", `{"device":"rules-logout"}`, token, nil); rec.Code != http.StatusNoContent {
+			t.Fatalf("logout status = %d, want 204 (%s)", rec.Code, rec.Body.String())
+		}
+		if rec := apiRequest(t, router, http.MethodGet, "/api/v1/user/profile", "", token, nil); rec.Code != http.StatusUnauthorized {
+			t.Errorf("token after logout status = %d, want 401", rec.Code)
+		}
+	})
+
 	t.Run("users.max holds under concurrent creates", func(t *testing.T) {
 		var current int64
 		if err := pool.QueryRow(ctx, `SELECT count(*) FROM users WHERE tenant_id = 1 AND deleted_at IS NULL`).Scan(&current); err != nil {

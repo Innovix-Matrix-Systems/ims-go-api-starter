@@ -86,9 +86,13 @@ func (d *Dependencies) Router() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(authn.Authenticate(d.Authenticator, d.Responder))
 
+			// Session routes act only on the caller's own token: no tenant
+			// resolution, so tenantless accounts (super-admin, developer)
+			// can sign out too.
+			d.Auth.RegisterRoutes(r)
+
 			r.Group(func(r chi.Router) {
 				r.Use(tenancy.Resolve(d.TenancyOpts))
-				d.Auth.RegisterRoutes(r)
 				d.Users.RegisterRoutesResolve(r)
 				d.Branches.RegisterRoutes(r)
 				d.Roles.RegisterRoutesResolve(r)
