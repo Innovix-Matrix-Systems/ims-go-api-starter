@@ -15,8 +15,10 @@ developer guide is [`docs/developer-guide.md`](docs/developer-guide.md) and per-
   (billing), 5 (notifications, i18n, files, import/export, mail), 6 (contract/observability),
   7 (deploy/generators), 10 (OpenAPI spec generator), 11 (settings/groups/feature flags),
   9 core (developer dashboard: hidden Developer access, queue admin, telemetry capture, `/dev`
-  SPA with Telescope/queue/logs/commands/system screens). Next: 8, then 9 management panels
-  (sessions/settings/flags/files/developers).
+  SPA with Telescope/queue/logs/commands/system screens), 12–17 (review remediation: tenant
+  isolation, identity invariants, billing state machine, platform hardening, indexes/retention,
+  CI security + safe releases), 18 (password reset + e-mail verification). Next: 19 (simplicity
+  pass, audit log, test helpers — draft), then 8 and the remaining 9 panels.
 
 ## Golden commands
 

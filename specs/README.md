@@ -33,6 +33,7 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 16 | [phase-16-performance-data-layer.md](phase-16-performance-data-layer.md) | **Done** (2026-11-19, some deferred) |
 | 17 | [phase-17-product-ops-maturity.md](phase-17-product-ops-maturity.md) | **Done** (2026-11-19, some deferred) |
 | 18 | [phase-18-account-recovery.md](phase-18-account-recovery.md) | **Done** (2026-11-19) |
+| 19 | [phase-19-simplicity-audit-testkit.md](phase-19-simplicity-audit-testkit.md) | Draft (proposed — simplicity pass, audit log, test helpers) |
 
 Remediation phases 12–17 are derived from [docs/codebase-review.md](../docs/codebase-review.md)
 (the full-codebase review at commit `1f55eeb`); each spec lists the finding IDs it resolves.
