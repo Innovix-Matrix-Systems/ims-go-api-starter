@@ -10,8 +10,10 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
+	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/branches"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
@@ -29,11 +31,19 @@ type Service struct {
 	auth       authn.Authenticator
 	cfg        config.Auth
 	limits     LimitChecker
+	tx         *database.TxManager
 }
 
 // NewService creates the user service.
 func NewService(repo Repository, roles access.RoleRepository, branchRepo branches.Repository, checker *authz.Checker, auth authn.Authenticator, cfg config.Auth, limits LimitChecker) *Service {
 	return &Service{repo: repo, roles: roles, branchRepo: branchRepo, checker: checker, auth: auth, cfg: cfg, limits: limits}
+}
+
+// WithTx enables lock-protected quota checks on create. Without it (unit
+// tests with fakes) the limit check still runs, just not atomically.
+func (s *Service) WithTx(tx *database.TxManager) *Service {
+	s.tx = tx
+	return s
 }
 
 // List returns users within the effective scope.
@@ -62,14 +72,7 @@ func (s *Service) List(ctx context.Context, scope tenancy.Scope, filter ListFilt
 
 // Get returns one user visible in the effective scope.
 func (s *Service) Get(ctx context.Context, scope tenancy.Scope, id int64) (*User, error) {
-	user, err := s.repo.Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if !scope.AllTenants() && user.TenantIDValue() != scope.EffectiveTenantID() {
-		return nil, apperr.Newf(apperr.ResourceNotFound, "User with ID '%d' was not found.", id)
-	}
-	return user, nil
+	return s.repo.Get(ctx, scope.Filter(), id)
 }
 
 // CreateParams carries user creation input from handlers.
@@ -99,16 +102,6 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 	if !scope.Internal && tenantID == 0 {
 		return nil, apperr.New(apperr.TenantContextNotResolved, "A tenant context is required.")
 	}
-	if tenantID != 0 && s.limits != nil {
-		count, err := s.repo.Count(ctx, ListFilter{TenantID: tenantID})
-		if err != nil {
-			return nil, err
-		}
-		if err := s.limits.RequireWithinLimitByName(ctx, tenantID, "users.max", count); err != nil {
-			return nil, err
-		}
-	}
-
 	if input.Password == "" {
 		return nil, apperr.Validation(map[string][]string{"password": {"The password field is required."}})
 	}
@@ -146,31 +139,68 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 	}
 	activeBranch := branchID
 
-	user, err := s.repo.Create(ctx, CreateInput{
-		TenantID:        tenant,
-		BranchID:        branchID,
-		ActiveBranchID:  activeBranch,
-		FirstName:       input.FirstName,
-		LastName:        input.LastName,
-		UserName:        input.UserName,
-		Name:            input.Name,
-		Email:           input.Email,
-		Password:        hash,
-		Phone:           input.Phone,
-		IsActive:        isActive,
-		EmailVerifiedAt: time.Now(),
-		ActorID:         &actorID,
+	var user *User
+	err = s.withUserQuota(ctx, tenantID, func(repo Repository) error {
+		created, err := repo.Create(ctx, CreateInput{
+			TenantID:        tenant,
+			BranchID:        branchID,
+			ActiveBranchID:  activeBranch,
+			FirstName:       input.FirstName,
+			LastName:        input.LastName,
+			UserName:        input.UserName,
+			Name:            input.Name,
+			Email:           input.Email,
+			Password:        hash,
+			Phone:           input.Phone,
+			IsActive:        isActive,
+			EmailVerifiedAt: time.Now(),
+			ActorID:         &actorID,
+		})
+		if err != nil {
+			return err
+		}
+		if len(input.Roles) > 0 {
+			if err := repo.AssignRoles(ctx, created.ID, input.Roles); err != nil {
+				return err
+			}
+		}
+		user = created
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if len(input.Roles) > 0 {
-		if err := s.repo.AssignRoles(ctx, user.ID, input.Roles); err != nil {
-			return nil, err
-		}
-	}
 	s.checker.InvalidateUser(ctx, user.ID)
 	return user, nil
+}
+
+// withUserQuota runs create under the tenant's users.max plan limit. With a
+// TxManager the count and the insert share one transaction holding a
+// per-tenant advisory lock, so concurrent creates cannot exceed the quota.
+func (s *Service) withUserQuota(ctx context.Context, tenantID int64, create func(repo Repository) error) error {
+	check := func(repo Repository) error {
+		if tenantID == 0 || s.limits == nil {
+			return nil
+		}
+		count, err := repo.Count(ctx, ListFilter{TenantID: tenantID})
+		if err != nil {
+			return err
+		}
+		return s.limits.RequireWithinLimitByName(ctx, tenantID, "users.max", count)
+	}
+	if tenantID == 0 || s.tx == nil {
+		if err := check(s.repo); err != nil {
+			return err
+		}
+		return create(s.repo)
+	}
+	return s.tx.WithTenantLock(ctx, "users.max", tenantID, func(q *dbgen.Queries) error {
+		repo := NewRepository(q)
+		if err := check(repo); err != nil {
+			return err
+		}
+		return create(repo)
+	})
 }
 
 // UpdateParams carries user update input from handlers.
@@ -182,6 +212,8 @@ type UpdateParams struct {
 	IsActive  *bool
 	BranchID  *int64
 	Roles     []int64
+	// ExpectedUpdatedAt enables optimistic locking (see UpdateInput).
+	ExpectedUpdatedAt *time.Time
 }
 
 // Update modifies a user; super admins are protected from non-super actors.
@@ -190,18 +222,11 @@ func (s *Service) Update(ctx context.Context, scope tenancy.Scope, actorID, id i
 	if err != nil {
 		return nil, err
 	}
-	targetIsSuper, err := s.checker.IsSuperAdmin(ctx, target.ID)
-	if err != nil {
-		return nil, err
+	if input.Roles != nil && target.ID == actorID {
+		return nil, apperr.New(apperr.Forbidden, "You cannot change your own roles.")
 	}
-	if targetIsSuper {
-		actorIsSuper, err := s.checker.IsSuperAdmin(ctx, actorID)
-		if err != nil {
-			return nil, err
-		}
-		if !actorIsSuper {
-			return nil, apperr.New(apperr.Forbidden, "The super admin user cannot be modified.")
-		}
+	if err := s.guardSuperAdmin(ctx, actorID, target.ID); err != nil {
+		return nil, err
 	}
 
 	if err := s.validatePhoneUnique(ctx, input.Phone, target.ID); err != nil {
@@ -225,6 +250,7 @@ func (s *Service) Update(ctx context.Context, scope tenancy.Scope, actorID, id i
 	}
 
 	updated, err := s.repo.Update(ctx, UpdateInput{
+		Tenant:    scope.Filter(),
 		ID:        target.ID,
 		FirstName: input.FirstName,
 		LastName:  input.LastName,
@@ -233,6 +259,8 @@ func (s *Service) Update(ctx context.Context, scope tenancy.Scope, actorID, id i
 		IsActive:  isActive,
 		BranchID:  branchID,
 		ActorID:   &actorID,
+
+		ExpectedUpdatedAt: input.ExpectedUpdatedAt,
 	})
 	if err != nil {
 		return nil, err
@@ -265,7 +293,7 @@ func (s *Service) Delete(ctx context.Context, scope tenancy.Scope, actorID, id i
 	if targetIsSuper {
 		return apperr.New(apperr.Forbidden, "The super admin user cannot be deleted.")
 	}
-	if err := s.repo.Delete(ctx, target.ID, &actorID); err != nil {
+	if err := s.repo.Delete(ctx, scope.Filter(), target.ID, &actorID); err != nil {
 		return err
 	}
 	if err := s.auth.RevokeAll(ctx, target.ID); err != nil {
@@ -286,18 +314,11 @@ func (s *Service) AssignRoles(ctx context.Context, scope tenancy.Scope, actorID,
 	if err != nil {
 		return nil, err
 	}
-	targetIsSuper, err := s.checker.IsSuperAdmin(ctx, target.ID)
-	if err != nil {
-		return nil, err
+	if target.ID == actorID {
+		return nil, apperr.New(apperr.Forbidden, "You cannot change your own roles.")
 	}
-	if targetIsSuper {
-		actorIsSuper, err := s.checker.IsSuperAdmin(ctx, actorID)
-		if err != nil {
-			return nil, err
-		}
-		if !actorIsSuper {
-			return nil, apperr.New(apperr.Forbidden, "The super admin user cannot be modified.")
-		}
+	if err := s.guardSuperAdmin(ctx, actorID, target.ID); err != nil {
+		return nil, err
 	}
 	if scope.Internal && target.TenantIDValue() == 0 {
 		if err := s.validateSystemRoles(ctx, roleIDs); err != nil {
@@ -365,24 +386,14 @@ func (s *Service) ChangePassword(ctx context.Context, scope tenancy.Scope, actor
 	if err != nil {
 		return err
 	}
-	targetIsSuper, err := s.checker.IsSuperAdmin(ctx, target.ID)
-	if err != nil {
+	if err := s.guardSuperAdmin(ctx, actorID, target.ID); err != nil {
 		return err
-	}
-	if targetIsSuper {
-		actorIsSuper, err := s.checker.IsSuperAdmin(ctx, actorID)
-		if err != nil {
-			return err
-		}
-		if !actorIsSuper {
-			return apperr.New(apperr.Forbidden, "The super admin user cannot be modified.")
-		}
 	}
 	hash, err := s.hashPassword(password)
 	if err != nil {
 		return err
 	}
-	if err := s.repo.UpdatePassword(ctx, target.ID, hash, &actorID); err != nil {
+	if err := s.repo.UpdatePassword(ctx, scope.Filter(), target.ID, hash, &actorID); err != nil {
 		return err
 	}
 	return s.auth.RevokeAll(ctx, target.ID)
@@ -390,7 +401,7 @@ func (s *Service) ChangePassword(ctx context.Context, scope tenancy.Scope, actor
 
 // ProfileUpdate updates the authenticated user's own profile.
 func (s *Service) ProfileUpdate(ctx context.Context, userID int64, input UpdateParams) (*User, error) {
-	target, err := s.repo.Get(ctx, userID)
+	target, err := s.repo.Get(ctx, tenancy.Unscoped(), userID)
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +409,7 @@ func (s *Service) ProfileUpdate(ctx context.Context, userID int64, input UpdateP
 		return nil, err
 	}
 	return s.repo.Update(ctx, UpdateInput{
+		Tenant:    tenancy.Unscoped(),
 		ID:        target.ID,
 		FirstName: input.FirstName,
 		LastName:  input.LastName,
@@ -409,9 +421,10 @@ func (s *Service) ProfileUpdate(ctx context.Context, userID int64, input UpdateP
 	})
 }
 
-// ProfileChangePassword verifies the current password before updating.
-func (s *Service) ProfileChangePassword(ctx context.Context, userID int64, currentPassword, newPassword string) error {
-	target, err := s.repo.Get(ctx, userID)
+// ProfileChangePassword verifies the current password before updating, then
+// signs out every other device; the current token keeps working.
+func (s *Service) ProfileChangePassword(ctx context.Context, userID, currentTokenID int64, currentPassword, newPassword string) error {
+	target, err := s.repo.Get(ctx, tenancy.Unscoped(), userID)
 	if err != nil {
 		return err
 	}
@@ -424,7 +437,10 @@ func (s *Service) ProfileChangePassword(ctx context.Context, userID int64, curre
 	if err != nil {
 		return err
 	}
-	return s.repo.UpdatePassword(ctx, userID, hash, &userID)
+	if err := s.repo.UpdatePassword(ctx, tenancy.Unscoped(), userID, hash, &userID); err != nil {
+		return err
+	}
+	return s.auth.RevokeOthers(ctx, userID, currentTokenID)
 }
 
 // SwitchBranch changes the user's active branch.
@@ -445,12 +461,29 @@ func (s *Service) SwitchBranch(ctx context.Context, scope tenancy.Scope, userID,
 	if err := s.repo.SwitchBranch(ctx, userID, branchID); err != nil {
 		return nil, err
 	}
-	return s.repo.Get(ctx, userID)
+	return s.repo.Get(ctx, tenancy.Unscoped(), userID)
 }
 
 // GetRecord loads a user without scope checks (internal consumers only).
 func (s *Service) GetRecord(ctx context.Context, id int64) (*User, error) {
-	return s.repo.Get(ctx, id)
+	return s.repo.Get(ctx, tenancy.Unscoped(), id)
+}
+
+// guardSuperAdmin is a business invariant, not a permission: only a
+// super-admin may modify a super-admin account, whoever the caller is.
+func (s *Service) guardSuperAdmin(ctx context.Context, actorID, targetID int64) error {
+	targetIsSuper, err := s.checker.IsSuperAdmin(ctx, targetID)
+	if err != nil || !targetIsSuper {
+		return err
+	}
+	actorIsSuper, err := s.checker.IsSuperAdmin(ctx, actorID)
+	if err != nil {
+		return err
+	}
+	if !actorIsSuper {
+		return apperr.New(apperr.Forbidden, "The super admin user cannot be modified.")
+	}
+	return nil
 }
 
 func (s *Service) validateEmailUnique(ctx context.Context, email string, excludeID int64) error {

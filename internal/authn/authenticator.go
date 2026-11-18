@@ -40,6 +40,9 @@ type Authenticator interface {
 	Verify(ctx context.Context, raw string) (*Identity, error)
 	Revoke(ctx context.Context, userID int64, device string) error
 	RevokeAll(ctx context.Context, userID int64) error
+	// RevokeOthers deletes every token of the user except keepTokenID
+	// (Laravel's logoutOtherDevices).
+	RevokeOthers(ctx context.Context, userID, keepTokenID int64) error
 }
 
 // OpaqueAuthenticator stores SHA-256 hashed secrets in personal_access_tokens.
@@ -154,6 +157,18 @@ func (a *OpaqueAuthenticator) RevokeAll(ctx context.Context, userID int64) error
 		TokenableID:   userID,
 	}); err != nil {
 		return database.MapError("authn.revoke_all_tokens", err)
+	}
+	return nil
+}
+
+// RevokeOthers deletes every token of the user except keepTokenID.
+func (a *OpaqueAuthenticator) RevokeOthers(ctx context.Context, userID, keepTokenID int64) error {
+	if _, err := a.queries.DeleteOtherTokensForUser(ctx, dbgen.DeleteOtherTokensForUserParams{
+		TokenableType: ModelTypeUser,
+		TokenableID:   userID,
+		KeepID:        keepTokenID,
+	}); err != nil {
+		return database.MapError("authn.revoke_other_tokens", err)
 	}
 	return nil
 }

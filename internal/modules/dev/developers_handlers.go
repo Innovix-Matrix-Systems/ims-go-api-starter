@@ -200,7 +200,7 @@ func (h *Handler) developerStatsData(ctx context.Context) (DeveloperStats, error
 	stats := DeveloperStats{
 		Developers:       developers,
 		RoleName:         authz.DeveloperRole,
-		TotalPermissions: int64(len(authz.Catalog)),
+		TotalPermissions: int64(len(authz.DeveloperPermissions())),
 	}
 	role, err := h.developerRole(ctx)
 	if err != nil {

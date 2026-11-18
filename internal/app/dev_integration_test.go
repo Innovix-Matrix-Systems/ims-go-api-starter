@@ -333,10 +333,10 @@ func TestDeveloperDashboardEndToEnd(t *testing.T) {
 		} `json:"data"`
 	}
 	decodeBody(t, rec, &devStats)
-	if !devStats.Data.RoleExists || devStats.Data.TotalPermissions != int64(len(authz.Catalog)) {
-		t.Fatalf("developer stats = %+v, want an existing role with %d permissions", devStats.Data, len(authz.Catalog))
+	if !devStats.Data.RoleExists || devStats.Data.TotalPermissions != int64(len(authz.DeveloperPermissions())) {
+		t.Fatalf("developer stats = %+v, want an existing role with %d permissions", devStats.Data, len(authz.DeveloperPermissions()))
 	}
-	if devStats.Data.Developers < 1 || devStats.Data.RolePermissions != int64(len(authz.Catalog)) {
+	if devStats.Data.Developers < 1 || devStats.Data.RolePermissions != int64(len(authz.DeveloperPermissions())) {
 		t.Fatalf("developer stats counts = %+v", devStats.Data)
 	}
 
@@ -457,15 +457,15 @@ func TestDeveloperDashboardEndToEnd(t *testing.T) {
 		t.Fatalf("hidden role fetch status = %d, want 404 (body %s)", rec.Code, rec.Body.String())
 	}
 
-	// ── the hidden role holds every catalog permission ─────────────────────────
+	// ── the hidden role holds only the developer-dashboard permissions ─────────
 	var assigned int
 	if err := pool.QueryRow(ctx,
 		"SELECT count(*) FROM role_has_permissions WHERE role_id = $1", role.ID,
 	).Scan(&assigned); err != nil {
 		t.Fatalf("count role permissions: %v", err)
 	}
-	if assigned != len(authz.Catalog) {
-		t.Fatalf("developer role permissions = %d, want %d", assigned, len(authz.Catalog))
+	if assigned != len(authz.DeveloperPermissions()) {
+		t.Fatalf("developer role permissions = %d, want %d", assigned, len(authz.DeveloperPermissions()))
 	}
 
 	// ── the action audit log is reachable and starts empty ────────────────────

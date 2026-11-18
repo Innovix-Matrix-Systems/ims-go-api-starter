@@ -184,7 +184,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	h.updateTarget(w, r)
+	h.updateTarget(w, r, authz.PermUserRoleAssign)
 }
 
 func (h *Handler) updateInternal(w http.ResponseWriter, r *http.Request) {
@@ -193,10 +193,12 @@ func (h *Handler) updateInternal(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	h.updateTarget(w, r)
+	h.updateTarget(w, r, authz.PermUserInternalRoleAssign)
 }
 
-func (h *Handler) updateTarget(w http.ResponseWriter, r *http.Request) {
+// updateTarget applies a user update. Changing roles through the update
+// payload needs the role-assign permission too, not just update.
+func (h *Handler) updateTarget(w http.ResponseWriter, r *http.Request, rolePerm string) {
 	identity, _ := authn.IdentityFromContext(r.Context())
 	id, err := userPathID(r)
 	if err != nil {
@@ -212,6 +214,12 @@ func (h *Handler) updateTarget(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
+	if req.Roles != nil {
+		if err := h.checker.MustCan(r.Context(), identity.UserID, rolePerm); err != nil {
+			h.responder.Error(w, r, err)
+			return
+		}
+	}
 	scope, _ := tenancy.FromContext(r.Context())
 	user, err := h.service.Update(r.Context(), scope, identity.UserID, id, UpdateParams{
 		FirstName: req.FirstName,
@@ -221,6 +229,8 @@ func (h *Handler) updateTarget(w http.ResponseWriter, r *http.Request) {
 		IsActive:  req.IsActive,
 		BranchID:  req.BranchID,
 		Roles:     req.Roles,
+
+		ExpectedUpdatedAt: req.UpdatedAt,
 	})
 	if err != nil {
 		h.responder.Error(w, r, err)
@@ -339,7 +349,7 @@ func (h *Handler) profileChangePassword(w http.ResponseWriter, r *http.Request) 
 		h.responder.Error(w, r, err)
 		return
 	}
-	if err := h.service.ProfileChangePassword(r.Context(), identity.UserID, req.CurrentPassword, req.Password); err != nil {
+	if err := h.service.ProfileChangePassword(r.Context(), identity.UserID, identity.TokenID, req.CurrentPassword, req.Password); err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}

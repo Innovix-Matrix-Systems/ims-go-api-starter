@@ -99,8 +99,8 @@ func TestDeveloperRoleProvisioning(t *testing.T) {
 		} `json:"data"`
 	}{}
 	decodeBody(t, rec, &stats)
-	if !stats.Data.RoleExists || stats.Data.RolePermissions != int64(len(authz.Catalog)) {
-		t.Fatalf("ensure developer role stats = %+v, want %d permissions", stats.Data, len(authz.Catalog))
+	if !stats.Data.RoleExists || stats.Data.RolePermissions != int64(len(authz.DeveloperPermissions())) {
+		t.Fatalf("ensure developer role stats = %+v, want %d permissions", stats.Data, len(authz.DeveloperPermissions()))
 	}
 
 	var hidden, system bool

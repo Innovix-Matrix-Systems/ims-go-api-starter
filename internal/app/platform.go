@@ -196,7 +196,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 	roleRepo := access.NewRoleRepository(txManager.Queries())
 	checker := authz.NewChecker(txManager.Queries(), store)
 	authenticator := authn.NewOpaqueAuthenticator(txManager.Queries(), identityRepo, cfg.Auth)
-	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard)
+	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard).WithTx(txManager)
 	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, telemetryQueue, cfg, logger)
 	if err := exchangeService.RegisterJobs(queueRegistry); err != nil {
 		cacheCleanup()

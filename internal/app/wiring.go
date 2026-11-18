@@ -132,7 +132,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	// Services
 	roleService := access.NewRoleService(roleRepo, permissionRepo, checker, platform.Tx)
 	permissionService := access.NewPermissionService(permissionRepo, checker)
-	branchService := branches.NewService(branchRepo, identityRepo, store, checker, cfg.Tenancy, platform.BillingGuard)
+	branchService := branches.NewService(branchRepo, identityRepo, store, cfg.Tenancy, platform.BillingGuard).WithTx(platform.Tx)
 	tenantService := tenants.NewService(tenantRepo, branchService, roleService, platform.Tx, store, cfg.Tenancy)
 
 	authenticator := platform.Authenticator

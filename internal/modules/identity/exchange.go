@@ -3,6 +3,8 @@ package identity
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -451,7 +453,14 @@ func (s *ExchangeService) importRow(ctx context.Context, scope tenancy.Scope, ac
 	email := strings.TrimSpace(record["email"])
 	password := strings.TrimSpace(record["password"])
 	if password == "" {
-		password = s.cfg.Auth.DefaultPassword
+		// Never share one well-known default across imported accounts: an
+		// imported user without a password gets an unguessable one and sets
+		// their own through the password-reset flow.
+		random, err := randomPassword()
+		if err != nil {
+			return err
+		}
+		password = random
 	}
 	phone := strings.TrimSpace(record["phone"])
 	status := strings.ToLower(strings.TrimSpace(record["status"]))
@@ -686,4 +695,13 @@ func derefString(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+// randomPassword returns a 24-character URL-safe random password.
+func randomPassword() (string, error) {
+	buf := make([]byte, 18)
+	if _, err := rand.Read(buf); err != nil {
+		return "", apperr.Wrap(apperr.InternalServerError, "generate password", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

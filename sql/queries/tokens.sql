@@ -106,3 +106,9 @@ WHERE tokenable_type = 'user'
     (expires_at IS NOT NULL AND expires_at < now())
     OR COALESCE(last_used_at, created_at) < now() - (sqlc.arg(idle_days)::int * interval '1 day')
   );
+
+-- name: DeleteOtherTokensForUser :execrows
+DELETE FROM personal_access_tokens
+WHERE tokenable_type = @tokenable_type
+  AND tokenable_id = @tokenable_id
+  AND id <> @keep_id;

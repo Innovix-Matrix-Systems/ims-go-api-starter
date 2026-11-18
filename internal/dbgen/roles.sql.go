@@ -148,6 +148,23 @@ func (q *Queries) DeleteRole(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteTenantRole = `-- name: DeleteTenantRole :execrows
+DELETE FROM roles WHERE id = $1 AND tenant_id = $2::bigint AND is_system = false
+`
+
+type DeleteTenantRoleParams struct {
+	ID       int64 `json:"id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+func (q *Queries) DeleteTenantRole(ctx context.Context, arg DeleteTenantRoleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTenantRole, arg.ID, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRole = `-- name: GetRole :one
 SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden FROM roles
 WHERE id = $1
@@ -465,6 +482,49 @@ func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (Role, e
 		arg.Description,
 		arg.UpdatedBy,
 		arg.ID,
+	)
+	var i Role
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.GuardName,
+		&i.IsSystem,
+		&i.Description,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Hidden,
+	)
+	return i, err
+}
+
+const updateTenantRole = `-- name: UpdateTenantRole :one
+UPDATE roles
+SET name        = $1,
+    description = $2,
+    updated_by  = $3,
+    updated_at  = now()
+WHERE id = $4 AND tenant_id = $5::bigint AND is_system = false
+RETURNING id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden
+`
+
+type UpdateTenantRoleParams struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	UpdatedBy   *int64  `json:"updated_by"`
+	ID          int64   `json:"id"`
+	TenantID    int64   `json:"tenant_id"`
+}
+
+func (q *Queries) UpdateTenantRole(ctx context.Context, arg UpdateTenantRoleParams) (Role, error) {
+	row := q.db.QueryRow(ctx, updateTenantRole,
+		arg.Name,
+		arg.Description,
+		arg.UpdatedBy,
+		arg.ID,
+		arg.TenantID,
 	)
 	var i Role
 	err := row.Scan(

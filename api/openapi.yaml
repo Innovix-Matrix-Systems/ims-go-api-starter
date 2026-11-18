@@ -651,6 +651,7 @@ paths:
         "401": *unauthorized
         "403": *forbidden
         "404": *notFound
+        "409": *conflict
         "422": *validationFailed
     delete:
       tags: [Users]
@@ -4167,7 +4168,15 @@ components:
         branch_id: {type: integer, format: int64, nullable: true}
         roles:
           type: array
+          description: Changing roles also requires `user.role.assign`; you cannot change your own roles.
           items: {type: integer, format: int64}
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            Update only, optional. The `updated_at` you last read; if the user changed since,
+            the update answers 409 instead of overwriting.
       example:
         name: Jane Doe
         email: jane.doe@acme.test

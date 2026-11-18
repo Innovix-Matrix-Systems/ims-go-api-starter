@@ -1,6 +1,7 @@
 -- name: GetUser :one
 SELECT * FROM users
-WHERE id = @id AND deleted_at IS NULL;
+WHERE id = @id AND deleted_at IS NULL
+  AND (@all_tenants::boolean OR tenant_id = @tenant_id::bigint);
 
 -- name: GetUserByEmail :one
 SELECT * FROM users
@@ -81,17 +82,24 @@ SET first_name  = @first_name,
     updated_by  = @updated_by,
     updated_at  = now()
 WHERE id = @id AND deleted_at IS NULL
+  AND (@all_tenants::boolean OR tenant_id = @tenant_id::bigint)
+  -- Optional optimistic lock: when the client sends the updated_at it last
+  -- saw, a concurrent change makes this match nothing (409 in the service).
+  AND (sqlc.narg('expected_updated_at')::timestamptz IS NULL
+       OR updated_at = sqlc.narg('expected_updated_at')::timestamptz)
 RETURNING *;
 
 -- name: SoftDeleteUser :execrows
 UPDATE users
 SET deleted_at = now(), updated_by = @updated_by, updated_at = now()
-WHERE id = @id AND deleted_at IS NULL;
+WHERE id = @id AND deleted_at IS NULL
+  AND (@all_tenants::boolean OR tenant_id = @tenant_id::bigint);
 
 -- name: UpdateUserPassword :execrows
 UPDATE users
 SET password = @password, updated_by = @updated_by, updated_at = now()
-WHERE id = @id AND deleted_at IS NULL;
+WHERE id = @id AND deleted_at IS NULL
+  AND (@all_tenants::boolean OR tenant_id = @tenant_id::bigint);
 
 -- name: TouchUserLogin :execrows
 UPDATE users

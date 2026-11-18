@@ -65,6 +65,8 @@ func (f *fakeAuthenticator) Revoke(ctx context.Context, userID int64, device str
 	return nil
 }
 
+func (f *fakeAuthenticator) RevokeOthers(context.Context, int64, int64) error { return nil }
+
 func (f *fakeAuthenticator) RevokeAll(ctx context.Context, userID int64) error {
 	return nil
 }

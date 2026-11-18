@@ -42,6 +42,18 @@ RETURNING *;
 -- name: DeleteRole :execrows
 DELETE FROM roles WHERE id = @id;
 
+-- name: UpdateTenantRole :one
+UPDATE roles
+SET name        = @name,
+    description = @description,
+    updated_by  = @updated_by,
+    updated_at  = now()
+WHERE id = @id AND tenant_id = @tenant_id::bigint AND is_system = false
+RETURNING *;
+
+-- name: DeleteTenantRole :execrows
+DELETE FROM roles WHERE id = @id AND tenant_id = @tenant_id::bigint AND is_system = false;
+
 -- name: RoleExistsForTenant :one
 SELECT EXISTS (
     SELECT 1 FROM roles

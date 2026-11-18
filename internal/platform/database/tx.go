@@ -56,3 +56,15 @@ func (m *TxManager) WithTx(ctx context.Context, fn func(q *dbgen.Queries) error)
 	}
 	return nil
 }
+
+// WithTenantLock runs fn in a transaction that first takes a per-tenant
+// advisory lock on resource (e.g. "users.max"). Use it for "count, check the
+// plan limit, insert" so concurrent creates cannot exceed a quota.
+func (m *TxManager) WithTenantLock(ctx context.Context, resource string, tenantID int64, fn func(q *dbgen.Queries) error) error {
+	return m.WithTx(ctx, func(q *dbgen.Queries) error {
+		if err := q.LockTenantResource(ctx, dbgen.LockTenantResourceParams{Resource: resource, TenantID: tenantID}); err != nil {
+			return MapError("tenant_lock", err)
+		}
+		return fn(q)
+	})
+}

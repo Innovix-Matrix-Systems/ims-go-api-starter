@@ -18,6 +18,10 @@ type InsertUpdateRequest struct {
 	IsActive  *bool   `json:"is_active"`
 	BranchID  *int64  `json:"branch_id" validate:"omitempty,gt=0"`
 	Roles     []int64 `json:"roles" validate:"omitempty,dive,gt=0"`
+	// UpdatedAt (update only, optional) is the updated_at the client last
+	// read; when sent, a concurrent change answers 409 instead of being
+	// silently overwritten.
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // InternalInsertRequest extends creation with an explicit tenant.

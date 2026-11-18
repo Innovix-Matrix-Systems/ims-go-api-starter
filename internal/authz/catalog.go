@@ -194,6 +194,20 @@ var Catalog = []Permission{
 	{Name: PermDevManage, Group: "dev", IsSystem: true, Description: "Can execute developer dashboard actions"},
 }
 
+// DeveloperPermissions is the hidden Developer role: developer-dashboard
+// access only (dev.view, dev.manage). It deliberately holds no tenant or
+// system data-administration permissions — a leaked developer token must not
+// be a platform super-user (review H13).
+func DeveloperPermissions() []Permission {
+	out := make([]Permission, 0, 2)
+	for _, permission := range Catalog {
+		if permission.Group == "dev" {
+			out = append(out, permission)
+		}
+	}
+	return out
+}
+
 // AdminTenantPermissions is the tenant Admin role composition, matching
 // RoleService::createDefaultRolesForTenant: role + branch + user permissions
 // minus the internal role-management permissions; system permissions are never

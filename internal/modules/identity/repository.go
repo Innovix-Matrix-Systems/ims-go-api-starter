@@ -12,18 +12,20 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
-// Repository is the persistence contract for users.
+// Repository is the persistence contract for users. Single-row reads and
+// writes take a tenancy.Filter so tenant isolation is enforced in SQL.
 type Repository interface {
-	Get(ctx context.Context, id int64) (*User, error)
+	Get(ctx context.Context, tenant tenancy.Filter, id int64) (*User, error)
 	GetByEmail(ctx context.Context, email string) (*User, error)
 	List(ctx context.Context, filter ListFilter) ([]User, error)
 	Count(ctx context.Context, filter ListFilter) (int64, error)
 	Create(ctx context.Context, input CreateInput) (*User, error)
 	Update(ctx context.Context, input UpdateInput) (*User, error)
-	Delete(ctx context.Context, id int64, actorID *int64) error
-	UpdatePassword(ctx context.Context, id int64, hash string, actorID *int64) error
+	Delete(ctx context.Context, tenant tenancy.Filter, id int64, actorID *int64) error
+	UpdatePassword(ctx context.Context, tenant tenancy.Filter, id int64, hash string, actorID *int64) error
 	SwitchBranch(ctx context.Context, userID, branchID int64) error
 	EmailExists(ctx context.Context, email string, excludeID int64) (bool, error)
 	PhoneExists(ctx context.Context, phone string, excludeID int64) (bool, error)
@@ -99,6 +101,7 @@ type CreateInput struct {
 
 // UpdateInput carries user update input.
 type UpdateInput struct {
+	Tenant    tenancy.Filter
 	ID        int64
 	FirstName *string
 	LastName  *string
@@ -107,6 +110,9 @@ type UpdateInput struct {
 	IsActive  bool
 	BranchID  *int64
 	ActorID   *int64
+	// ExpectedUpdatedAt, when set, makes the update fail with 409 if the row
+	// changed since the client read it (opt-in optimistic locking).
+	ExpectedUpdatedAt *time.Time
 }
 
 type repository struct {
@@ -118,8 +124,8 @@ func NewRepository(queries *dbgen.Queries) Repository {
 	return &repository{queries: queries}
 }
 
-func (r *repository) Get(ctx context.Context, id int64) (*User, error) {
-	return r.findByID(ctx, id, "users.get")
+func (r *repository) Get(ctx context.Context, tenant tenancy.Filter, id int64) (*User, error) {
+	return r.findByID(ctx, tenant, id, "users.get")
 }
 
 func (r *repository) GetByEmail(ctx context.Context, email string) (*User, error) {
@@ -227,18 +233,27 @@ func (r *repository) Create(ctx context.Context, input CreateInput) (*User, erro
 }
 
 func (r *repository) Update(ctx context.Context, input UpdateInput) (*User, error) {
-	row, err := r.queries.UpdateUser(ctx, dbgen.UpdateUserParams{
-		ID:        input.ID,
-		FirstName: input.FirstName,
-		LastName:  input.LastName,
-		Name:      input.Name,
-		Phone:     input.Phone,
-		IsActive:  boolToInt16(input.IsActive),
-		BranchID:  input.BranchID,
-		UpdatedBy: input.ActorID,
-	})
+	params := dbgen.UpdateUserParams{
+		ID:         input.ID,
+		FirstName:  input.FirstName,
+		LastName:   input.LastName,
+		Name:       input.Name,
+		Phone:      input.Phone,
+		IsActive:   boolToInt16(input.IsActive),
+		BranchID:   input.BranchID,
+		UpdatedBy:  input.ActorID,
+		AllTenants: input.Tenant.All,
+		TenantID:   input.Tenant.TenantID,
+	}
+	if input.ExpectedUpdatedAt != nil {
+		params.ExpectedUpdatedAt = timestamptz(*input.ExpectedUpdatedAt)
+	}
+	row, err := r.queries.UpdateUser(ctx, params)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			if input.ExpectedUpdatedAt != nil {
+				return nil, apperr.New(apperr.Conflict, "The user was changed by someone else. Reload it and try again.")
+			}
 			return nil, apperr.Newf(apperr.ResourceNotFound, "User with ID '%d' was not found.", input.ID)
 		}
 		return nil, database.MapError("users.update", err)
@@ -247,8 +262,13 @@ func (r *repository) Update(ctx context.Context, input UpdateInput) (*User, erro
 	return &user, nil
 }
 
-func (r *repository) Delete(ctx context.Context, id int64, actorID *int64) error {
-	affected, err := r.queries.SoftDeleteUser(ctx, dbgen.SoftDeleteUserParams{ID: id, UpdatedBy: actorID})
+func (r *repository) Delete(ctx context.Context, tenant tenancy.Filter, id int64, actorID *int64) error {
+	affected, err := r.queries.SoftDeleteUser(ctx, dbgen.SoftDeleteUserParams{
+		ID:         id,
+		UpdatedBy:  actorID,
+		AllTenants: tenant.All,
+		TenantID:   tenant.TenantID,
+	})
 	if err != nil {
 		return database.MapError("users.delete", err)
 	}
@@ -258,11 +278,13 @@ func (r *repository) Delete(ctx context.Context, id int64, actorID *int64) error
 	return nil
 }
 
-func (r *repository) UpdatePassword(ctx context.Context, id int64, hash string, actorID *int64) error {
+func (r *repository) UpdatePassword(ctx context.Context, tenant tenancy.Filter, id int64, hash string, actorID *int64) error {
 	affected, err := r.queries.UpdateUserPassword(ctx, dbgen.UpdateUserPasswordParams{
-		ID:        id,
-		Password:  hash,
-		UpdatedBy: actorID,
+		ID:         id,
+		Password:   hash,
+		UpdatedBy:  actorID,
+		AllTenants: tenant.All,
+		TenantID:   tenant.TenantID,
 	})
 	if err != nil {
 		return database.MapError("users.update_password", err)
@@ -359,7 +381,7 @@ func (r *repository) FindByEmail(ctx context.Context, email string) (*authn.User
 }
 
 func (r *repository) FindByID(ctx context.Context, id int64) (*authn.UserRecord, error) {
-	user, err := r.Get(ctx, id)
+	user, err := r.Get(ctx, tenancy.Unscoped(), id)
 	if err != nil {
 		return nil, err
 	}
@@ -377,18 +399,17 @@ func (r *repository) TouchLogin(ctx context.Context, userID int64, device string
 }
 
 func (r *repository) ExistsInTenant(ctx context.Context, tenantID, userID int64) (bool, error) {
-	user, err := r.Get(ctx, userID)
-	if err != nil {
+	if _, err := r.Get(ctx, tenancy.InTenant(tenantID), userID); err != nil {
 		if apperr.Is(err, apperr.ResourceNotFound) {
 			return false, nil
 		}
 		return false, err
 	}
-	return user.TenantIDValue() == tenantID, nil
+	return true, nil
 }
 
-func (r *repository) findByID(ctx context.Context, id int64, op string) (*User, error) {
-	row, err := r.queries.GetUser(ctx, id)
+func (r *repository) findByID(ctx context.Context, tenant tenancy.Filter, id int64, op string) (*User, error) {
+	row, err := r.queries.GetUser(ctx, dbgen.GetUserParams{ID: id, AllTenants: tenant.All, TenantID: tenant.TenantID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.Newf(apperr.ResourceNotFound, "User with ID '%d' was not found.", id)

@@ -74,7 +74,8 @@ func (s *RoleService) CreateInternal(ctx context.Context, tenantID *int64, actor
 }
 
 // EnsureDeveloperRole creates the hidden global Developer role when missing,
-// marks an existing role hidden, and syncs every catalog permission onto it.
+// marks an existing role hidden, and syncs authz.DeveloperPermissions onto it
+// (dashboard access only, not data administration).
 // It is idempotent and mirrors the seeder's Super-Admin permission sync.
 func (s *RoleService) EnsureDeveloperRole(ctx context.Context, actorID int64) (*Role, int64, error) {
 	role, err := s.roles.GetSystemByName(ctx, authz.DeveloperRole)
@@ -107,8 +108,9 @@ func (s *RoleService) EnsureDeveloperRole(ctx context.Context, actorID int64) (*
 	if _, err := s.perms.Upsert(ctx, authz.Catalog); err != nil {
 		return nil, 0, err
 	}
-	names := make([]string, 0, len(authz.Catalog))
-	for _, permission := range authz.Catalog {
+	devPerms := authz.DeveloperPermissions()
+	names := make([]string, 0, len(devPerms))
+	for _, permission := range devPerms {
 		names = append(names, permission.Name)
 	}
 	permissions, err := s.perms.GetByNames(ctx, names)
@@ -141,7 +143,7 @@ func (s *RoleService) Update(ctx context.Context, tenantID, id, actorID int64, n
 	if name == authz.SuperAdminRole || name == authz.DeveloperRole {
 		return nil, apperr.Validation(map[string][]string{"name": {"The name has already been taken."}})
 	}
-	updated, err := s.roles.Update(ctx, id, name, description, &actorID)
+	updated, err := s.roles.UpdateInTenant(ctx, tenantID, id, name, description, &actorID)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +174,7 @@ func (s *RoleService) Delete(ctx context.Context, tenantID, id int64) error {
 		return apperr.New(apperr.Forbidden, "System roles cannot be deleted.")
 	}
 	_ = s.checker.InvalidateRole(ctx, id)
-	if err := s.roles.Delete(ctx, id); err != nil {
+	if err := s.roles.DeleteInTenant(ctx, tenantID, id); err != nil {
 		return err
 	}
 	return nil

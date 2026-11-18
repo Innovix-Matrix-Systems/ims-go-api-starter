@@ -129,7 +129,7 @@ func (r *repository) TenantExists(ctx context.Context, tenantID int64) (bool, er
 }
 
 func (r *repository) UserTenant(ctx context.Context, userID int64) (int64, bool, error) {
-	row, err := r.queries.GetUser(ctx, userID)
+	row, err := r.queries.GetUser(ctx, dbgen.GetUserParams{ID: userID, AllTenants: true})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, false, nil

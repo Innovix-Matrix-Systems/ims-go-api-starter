@@ -3523,7 +3523,13 @@ export interface components {
             is_active?: boolean | null;
             /** Format: int64 */
             branch_id?: number | null;
+            /** @description Changing roles also requires `user.role.assign`; you cannot change your own roles. */
             roles?: number[];
+            /**
+             * Format: date-time
+             * @description Update only, optional. The `updated_at` you last read; if the user changed since, the update answers 409 instead of overwriting.
+             */
+            updated_at?: string | null;
         };
         /**
          * @example {
@@ -6562,6 +6568,15 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Conflicting state. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
