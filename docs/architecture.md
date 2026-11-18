@@ -147,15 +147,24 @@ surfaces. `model_has_roles.model_type` is the constant `user`.
 - **Packages**: CRUD + features (replace-on-update), public endpoint for active packages.
 - **Subscriptions**: `trial|pending|active|past_due|cancelled|expired`; `nextExpiry` monthly/
   yearly/one-time(≈100y). Subscribe creates a pending subscription, charges, then records a
-  manual approval for cash/bank. Activation deactivates rivals; cancellation keeps access until
-  expiry.
-- **Payments**: orchestrator + drivers (`bkash` tokenized checkout with 55-min token cache,
-  `cash`, `bank_transfer`, `nagad` stub); invoice numbers `INV-XXXX-timestamp`; gateway failures
-  mark payments failed and return 503. Callbacks are public and resolve payments by
-  `gateway_ref`.
+  manual approval for cash/bank. Subscribe is idempotent per tenant + package + method: while a
+  checkout is pending, a retry returns it (serialized by a per-tenant advisory lock). Activation
+  deactivates rivals in the same transaction. **Cancel is immediate** (the guard honours only
+  active/trial); `cancelled` is terminal — `ActivateSubscription` refuses it in SQL.
+- **Payments**: orchestrator + drivers (`bkash` tokenized checkout with a 55-min token cache shared
+  under a mutex and dropped on 401/403, `cash`, `bank_transfer`, `nagad` stub); invoice numbers
+  `INV-XXXX-timestamp` (crypto/rand, errors never fall back). Payment status changes follow
+  allowed transitions only (pending → any, failed → completed, completed → refunded).
+- **Callbacks** are public and resolve payments by the unique `gateway_ref`. The callback body is
+  only a hint: bKash is always asked (execute on "success", status query otherwise); only a
+  status bKash reports as Failed/Cancelled fails a payment, anything unfinished stays pending,
+  and a gateway non-2xx is a retryable 503 that changes nothing. Cash/bank never accept callbacks
+  and get unguessable `CASH-`/`BANK-` references. Completion + activation is one transaction.
 - **Approvals**: transactional approve/reject (payment status + subscription status atomically).
-- **Enforcement**: resource services (identity, branches) call a `LimitChecker` interface
-  implemented by the billing guard — no module-to-module coupling.
+- **Enforcement**: resource services (identity, branches, files) call small limiter interfaces
+  implemented by the billing guard — no module-to-module coupling. `users.max`/`branches.max`
+  run count → check → insert under a per-tenant advisory lock; `storage.mb` is checked on
+  library uploads when the plan defines it.
 
 ## 8. Error and validation contract
 

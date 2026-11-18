@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
@@ -23,6 +24,9 @@ type BkashDriver struct {
 	cfg    config.Bkash
 	store  cache.Store
 	client *http.Client
+	// tokenMu makes concurrent requests share one token grant instead of
+	// each asking bKash for a new token (M18).
+	tokenMu sync.Mutex
 }
 
 // NewBkashDriver creates the bKash driver (token cached 55 minutes).
@@ -90,30 +94,32 @@ func (d *BkashDriver) Verify(ctx context.Context, payment *domain.Payment) (doma
 	}, nil
 }
 
-// HandleCallback implements domain.PaymentDriver.
+// HandleCallback implements domain.PaymentDriver. The callback is only a
+// hint: the outcome always comes from bKash itself (H8). A "success" callback
+// executes the payment; anything else asks bKash for the payment status, and
+// only a status bKash reports as Failed/Cancelled fails the payment.
 func (d *BkashDriver) HandleCallback(ctx context.Context, payload map[string]any) (domain.CallbackResult, error) {
 	paymentID := strValue(payload["paymentID"])
-	status := strValue(payload["status"])
-	if strings.ToLower(status) != "success" {
-		return domain.CallbackResult{
-			IsSuccessful:  false,
-			PaymentRef:    strPtr(paymentID),
-			GatewayStatus: strPtr(status),
-			RawResponse:   payload,
-		}, nil
+	if paymentID == "" {
+		return domain.CallbackResult{}, apperr.New(apperr.InvalidInput, "The callback is missing its payment reference.")
 	}
-
 	token, err := d.token(ctx)
 	if err != nil {
 		return domain.CallbackResult{}, err
 	}
-	response, err := d.post(ctx, "/tokenized/checkout/execute", token, map[string]any{"paymentID": paymentID}, nil)
+
+	path := "/tokenized/checkout/payment/status"
+	if strings.EqualFold(strValue(payload["status"]), "success") {
+		path = "/tokenized/checkout/execute"
+	}
+	response, err := d.post(ctx, path, token, map[string]any{"paymentID": paymentID}, nil)
 	if err != nil {
 		return domain.CallbackResult{}, err
 	}
 	transactionStatus := strValue(response["transactionStatus"])
 	return domain.CallbackResult{
-		IsSuccessful:  strValue(response["statusCode"]) == "0000" && transactionStatus == "Completed",
+		IsSuccessful:  transactionStatus == "Completed",
+		IsFailed:      transactionStatus == "Failed" || transactionStatus == "Cancelled",
 		PaymentRef:    strPtr(paymentID),
 		GatewayRef:    strPtr(strValue(response["trxID"])),
 		GatewayStatus: strPtr(transactionStatus),
@@ -144,6 +150,12 @@ func (d *BkashDriver) Refund(ctx context.Context, payment *domain.Payment, amoun
 
 func (d *BkashDriver) token(ctx context.Context) (string, error) {
 	var cached string
+	if found, err := d.store.Get(ctx, bkashTokenCacheKey, &cached); err == nil && found && cached != "" {
+		return cached, nil
+	}
+	d.tokenMu.Lock()
+	defer d.tokenMu.Unlock()
+	// Another request may have refreshed the token while we waited.
 	if found, err := d.store.Get(ctx, bkashTokenCacheKey, &cached); err == nil && found && cached != "" {
 		return cached, nil
 	}
@@ -200,6 +212,15 @@ func (d *BkashDriver) post(ctx context.Context, path, token string, body any, he
 	if err != nil {
 		return nil, apperr.Wrap(apperr.ServiceUnavailable, "read bKash response", err)
 	}
+	// A non-2xx answer is never a business decision about the payment (H10):
+	// the caller leaves the payment untouched and can retry. A rejected token
+	// is dropped so the next call grants a fresh one (M18).
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			_ = d.store.Delete(ctx, bkashTokenCacheKey)
+		}
+		return nil, apperr.Newf(apperr.ServiceUnavailable, "bKash is unavailable (HTTP %d). Please retry.", resp.StatusCode)
+	}
 	var decoded map[string]any
 	if err := json.Unmarshal(payload, &decoded); err != nil {
 		return nil, apperr.Newf(apperr.ServiceUnavailable, "bKash returned an invalid response (HTTP %d).", resp.StatusCode)
@@ -212,7 +233,10 @@ type CashDriver struct{}
 
 // Initiate implements domain.PaymentDriver.
 func (CashDriver) Initiate(ctx context.Context, payment *domain.Payment, data map[string]any) (domain.InitiateResult, error) {
-	reference := fmt.Sprintf("CASH-%d", time.Now().Unix())
+	reference, err := domain.ManualReference("CASH")
+	if err != nil {
+		return domain.InitiateResult{}, err
+	}
 	message := "Cash payment recorded and is awaiting approval."
 	return domain.InitiateResult{
 		Success:   true,
@@ -234,9 +258,10 @@ func (CashDriver) Verify(ctx context.Context, payment *domain.Payment) (domain.V
 	}, nil
 }
 
-// HandleCallback implements domain.PaymentDriver (manual methods have no callbacks).
+// HandleCallback implements domain.PaymentDriver. Manual methods are settled
+// by staff approval, never by a callback (H9).
 func (CashDriver) HandleCallback(ctx context.Context, payload map[string]any) (domain.CallbackResult, error) {
-	return domain.CallbackResult{}, nil
+	return domain.CallbackResult{}, errManualCallback()
 }
 
 // Refund implements domain.PaymentDriver.
@@ -249,9 +274,12 @@ type BankTransferDriver struct{}
 
 // Initiate implements domain.PaymentDriver.
 func (BankTransferDriver) Initiate(ctx context.Context, payment *domain.Payment, data map[string]any) (domain.InitiateResult, error) {
-	reference := strValue(data["reference_number"])
-	if reference == "" {
-		reference = fmt.Sprintf("BANK-%d", time.Now().Unix())
+	// The payer's bank reference is free text (and may repeat across
+	// tenants), so it is kept in the response payload; gateway_ref is our own
+	// unique, unguessable reference.
+	reference, err := domain.ManualReference("BANK")
+	if err != nil {
+		return domain.InitiateResult{}, err
 	}
 	message := "Bank transfer recorded and is awaiting approval."
 	return domain.InitiateResult{
@@ -259,8 +287,9 @@ func (BankTransferDriver) Initiate(ctx context.Context, payment *domain.Payment,
 		Reference: &reference,
 		Message:   &message,
 		RawResponse: map[string]any{
-			"notes":       data["notes"],
-			"recorded_by": data["recorded_by"],
+			"reference_number": data["reference_number"],
+			"notes":            data["notes"],
+			"recorded_by":      data["recorded_by"],
 		},
 	}, nil
 }
@@ -274,9 +303,13 @@ func (BankTransferDriver) Verify(ctx context.Context, payment *domain.Payment) (
 	}, nil
 }
 
-// HandleCallback implements domain.PaymentDriver.
+// HandleCallback implements domain.PaymentDriver (see CashDriver).
 func (BankTransferDriver) HandleCallback(ctx context.Context, payload map[string]any) (domain.CallbackResult, error) {
-	return domain.CallbackResult{}, nil
+	return domain.CallbackResult{}, errManualCallback()
+}
+
+func errManualCallback() error {
+	return apperr.New(apperr.InvalidInput, "Manual payment methods do not accept callbacks.")
 }
 
 // Refund implements domain.PaymentDriver.

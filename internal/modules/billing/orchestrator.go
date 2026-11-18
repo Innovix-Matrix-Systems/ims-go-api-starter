@@ -58,6 +58,10 @@ func (o *Orchestrator) Charge(ctx context.Context, tenantID int64, subscriptionI
 		return nil, err
 	}
 
+	invoice, err := domain.GenerateInvoiceNumber(o.now())
+	if err != nil {
+		return nil, err
+	}
 	payment, err := o.payments.Create(ctx, domain.PaymentInput{
 		TenantID:       tenantID,
 		SubscriptionID: subscriptionID,
@@ -65,7 +69,7 @@ func (o *Orchestrator) Charge(ctx context.Context, tenantID int64, subscriptionI
 		Status:         domain.PaymentPending,
 		Amount:         amount,
 		Currency:       o.currency,
-		InvoiceNumber:  domain.GenerateInvoiceNumber(o.now()),
+		InvoiceNumber:  invoice,
 		CreatedBy:      actorID,
 	})
 	if err != nil {

@@ -50,6 +50,16 @@ type Repository interface {
 	Count(ctx context.Context, filter ListFilter) (int64, error)
 	Delete(ctx context.Context, id int64, allTenants bool, tenantID int64) error
 	ListProfileFiles(ctx context.Context, userIDs []int64) ([]File, error)
+	// UsedBytes is the total size of a tenant's files (storage quota).
+	UsedBytes(ctx context.Context, tenantID int64) (int64, error)
+}
+
+func (r *repository) UsedBytes(ctx context.Context, tenantID int64) (int64, error) {
+	used, err := r.queries.SumFileBytesForTenant(ctx, tenantID)
+	if err != nil {
+		return 0, database.MapError("files.used_bytes", err)
+	}
+	return used, nil
 }
 
 type repository struct {

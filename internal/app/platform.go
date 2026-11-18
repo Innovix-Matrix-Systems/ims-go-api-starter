@@ -184,12 +184,14 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		Register(billingdomain.MethodNagad, billing.NagadDriver{}).
 		Register(billingdomain.MethodCash, billing.CashDriver{}).
 		Register(billingdomain.MethodBankTransfer, billing.BankTransferDriver{})
-	billingPackageService := billingservice.NewPackageService(billingPackages)
+	billingPackageService := billingservice.NewPackageService(billingPackages).WithTx(txManager)
 	billingSubscriptionService := billingservice.NewSubscriptionService(billingSubscriptions, billingPackages, billingPayments, billingApprovals, orchestrator).
-		WithNotifier(notificationsService)
+		WithNotifier(notificationsService).
+		WithTx(txManager)
 	billingPaymentService := billingservice.NewPaymentService(billingPayments, cfg.Billing.Currency)
 	billingApprovalService := billingservice.NewApprovalService(billingApprovals, billingPayments, billingSubscriptions, txManager)
 	billingGuard := billingservice.NewGuard(billingSubscriptions, billingPackages)
+	filesService.WithStorageLimit(billingGuard)
 
 	// Identity (shared by HTTP handlers, CLI commands and job handlers).
 	identityRepo := identity.NewRepository(txManager.Queries())

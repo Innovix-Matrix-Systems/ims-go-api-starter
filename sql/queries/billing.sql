@@ -95,7 +95,9 @@ SET status              = 'active',
     cancelled_at        = NULL,
     cancellation_reason = NULL,
     updated_at          = now()
-WHERE id = @id
+-- A cancelled subscription is final: a stale or replayed callback must not
+-- bring it back (M8).
+WHERE id = @id AND status IN ('pending', 'trial', 'active', 'expired')
 RETURNING *;
 
 -- name: SetSubscriptionOverrides :one
@@ -137,7 +139,20 @@ RETURNING *;
 SELECT * FROM payments WHERE id = @id;
 
 -- name: GetPaymentByGatewayRef :one
-SELECT * FROM payments WHERE gateway_ref = @gateway_ref ORDER BY id DESC LIMIT 1;
+SELECT * FROM payments WHERE gateway_ref = @gateway_ref;
+
+-- name: GetPendingCheckout :one
+-- The in-flight checkout for a tenant + package + method: a pending
+-- subscription whose payment is still pending (subscribe idempotency, H11).
+SELECT p.* FROM payments p
+JOIN subscriptions s ON s.id = p.subscription_id
+WHERE s.tenant_id = @tenant_id
+  AND s.package_id = @package_id
+  AND s.status = 'pending'
+  AND p.status = 'pending'
+  AND p.payment_method = @payment_method
+ORDER BY p.id DESC
+LIMIT 1;
 
 -- name: UpdatePaymentGateway :execrows
 UPDATE payments
@@ -154,7 +169,15 @@ SET status         = @status,
     recorded_by    = COALESCE(@recorded_by, recorded_by),
     gateway_status = COALESCE(sqlc.narg('gateway_status')::text, gateway_status),
     updated_at     = now()
+-- Allowed transitions only (M8): pending -> anything, failed -> completed (a
+-- late genuine success), completed -> refunded, or a no-op repeat.
 WHERE id = @id
+  AND (
+      status = 'pending'
+      OR status = @status::text
+      OR (status = 'failed' AND @status::text = 'completed')
+      OR (status = 'completed' AND @status::text = 'refunded')
+  )
 RETURNING *;
 
 -- name: ListPaymentsForTenant :many

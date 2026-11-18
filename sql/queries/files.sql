@@ -76,3 +76,7 @@ RETURNING *;
 SELECT * FROM files
 WHERE owner_type = 'user' AND collection = 'profile'
   AND owner_id = ANY(@user_ids::bigint[]);
+
+-- name: SumFileBytesForTenant :one
+-- Storage used by a tenant (storage.mb plan limit).
+SELECT COALESCE(sum(size), 0)::bigint FROM files WHERE tenant_id = @tenant_id::bigint;

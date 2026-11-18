@@ -152,6 +152,35 @@ func (g *Guard) RequireWithinLimit(ctx context.Context, tenantID int64, feature 
 		})
 }
 
+// RequireStorage enforces storage.mb (megabytes) for an upload of addBytes on
+// top of usedBytes. It only applies when the tenant's plan (or an override)
+// defines storage.mb; -1 means unlimited.
+func (g *Guard) RequireStorage(ctx context.Context, tenantID, usedBytes, addBytes int64) error {
+	plan, err := g.planFor(ctx, tenantID)
+	if err != nil || plan == nil {
+		return err
+	}
+	key := string(domain.FeatureStorageMB)
+	_, overridden := plan.subscription.Overrides[key]
+	if _, defined := plan.features[key]; !defined && !overridden {
+		return nil
+	}
+	limit, err := g.Limit(ctx, tenantID, domain.FeatureStorageMB)
+	if err != nil || limit == -1 {
+		return err
+	}
+	const mb = 1 << 20
+	if usedBytes+addBytes <= limit*mb {
+		return nil
+	}
+	return apperr.New(apperr.UsageLimitExceeded, "The storage limit of your plan has been reached.").
+		WithMeta(map[string]any{
+			"feature_key": key,
+			"limit":       limit,
+			"current":     (usedBytes + mb - 1) / mb,
+		})
+}
+
 // RequireWithinLimitByName adapts string feature names for resource services.
 func (g *Guard) RequireWithinLimitByName(ctx context.Context, tenantID int64, feature string, current int64) error {
 	typed := domain.Feature(feature)

@@ -1352,7 +1352,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Payment gateway callback (public) */
+        /**
+         * Payment gateway callback (public)
+         * @description The query string is only a hint: the payment outcome is always confirmed with the gateway. A payment fails only when the gateway reports it failed/cancelled; a gateway outage answers 503 and changes nothing. Manual methods (cash, bank_transfer) do not accept callbacks.
+         */
         get: operations["billingCallback"];
         put?: never;
         post?: never;
@@ -1441,7 +1444,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Subscribe the resolved tenant to a package */
+        /**
+         * Subscribe the resolved tenant to a package
+         * @description Idempotent per tenant + package + payment method: while a checkout is still pending, calling again returns that same subscription and payment instead of charging twice.
+         */
         post: operations["billingSubscribe"];
         delete?: never;
         options?: never;
@@ -9242,6 +9248,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessageEnvelope"];
+                };
+            };
+            /** @description Malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             /** @description Resource not found. */

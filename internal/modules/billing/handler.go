@@ -9,6 +9,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/service"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
@@ -138,6 +139,10 @@ func (h *Handler) callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if domain.IsManualMethod(gateway) {
+		h.responder.Error(w, r, apperr.New(apperr.InvalidInput, "Manual payment methods do not accept callbacks."))
+		return
+	}
 	gatewayRef := queryValue(payload, "paymentID")
 	if gatewayRef == "" {
 		h.responder.Error(w, r, apperr.New(apperr.ValidationFailed, "The callback is missing its payment reference."))

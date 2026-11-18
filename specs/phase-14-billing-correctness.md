@@ -1,6 +1,6 @@
 # Phase 14 — Billing correctness & atomicity (P1)
 
-**Status:** Draft
+**Status:** Done (2026-11-19)
 **Source:** [docs/codebase-review.md](../docs/codebase-review.md) §10 P1 item 10 — findings **H8–H11, H27, M8–M11, M14–M18**
 **Depends on:** Phase 12 (production guards land first; billing is reachable from public routes)
 
@@ -22,44 +22,71 @@ payment state change atomic, verified against the authoritative source, and idem
 
 ### Callback integrity (H8, H9, H10, H27, M17)
 
-- [ ] **H8:** never derive payment failure from the callback body — `HandleCallback` must
+- [x] **H8:** never derive payment failure from the callback body — `HandleCallback` must
       re-query the gateway (as the success path already does) before any state change.
-- [ ] **H9:** reject callbacks for non-gateway methods (cash/bank) before touching payment
+- [x] **H9:** reject callbacks for non-gateway methods (cash/bank) before touching payment
       state; manual-method references become high-entropy (`crypto/rand`) instead of
       `CASH-<unix-seconds>`.
-- [ ] **M17:** `payments.gateway_ref` becomes unique (partial unique index
+- [x] **M17:** `payments.gateway_ref` becomes unique (partial unique index
       `WHERE gateway_ref IS NOT NULL`); generation is collision-free.
-- [ ] **H27:** index `payments (gateway_ref)` (with the unique index above) — the public
+- [x] **H27:** index `payments (gateway_ref)` (with the unique index above) — the public
       callback resolves by it.
-- [ ] **H10:** `post` fails on non-2xx; map gateway 5xx to a retryable/indeterminate result so
+- [x] **H10:** `post` fails on non-2xx; map gateway 5xx to a retryable/indeterminate result so
       a bKash 5xx can never permanently fail a payment whose money was captured.
 
 ### Subscribe idempotency (H11)
 
-- [ ] Accept an `Idempotency-Key` header on `POST /billing/subscribe`; reject (or return the
+- [x] Accept an `Idempotency-Key` header on `POST /billing/subscribe`; reject (or return the
       existing checkout for) a second in-flight checkout for the same tenant+package.
 
 ### Atomic state changes (M8–M11)
 
-- [ ] **M8:** status-transition predicates on `ActivateSubscription` and `UpdatePaymentStatus`
+- [x] **M8:** status-transition predicates on `ActivateSubscription` and `UpdatePaymentStatus`
       (`AND status IN (...)`) so stale callbacks cannot reactivate cancelled subscriptions.
-- [ ] **M9:** subscription activation + payment completion run in one `WithTx`.
-- [ ] **M11:** `recordPayment` and `Activate` are sequenced inside the same transaction.
-- [ ] **M10:** `ReplaceFeatures` runs in a single transaction (delete + upserts).
+- [x] **M9:** subscription activation + payment completion run in one `WithTx`.
+- [x] **M11:** `recordPayment` and `Activate` are sequenced inside the same transaction.
+- [x] **M10:** `ReplaceFeatures` runs in a single transaction (delete + upserts).
 
 ### Guard & quota semantics (M14, M15)
 
-- [ ] **M14:** decide and implement cancel semantics — immediate revocation vs access-until-
+- [x] **M14:** decide and implement cancel semantics — immediate revocation vs access-until-
       `expires_at` — and align the code, comment and `docs/architecture.md` §150-151.
-- [ ] **M15:** enforce `storage.mb` through the `LimitChecker` pattern (files module checks the
+- [x] **M15:** enforce `storage.mb` through the `LimitChecker` pattern (files module checks the
       quota; 402 problem with `meta{feature_key,limit,current}`).
 
 ### Gateway client hygiene (M16, M18)
 
-- [ ] **M16:** `crypto/rand` failure generating invoice numbers must error out (never fall
+- [x] **M16:** `crypto/rand` failure generating invoice numbers must error out (never fall
       back to a predictable/duplicate number).
-- [ ] **M18:** single-flight the bKash token cache; invalidate the cached token on an auth
+- [x] **M18:** single-flight the bKash token cache; invalidate the cached token on an auth
       failure instead of retrying a dead token for up to 55 minutes.
+
+## Implementation notes (2026-11-19)
+
+- **H8:** `CallbackResult` gained `IsFailed`; bKash `HandleCallback` always asks bKash (execute on
+  "success", payment-status otherwise). Success → complete; Failed/Cancelled → failed; anything else
+  leaves the payment pending.
+- **H9/M17/H27:** cash/bank callbacks are rejected (handler + service + driver). References are
+  `CASH-`/`BANK-` + 24 hex chars from crypto/rand; the payer's bank reference moves into the stored
+  response. Migration `00019_billing_integrity.sql` de-duplicates old refs and adds the unique
+  partial index `payments_gateway_ref_uidx`.
+- **H10/M18:** `post` returns a 503 `ServiceUnavailable` on any non-2xx and drops the cached token on
+  401/403; token grants are serialized by a mutex with a re-check.
+- **H11 (decision):** no `Idempotency-Key` store. Subscribe is idempotent by business key — a pending
+  checkout for the same tenant + package + method is returned instead of charging again, and
+  concurrent subscribes are serialized with `WithTenantLock("billing.subscribe")`. Simpler, and it
+  also covers CLI/queue callers. A header store can be added later if a client needs it.
+- **M8:** `ActivateSubscription` refuses `cancelled`; `UpdatePaymentStatus` only allows
+  pending → any, failed → completed, completed → refunded (or a no-op repeat); violations are
+  `INVALID_STATE` (409).
+- **M9/M11:** `completeAndActivate` and `Activate` run in one transaction (tx-bound repositories).
+- **M10:** package create/update + feature replacement share one transaction.
+- **M14 (decision):** cancel is immediate; comment and `docs/architecture.md` §7 updated.
+- **M15:** `files.Service.WithStorageLimit(guard)`; `Guard.RequireStorage` applies only when the plan
+  or an override defines `storage.mb`, answering 402 `USAGE_LIMIT_EXCEEDED` with `meta`.
+- **M16:** `GenerateInvoiceNumber`/`ManualReference` return errors instead of ignoring crypto/rand.
+- Tests: `billing/drivers_test.go` (forged failure, in-progress, confirmed failure, 5xx, 401
+  re-grant, manual refs) and `billing/service/billing_integrity_integration_test.go`.
 
 ## Out of scope
 

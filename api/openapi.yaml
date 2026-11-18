@@ -1501,6 +1501,10 @@ paths:
     get:
       tags: [Billing]
       summary: Payment gateway callback (public)
+      description: >-
+        The query string is only a hint: the payment outcome is always confirmed with the gateway.
+        A payment fails only when the gateway reports it failed/cancelled; a gateway outage answers
+        503 and changes nothing. Manual methods (cash, bank_transfer) do not accept callbacks.
       operationId: billingCallback
       security: []
       parameters:
@@ -1519,6 +1523,7 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "400": *badRequest
         "404": *notFound
         "422": *validationFailed
         "503": *serviceUnavailable
@@ -1565,6 +1570,9 @@ paths:
     post:
       tags: [Billing]
       summary: Subscribe the resolved tenant to a package
+      description: >-
+        Idempotent per tenant + package + payment method: while a checkout is still pending, calling
+        again returns that same subscription and payment instead of charging twice.
       operationId: billingSubscribe
       requestBody:
         required: true

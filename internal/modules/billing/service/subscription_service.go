@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 )
 
 // SubscriptionService implements the subscription lifecycle.
@@ -19,7 +21,16 @@ type SubscriptionService struct {
 	approvals     domain.ApprovalRepository
 	orchestrator  Gateway
 	notifier      Notifier
+	tx            *database.TxManager
 	now           func() time.Time
+}
+
+// WithTx makes payment completion + activation atomic and serializes
+// concurrent subscribes per tenant. Without it (unit tests with fakes) the
+// same steps run without a transaction.
+func (s *SubscriptionService) WithTx(tx *database.TxManager) *SubscriptionService {
+	s.tx = tx
+	return s
 }
 
 // NewSubscriptionService creates the subscription service.
@@ -113,8 +124,27 @@ func (s *SubscriptionService) StartTrial(ctx context.Context, tenantID, packageI
 }
 
 // Subscribe creates a pending subscription, charges the selected gateway and
-// (for manual methods) creates the staff approval request.
+// (for manual methods) creates the staff approval request. It is idempotent
+// per tenant + package + method: while a checkout is still pending, a retry
+// or double click returns that checkout instead of charging again (H11).
 func (s *SubscriptionService) Subscribe(ctx context.Context, tenantID, packageID int64, method string, paymentData map[string]any, actorID int64) (*domain.Subscription, *domain.Payment, error) {
+	var (
+		subscription *domain.Subscription
+		payment      *domain.Payment
+	)
+	run := func() error {
+		var err error
+		subscription, payment, err = s.subscribe(ctx, tenantID, packageID, method, paymentData, actorID)
+		return err
+	}
+	if s.tx == nil {
+		return subscription, payment, run()
+	}
+	err := s.tx.WithTenantLock(ctx, "billing.subscribe", tenantID, func(*dbgen.Queries) error { return run() })
+	return subscription, payment, err
+}
+
+func (s *SubscriptionService) subscribe(ctx context.Context, tenantID, packageID int64, method string, paymentData map[string]any, actorID int64) (*domain.Subscription, *domain.Payment, error) {
 	switch method {
 	case domain.MethodBkash, domain.MethodNagad, domain.MethodCash, domain.MethodBankTransfer:
 	default:
@@ -129,6 +159,16 @@ func (s *SubscriptionService) Subscribe(ctx context.Context, tenantID, packageID
 	}
 	if !pkg.IsActive {
 		return nil, nil, apperr.New(apperr.BusinessLogicError, "This package is not available.")
+	}
+
+	if existing, found, err := s.payments.PendingCheckout(ctx, tenantID, pkg.ID, method); err != nil {
+		return nil, nil, err
+	} else if found && existing.SubscriptionID != nil {
+		subscription, err := s.subscriptions.Get(ctx, *existing.SubscriptionID)
+		if err != nil {
+			return nil, nil, err
+		}
+		return subscription, existing, nil
 	}
 
 	now := s.now()
@@ -178,13 +218,27 @@ func (s *SubscriptionService) Activate(ctx context.Context, subscriptionID int64
 		return nil, err
 	}
 	expires := s.expiryForActivation(ctx, subscription)
-	if err := s.subscriptions.DeactivateActive(ctx, subscription.TenantID); err != nil {
-		return nil, err
+	steps := func(subscriptions domain.SubscriptionRepository) (*domain.Subscription, error) {
+		if err := subscriptions.DeactivateActive(ctx, subscription.TenantID); err != nil {
+			return nil, err
+		}
+		return subscriptions.Activate(ctx, subscriptionID, expires)
 	}
-	return s.subscriptions.Activate(ctx, subscriptionID, expires)
+	if s.tx == nil {
+		return steps(s.subscriptions)
+	}
+	var activated *domain.Subscription
+	err = s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
+		var err error
+		activated, err = steps(domain.NewSubscriptionRepository(q))
+		return err
+	})
+	return activated, err
 }
 
-// Cancel ends a subscription; access continues until expires_at.
+// Cancel ends a subscription immediately: the guard only honours active and
+// trial subscriptions, so access stops now (M14 decision). To stop renewal
+// but keep access until expiry, simply do not renew.
 func (s *SubscriptionService) Cancel(ctx context.Context, subscriptionID int64, reason *string) (*domain.Subscription, error) {
 	subscription, err := s.subscriptions.Get(ctx, subscriptionID)
 	if err != nil {
@@ -239,6 +293,9 @@ func (s *SubscriptionService) ApplyOverrides(ctx context.Context, subscriptionID
 // subscription on success. Completed or refunded payments are returned
 // unchanged so repeated callbacks are idempotent.
 func (s *SubscriptionService) HandleGatewayCallback(ctx context.Context, paymentID int64, method string, payload map[string]any) (*domain.Payment, error) {
+	if domain.IsManualMethod(method) {
+		return nil, apperr.New(apperr.InvalidInput, "Manual payment methods do not accept callbacks.")
+	}
 	payment, err := s.payments.Get(ctx, paymentID)
 	if err != nil {
 		return nil, err
@@ -269,16 +326,51 @@ func (s *SubscriptionService) HandleGatewayCallback(ctx context.Context, payment
 	}
 	_ = s.payments.UpdateGateway(ctx, payment.ID, gatewayRef, gatewayStatus, response)
 
-	if !result.IsSuccessful {
+	switch {
+	case result.IsSuccessful:
+		return s.completeAndActivate(ctx, payment, gatewayStatus)
+	case result.IsFailed:
 		return s.payments.UpdateStatus(ctx, payment.ID, domain.PaymentFailed, nil, gatewayStatus)
+	default:
+		// Not final yet (e.g. the payer has not finished): keep it pending.
+		return s.payments.Get(ctx, payment.ID)
 	}
+}
 
-	if payment.SubscriptionID != nil {
-		if _, err := s.Activate(ctx, *payment.SubscriptionID); err != nil {
+// completeAndActivate marks the payment completed and activates its
+// subscription in one transaction (M9/M11): there is never a completed
+// payment without an active plan, or the other way round.
+func (s *SubscriptionService) completeAndActivate(ctx context.Context, payment *domain.Payment, gatewayStatus *string) (*domain.Payment, error) {
+	steps := func(payments domain.PaymentRepository, subscriptions domain.SubscriptionRepository) (*domain.Payment, error) {
+		completed, err := payments.UpdateStatus(ctx, payment.ID, domain.PaymentCompleted, nil, gatewayStatus)
+		if err != nil {
 			return nil, err
 		}
+		if payment.SubscriptionID != nil {
+			subscription, err := subscriptions.Get(ctx, *payment.SubscriptionID)
+			if err != nil {
+				return nil, err
+			}
+			expires := s.expiryForActivation(ctx, subscription)
+			if err := subscriptions.DeactivateActive(ctx, subscription.TenantID); err != nil {
+				return nil, err
+			}
+			if _, err := subscriptions.Activate(ctx, subscription.ID, expires); err != nil {
+				return nil, err
+			}
+		}
+		return completed, nil
 	}
-	return s.payments.UpdateStatus(ctx, payment.ID, domain.PaymentCompleted, nil, gatewayStatus)
+	if s.tx == nil {
+		return steps(s.payments, s.subscriptions)
+	}
+	var completed *domain.Payment
+	err := s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
+		var err error
+		completed, err = steps(domain.NewPaymentRepository(q), domain.NewSubscriptionRepository(q))
+		return err
+	})
+	return completed, err
 }
 
 // List returns subscriptions with pagination (admin surface).

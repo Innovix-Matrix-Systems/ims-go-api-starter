@@ -37,6 +37,12 @@ var allowedImageExtensions = map[string]bool{
 	"jpg": true, "jpeg": true, "png": true, "bmp": true, "gif": true, "svg": true, "webp": true,
 }
 
+// StorageLimiter enforces the tenant's storage.mb plan limit (implemented by
+// the billing guard).
+type StorageLimiter interface {
+	RequireStorage(ctx context.Context, tenantID, usedBytes, addBytes int64) error
+}
+
 // Service implements the file resource and attachment rules.
 type Service struct {
 	repo     Repository
@@ -44,6 +50,13 @@ type Service struct {
 	fileDisk string
 	tx       *database.TxManager
 	logger   *slog.Logger
+	storage  StorageLimiter
+}
+
+// WithStorageLimit enables the storage.mb quota check on uploads.
+func (s *Service) WithStorageLimit(limiter StorageLimiter) *Service {
+	s.storage = limiter
+	return s
 }
 
 // NewService creates the file service.
@@ -55,6 +68,15 @@ func NewService(repo Repository, disks *storage.Registry, fileDisk string, tx *d
 // tenant (0 for tenantless platform accounts — the row stays global and is
 // only visible to holders of the system-only file.view.all permission).
 func (s *Service) Create(ctx context.Context, actorID int64, tenantID int64, header *multipart.FileHeader) (*File, error) {
+	if s.storage != nil && tenantID != 0 {
+		used, err := s.repo.UsedBytes(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.storage.RequireStorage(ctx, tenantID, used, header.Size); err != nil {
+			return nil, err
+		}
+	}
 	uploaded, err := s.storeOnDisk(ctx, header, allowedFileExtensions, MaxFileSize, false)
 	if err != nil {
 		return nil, err

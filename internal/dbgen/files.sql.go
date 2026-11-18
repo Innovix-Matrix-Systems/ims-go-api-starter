@@ -411,3 +411,15 @@ func (q *Queries) ListProfileFilesByUserIDs(ctx context.Context, userIds []int64
 	}
 	return items, nil
 }
+
+const sumFileBytesForTenant = `-- name: SumFileBytesForTenant :one
+SELECT COALESCE(sum(size), 0)::bigint FROM files WHERE tenant_id = $1::bigint
+`
+
+// Storage used by a tenant (storage.mb plan limit).
+func (q *Queries) SumFileBytesForTenant(ctx context.Context, tenantID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, sumFileBytesForTenant, tenantID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}

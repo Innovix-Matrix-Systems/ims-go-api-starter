@@ -28,7 +28,7 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 11 | [phase-11-settings-groups-feature-flags.md](phase-11-settings-groups-feature-flags.md) | **Done** (2026-10-18) |
 | 12 | [phase-12-isolation-security-blockers.md](phase-12-isolation-security-blockers.md) | **Done** (2026-11-19, integration-verified) |
 | 13 | [phase-13-authorization-data-integrity.md](phase-13-authorization-data-integrity.md) | **Done** (2026-11-19) |
-| 14 | [phase-14-billing-correctness.md](phase-14-billing-correctness.md) | Draft (P1 — review H8–H11, M8–M18, H27) |
+| 14 | [phase-14-billing-correctness.md](phase-14-billing-correctness.md) | **Done** (2026-11-19) |
 | 15 | [phase-15-platform-hardening.md](phase-15-platform-hardening.md) | Draft (P1/P2 — review H14–H25, platform items) |
 | 16 | [phase-16-performance-data-layer.md](phase-16-performance-data-layer.md) | Draft (P2 — review §9, H28, M19–M43, M75–M79) |
 | 17 | [phase-17-product-ops-maturity.md](phase-17-product-ops-maturity.md) | Draft (P2/P3 — review H29–H31, M44–M74, docs drift) |
