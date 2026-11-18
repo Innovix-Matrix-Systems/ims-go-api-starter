@@ -1,6 +1,9 @@
 package scaffold
 
-import "fmt"
+import (
+	"fmt"
+	"regexp"
+)
 
 type templateData struct {
 	ModulePath string
@@ -28,6 +31,10 @@ type fieldData struct {
 	FromInput   string // input -> dbgen param expression
 }
 
+// identifierRe accepts lower_snake_case identifiers (max 63 chars, the
+// Postgres identifier limit).
+var identifierRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
 func buildData(opts Options) (*templateData, error) {
 	name := opts.Name
 	if name == "" {
@@ -40,6 +47,12 @@ func buildData(opts Options) (*templateData, error) {
 	table := opts.Table
 	if table == "" {
 		table = pluralize(name)
+	}
+	// Names land in file paths, Go identifiers and SQL: identifiers only (M55).
+	for label, value := range map[string]string{"--name": name, "--package": pkg, "--table": table} {
+		if !identifierRe.MatchString(value) {
+			return nil, fmt.Errorf("%s %q must be lower_snake_case (a-z, 0-9, _; starting with a letter)", label, value)
+		}
 	}
 
 	data := &templateData{

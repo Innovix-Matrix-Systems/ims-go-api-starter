@@ -1,0 +1,9 @@
+# gitleaks configuration (CI "security" job).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake credentials used by redaction tests"
+paths = [
+  '''internal/app/security_redaction_integration_test\.go''',
+]

@@ -5204,8 +5204,6 @@ export interface components {
          *     only when impersonating — there is no default.
          */
         ActingBranch: number;
-        /** @description Public tenant resolution code. */
-        TenantCode: string;
     };
     requestBodies: never;
     headers: never;

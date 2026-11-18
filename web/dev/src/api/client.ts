@@ -3,16 +3,45 @@ import type { LoginResult, Me } from './types'
 const TOKEN_KEY = 'ims.dev.token'
 const ME_KEY = 'ims.dev.me'
 
+/** RFC 9457 problem body as rendered by the API. */
+export interface Problem {
+  title?: string
+  detail?: string
+  status?: number
+  error_code?: string
+  errors?: Record<string, string[]>
+  meta?: Record<string, unknown>
+  retry_after?: number
+  trace_id?: string
+}
+
 export class ApiError extends Error {
   status: number
   code?: string
+  /** Field errors from a 422 (dot-path field -> messages). */
+  errors?: Record<string, string[]>
+  /** Extension data, e.g. {feature_key, limit, current} on a 402. */
+  meta?: Record<string, unknown>
+  /** Seconds to wait before retrying a 429. */
+  retryAfter?: number
+  traceId?: string
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, problem?: Problem | null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
-    this.code = code
+    this.code = problem?.error_code
+    this.errors = problem?.errors
+    this.meta = problem?.meta
+    this.retryAfter = problem?.retry_after
+    this.traceId = problem?.trace_id
   }
+}
+
+function problemError(status: number, payload: unknown): ApiError {
+  const problem = payload && typeof payload === 'object' ? (payload as Problem) : null
+  const detail = problem?.detail ?? problem?.title ?? `Request failed (${status})`
+  return new ApiError(detail, status, problem)
 }
 
 export function getToken(): string | null {
@@ -55,7 +84,20 @@ export function clearSession(): void {
   setCachedMe(null)
 }
 
-export function logoutRedirect(): void {
+/** Signs out: revokes the token on the server, then clears the session. */
+export async function logoutRedirect(): Promise<void> {
+  const token = getToken()
+  if (token) {
+    try {
+      await fetch(new URL('/api/v1/logout', window.location.origin).toString(), {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device: 'dev-dashboard' }),
+      })
+    } catch {
+      /* offline: the local session is still cleared */
+    }
+  }
   clearSession()
   window.location.assign('/dev/login')
 }
@@ -99,11 +141,7 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
       clearSession()
       if (!window.location.pathname.endsWith('/login')) window.location.assign('/dev/login')
     }
-    const detail =
-      (payload as { detail?: string; title?: string; error_code?: string } | null)?.detail ??
-      (payload as { title?: string } | null)?.title ??
-      `Request failed (${response.status})`
-    throw new ApiError(detail, response.status, (payload as { error_code?: string } | null)?.error_code)
+    throw problemError(response.status, payload)
   }
 
   if (payload && typeof payload === 'object' && 'data' in payload) {
@@ -123,14 +161,8 @@ export async function apiBlob(path: string, signal?: AbortSignal): Promise<Blob>
       clearSession()
       if (!window.location.pathname.endsWith('/login')) window.location.assign('/dev/login')
     }
-    let detail = `Request failed (${response.status})`
-    try {
-      const payload = (await response.json()) as { detail?: string; title?: string; error_code?: string }
-      detail = payload.detail ?? payload.title ?? detail
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(detail, response.status)
+    const payload = await response.json().catch(() => null)
+    throw problemError(response.status, payload)
   }
   return response.blob()
 }
@@ -143,11 +175,7 @@ export async function login(email: string, password: string): Promise<LoginResul
   })
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
-    const detail =
-      (payload as { detail?: string; title?: string } | null)?.detail ??
-      (payload as { title?: string } | null)?.title ??
-      `Login failed (${response.status})`
-    throw new ApiError(detail, response.status, (payload as { error_code?: string } | null)?.error_code)
+    throw problemError(response.status, payload)
   }
   return (payload as { data: LoginResult }).data
 }

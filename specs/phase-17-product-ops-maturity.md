@@ -1,6 +1,6 @@
 # Phase 17 — Product & ops maturity: frontend, CI, deploy, devx (P2/P3)
 
-**Status:** Draft
+**Status:** Done (2026-11-19; deferred items listed below)
 **Source:** [docs/codebase-review.md](../docs/codebase-review.md) §10 P2 items 22–29, P3 items 32–35 — findings **H29–H31, M44–M46, M53–M74, M62–M63, M55–M58, M59–M61, §8 documentation drift**
 **Depends on:** Phases 12–15 (their contract changes — health semantics, file downloads,
 problem bodies — should be stable before the frontend/CI work pins them)
@@ -22,17 +22,17 @@ they close the "ops maturity" gap the review scored.
 
 ### Frontend — correctness (M65–M69, M71–M72, M74)
 
-- [ ] **M65:** sign-out calls `POST /api/v1/logout` (server-side token invalidated).
-- [ ] **M66:** parse full RFC 9457 problem bodies — surface `errors`, `meta`, `retry_after`,
+- [x] **M65:** sign-out calls `POST /api/v1/logout` (server-side token invalidated).
+- [x] **M66:** parse full RFC 9457 problem bodies — surface `errors`, `meta`, `retry_after`,
   `error_code`; stop flattening to one sentence.
-- [ ] **M67:** `retry: 1` never retries 4xx (401/403/404/429).
+- [x] **M67:** `retry: 1` never retries 4xx (401/403/404/429).
 - [ ] **M68:** add a CSP to the SPA shell; move the bearer token out of `localStorage`
   (in-memory + refresh cookie, or document the accepted trade-off).
 - [ ] **M69:** `DataTable` stops client-side sorting of server-paginated lists (server sort
   params or remove the affordance).
 - [ ] **M71:** live polling re-fetches only the visible page, not every accumulated page.
 - [ ] **M72:** sandbox or remove the `<iframe src={blobUrl}>` fallback (latent).
-- [ ] **M74:** untrack `web/dev/.tanstack/tmp/*`; unify the dev-port defaults (5173 vs
+- [x] **M74:** untrack `web/dev/.tanstack/tmp/*`; unify the dev-port defaults (5173 vs
   8080/8081).
 
 ### Frontend — accessibility & structure (M70, M73, M64)
@@ -46,7 +46,7 @@ they close the "ops maturity" gap the review scored.
 
 ### CI (H30)
 
-- [ ] Add `govulncheck`, `dependency-review-action`, CodeQL (or equivalent SAST), `gitleaks`.
+- [x] Add `govulncheck`, `dependency-review-action`, CodeQL (or equivalent SAST), `gitleaks`.
 - [ ] Add a `concurrency` group; move to golangci-lint v2; add a coverage floor (start at the
   current measured value and ratchet).
 - [ ] Broaden `.golangci.yml` (P3 item 32): `gosec`, `bodyclose`, `errorlint`, `unparam`,
@@ -54,23 +54,23 @@ they close the "ops maturity" gap the review scored.
 
 ### Deploy & release (H29, H31, M62)
 
-- [ ] **H29:** systemd units get `StateDirectory=ims-go-api`; `APP_DATA_DIR`/`APP_STORAGE_DIR`/
+- [x] **H29:** systemd units get `StateDirectory=ims-go-api`; `APP_DATA_DIR`/`APP_STORAGE_DIR`/
   `APP_CACHE_DIR`/`BACKUP_DIR` point at it; `install.sh` writes the correct paths
   (parity with `docs/runbooks/deploy.md` §13).
-- [ ] **H31:** `release.sh` health-checks `/api/health?fresh=1` by default and auto-reverts
+- [x] **H31:** `release.sh` health-checks `/api/health?fresh=1` by default and auto-reverts
   the `current` symlink when the post-switch check fails.
-- [ ] **M62:** release tree (`$BASE_DIR`, `releases/`, `current`) owned by root/admin, not the
+- [x] **M62:** release tree (`$BASE_DIR`, `releases/`, `current`) owned by root/admin, not the
   service user; build as an unprivileged user.
 
 ### Scaffold & generators (M55–M58)
 
-- [ ] **M55:** validate `--name`, `--table`, `--package` (identifiers only — no paths, no SQL
+- [x] **M55:** validate `--name`, `--table`, `--package` (identifiers only — no paths, no SQL
   injection into the migration template).
 - [ ] **M56:** generated `PATCH` uses `sqlc.narg` + `COALESCE` (partial-update semantics —
   omitting a field no longer nulls it).
 - [ ] **M57:** `ims gen openapi --all` fails loudly (or skips the whole region write) when a
   module cannot be parsed — never silently drop endpoints.
-- [ ] **M58:** the generated service stops importing `authn` (accept identity via parameters,
+- [x] **M58:** the generated service stops importing `authn` (accept identity via parameters,
   matching the developer guide's layering rules).
 
 ### Contract & spec hygiene (M59–M61)
@@ -78,7 +78,7 @@ they close the "ops maturity" gap the review scored.
 - [ ] **M59:** include `/dev/api/*` in route-drift checking.
 - [ ] **M60:** decide — give `internal/contract` a consumer (handler request/response types)
   or remove it from the build; document the choice.
-- [ ] **M61:** remove the phantom `X-Tenant-Code` parameter from `api/openapi.yaml`.
+- [x] **M61:** remove the phantom `X-Tenant-Code` parameter from `api/openapi.yaml`.
 
 ### Documentation drift (§8, M63)
 
@@ -88,7 +88,7 @@ they close the "ops maturity" gap the review scored.
   `PLAN.md` (decide: create or remove the references), the copilot-instructions `api/` package
   claim, the cancel-until-`expires_at` claim (aligned with the Phase 14 decision), and the
   Makefile `clean` Windows bug.
-- [ ] **M63:** add the six missing keys to `.env.example` (`AUTH_CHECK_IS_ACTIVE`,
+- [x] **M63:** add the six missing keys to `.env.example` (`AUTH_CHECK_IS_ACTIVE`,
   `AUTH_CHECK_EMAIL_VERIFIED`, `AUTH_CHECK_PHONE_VERIFIED`, `DEFAULT_TENANT_EMAIL`,
   `DEFAULT_TENANT_PHONE`, `BKASH_CALLBACK_URL`).
 
@@ -108,6 +108,39 @@ they close the "ops maturity" gap the review scored.
   helper with route-level middleware so a forgotten check fails closed.
 - [ ] **M54:** the dev audit insert uses a detached context with retries/backoff — never the
   (possibly cancelled) request context, and insert failures are logged, not swallowed.
+
+## Implementation notes (2026-11-19)
+
+- **M65/M66/M67 (SPA):** sign-out posts `/api/v1/logout` (device `dev-dashboard`) before clearing the
+  session; `ApiError` keeps the whole RFC 9457 problem (`errors`, `meta`, `retry_after`,
+  `trace_id`); React Query never retries 4xx.
+- **M74:** `web/dev/.tanstack/` untracked and ignored.
+- **H30 (CI):** new `security` job — `govulncheck`, `gitleaks` (history; `.gitleaks.toml` allowlists
+  the redaction-test fixture), `dependency-review` on PRs; workflow-level `concurrency` and
+  read-only `permissions`. Go jobs build with the latest 1.26 patch (`check-latest`), because
+  1.26.1 has standard-library CVEs (fixed in ≤ 1.26.11). excelize upgraded to v2.11.1 (10 CVEs).
+- **H29/M62:** `install.sh` seeds `/etc/ims/ims-go-api/.env` from `deploy/.env.production` (state
+  under `/var/lib/ims/ims-go-api`, matching `ReadWritePaths`); the release tree is root-owned.
+- **H31:** `release.sh` health-checks `/api/health?fresh=1` and restores + restarts the previous
+  release when the new one is unhealthy.
+- **M55:** `--name/--package/--table` must match `^[a-z][a-z0-9_]{0,62}$`.
+- **M58:** generated services no longer import `authn` or check permissions; generated routes use
+  `r.With(h.can(Perm...))` (Laravel `can:` middleware) and pass the actor id into the service.
+  Verified by generating a throwaway module and building/vetting/testing it.
+- **M61:** phantom `X-Tenant-Code` parameter and description removed from `api/openapi.yaml`.
+- **M63:** missing auth/tenant/bKash keys added to `.env.example`.
+
+### Deferred (with reason)
+
+- **M68–M73, M64 (SPA):** CSP on the SPA shell, token storage, DataTable sorting, polling, modal a11y,
+  splitting the large screens and frontend tests are a dedicated dashboard pass (Phase 9
+  hardening).
+- **golangci-lint v2 + broader linters + coverage floor:** a config migration that can surface
+  many findings; do it as its own change.
+- **M56/M57/M59/M60:** generator PATCH semantics, `gen openapi --all` strictness, `/dev/api` drift
+  checking and the `internal/contract` decision.
+- **M44–M46, M53–M54:** CLI `withPlatform` refactor and a service layer for the dev module are
+  structural refactors with no behaviour change — part of the simplicity pass.
 
 ## Out of scope
 

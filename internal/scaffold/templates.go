@@ -289,40 +289,24 @@ import (
 	"context"
 
 	"{{.ModulePath}}/internal/apperr"
-	"{{.ModulePath}}/internal/authn"
 	"{{.ModulePath}}/internal/tenancy"
 )
 
-// Permissions required by this module. Add them to internal/authz/catalog.go
-// and run "ims permission:sync" before exposing the endpoints.
-const (
-	PermView   = "{{.NameLower}}.view"
-	PermCreate = "{{.NameLower}}.create"
-	PermUpdate = "{{.NameLower}}.update"
-	PermDelete = "{{.NameLower}}.delete"
-)
-
-// PermissionChecker is the authorization surface the service requires.
-type PermissionChecker interface {
-	MustCan(ctx context.Context, userID int64, permission string) error
-}
-
-// Service holds the {{.NameLower}} business rules.
+// Service holds the {{.NameLower}} business rules. Permission checks live in
+// the routes (authz.Require), like Laravel's can: middleware; the service
+// enforces tenant scoping and business rules for every caller (HTTP, CLI,
+// jobs).
 type Service struct {
-	repo    Repository
-	checker PermissionChecker
+	repo Repository
 }
 
 // NewService creates the {{.NameLower}} service.
-func NewService(repo Repository, checker PermissionChecker) *Service {
-	return &Service{repo: repo, checker: checker}
+func NewService(repo Repository) *Service {
+	return &Service{repo: repo}
 }
 
 // List returns {{.NameLower}}s within the effective tenant scope.
 func (s *Service) List(ctx context.Context, scope tenancy.Scope, filter ListFilter) ([]{{.Name}}, int64, error) {
-	if _, err := s.authorize(ctx, PermView); err != nil {
-		return nil, 0, err
-	}
 	filter.TenantID = scope.EffectiveTenantID()
 	if filter.TenantID == 0 {
 		return nil, 0, apperr.New(apperr.TenantContextNotResolved, "A tenant context is required.")
@@ -340,9 +324,6 @@ func (s *Service) List(ctx context.Context, scope tenancy.Scope, filter ListFilt
 
 // Get returns one {{.NameLower}} visible in the effective tenant scope.
 func (s *Service) Get(ctx context.Context, scope tenancy.Scope, id int64) (*{{.Name}}, error) {
-	if _, err := s.authorize(ctx, PermView); err != nil {
-		return nil, err
-	}
 	tenantID := scope.EffectiveTenantID()
 	if tenantID == 0 {
 		return nil, apperr.New(apperr.TenantContextNotResolved, "A tenant context is required.")
@@ -351,59 +332,33 @@ func (s *Service) Get(ctx context.Context, scope tenancy.Scope, id int64) (*{{.N
 }
 
 // Create creates a {{.NameLower}} in the effective tenant scope.
-func (s *Service) Create(ctx context.Context, scope tenancy.Scope, input CreateInput) (*{{.Name}}, error) {
-	identity, err := s.authorize(ctx, PermCreate)
-	if err != nil {
-		return nil, err
-	}
+func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64, input CreateInput) (*{{.Name}}, error) {
 	input.TenantID = scope.EffectiveTenantID()
 	if input.TenantID == 0 {
 		return nil, apperr.New(apperr.TenantContextNotResolved, "A tenant context is required.")
 	}
-	actor := identity.UserID
-	input.ActorID = &actor
+	input.ActorID = &actorID
 	return s.repo.Create(ctx, input)
 }
 
 // Update updates a {{.NameLower}} in the effective tenant scope.
-func (s *Service) Update(ctx context.Context, scope tenancy.Scope, id int64, input UpdateInput) (*{{.Name}}, error) {
-	identity, err := s.authorize(ctx, PermUpdate)
-	if err != nil {
-		return nil, err
-	}
+func (s *Service) Update(ctx context.Context, scope tenancy.Scope, actorID, id int64, input UpdateInput) (*{{.Name}}, error) {
 	input.ID = id
 	input.TenantID = scope.EffectiveTenantID()
 	if input.TenantID == 0 {
 		return nil, apperr.New(apperr.TenantContextNotResolved, "A tenant context is required.")
 	}
-	actor := identity.UserID
-	input.ActorID = &actor
+	input.ActorID = &actorID
 	return s.repo.Update(ctx, input)
 }
 
 // Delete soft-deletes a {{.NameLower}} in the effective tenant scope.
-func (s *Service) Delete(ctx context.Context, scope tenancy.Scope, id int64) error {
-	identity, err := s.authorize(ctx, PermDelete)
-	if err != nil {
-		return err
-	}
+func (s *Service) Delete(ctx context.Context, scope tenancy.Scope, actorID, id int64) error {
 	tenantID := scope.EffectiveTenantID()
 	if tenantID == 0 {
 		return apperr.New(apperr.TenantContextNotResolved, "A tenant context is required.")
 	}
-	actor := identity.UserID
-	return s.repo.Delete(ctx, tenantID, id, &actor)
-}
-
-func (s *Service) authorize(ctx context.Context, permission string) (*authn.Identity, error) {
-	identity, ok := authn.IdentityFromContext(ctx)
-	if !ok {
-		return nil, apperr.New(apperr.Unauthorized, "Authentication is required.")
-	}
-	if err := s.checker.MustCan(ctx, identity.UserID, permission); err != nil {
-		return nil, err
-	}
-	return identity, nil
+	return s.repo.Delete(ctx, tenantID, id, &actorID)
 }
 `
 
@@ -474,21 +429,46 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"{{.ModulePath}}/internal/apperr"
+	"{{.ModulePath}}/internal/authn"
+	"{{.ModulePath}}/internal/authz"
 	"{{.ModulePath}}/internal/platform/httpx"
 	"{{.ModulePath}}/internal/tenancy"
+)
+
+// Permissions required by this module. Add them to internal/authz/catalog.go
+// and run "ims permission:sync" before exposing the endpoints.
+const (
+	PermView   = "{{.NameLower}}.view"
+	PermCreate = "{{.NameLower}}.create"
+	PermUpdate = "{{.NameLower}}.update"
+	PermDelete = "{{.NameLower}}.delete"
 )
 
 // Handler serves {{.NameLower}} endpoints.
 type Handler struct {
 	service   *Service
+	checker   *authz.Checker
 	binder    *httpx.Binder
 	validator *httpx.Validator
 	responder *httpx.Responder
 }
 
 // NewHandler creates the {{.NameLower}} handler.
-func NewHandler(service *Service, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, binder: binder, validator: validator, responder: responder}
+func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
+	return &Handler{service: service, checker: checker, binder: binder, validator: validator, responder: responder}
+}
+
+// can is route middleware requiring a permission (Laravel's can:...).
+func (h *Handler) can(permission string) func(http.Handler) http.Handler {
+	return authz.Require(h.checker, permission, h.responder)
+}
+
+func actorID(r *http.Request) int64 {
+	identity, _ := authn.IdentityFromContext(r.Context())
+	if identity == nil {
+		return 0
+	}
+	return identity.UserID
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
@@ -537,7 +517,7 @@ func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	item, err := h.service.Create(r.Context(), scope, req.toCreateInput())
+	item, err := h.service.Create(r.Context(), scope, actorID(r), req.toCreateInput())
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return
@@ -561,7 +541,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	item, err := h.service.Update(r.Context(), scope, id, req.toUpdateInput(id))
+	item, err := h.service.Update(r.Context(), scope, actorID(r), id, req.toUpdateInput(id))
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return
@@ -576,7 +556,7 @@ func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	if err := h.service.Delete(r.Context(), scope, id); err != nil {
+	if err := h.service.Delete(r.Context(), scope, actorID(r), id); err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
@@ -596,13 +576,14 @@ const routesTmpl = `package {{.Pkg}}
 
 import "github.com/go-chi/chi/v5"
 
-// RegisterRoutes mounts the {{.NameLower}} routes on the API router.
+// RegisterRoutes mounts the {{.NameLower}} routes on the API router. Each
+// route declares its permission, like ->middleware('can:...') in Laravel.
 func (h *Handler) RegisterRoutes(r chi.Router) {
-	r.Get("/{{.NameLower}}", h.index)
-	r.Get("/{{.NameLower}}/{id}", h.show)
-	r.Post("/{{.NameLower}}", h.store)
-	r.Patch("/{{.NameLower}}/{id}", h.update)
-	r.Delete("/{{.NameLower}}/{id}", h.destroy)
+	r.With(h.can(PermView)).Get("/{{.NameLower}}", h.index)
+	r.With(h.can(PermView)).Get("/{{.NameLower}}/{id}", h.show)
+	r.With(h.can(PermCreate)).Post("/{{.NameLower}}", h.store)
+	r.With(h.can(PermUpdate)).Patch("/{{.NameLower}}/{id}", h.update)
+	r.With(h.can(PermDelete)).Delete("/{{.NameLower}}/{id}", h.destroy)
 }
 `
 
@@ -612,7 +593,6 @@ import (
 	"context"
 	"testing"
 
-	"{{.ModulePath}}/internal/authn"
 	"{{.ModulePath}}/internal/tenancy"
 )
 
@@ -634,19 +614,11 @@ func (f *fakeRepo) Update(_ context.Context, input UpdateInput) (*{{.Name}}, err
 }
 func (f *fakeRepo) Delete(_ context.Context, _, _ int64, _ *int64) error { return nil }
 
-type allowChecker struct{}
-
-func (allowChecker) MustCan(context.Context, int64, string) error { return nil }
-
-func authedContext(userID int64) context.Context {
-	return authn.WithIdentity(context.Background(), &authn.Identity{UserID: userID})
-}
-
 func TestServiceCreateScopesToTenant(t *testing.T) {
 	repo := &fakeRepo{}
-	service := NewService(repo, allowChecker{})
+	service := NewService(repo)
 
-	item, err := service.Create(authedContext(7), tenancy.Scope{TenantID: 3}, CreateInput{})
+	item, err := service.Create(context.Background(), tenancy.Scope{TenantID: 3}, 7, CreateInput{})
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -659,8 +631,8 @@ func TestServiceCreateScopesToTenant(t *testing.T) {
 }
 
 func TestServiceCreateRequiresTenant(t *testing.T) {
-	service := NewService(&fakeRepo{}, allowChecker{})
-	if _, err := service.Create(authedContext(7), tenancy.Scope{}, CreateInput{}); err == nil {
+	service := NewService(&fakeRepo{})
+	if _, err := service.Create(context.Background(), tenancy.Scope{}, 7, CreateInput{}); err == nil {
 		t.Error("expected an error when no tenant context is present")
 	}
 }

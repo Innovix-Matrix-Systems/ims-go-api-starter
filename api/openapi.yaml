@@ -22,7 +22,6 @@ info:
     Authenticated routes are resolved to a tenant/branch from the caller's identity.
     Impersonators may send the optional headers `X-Acting-Tenant` and `X-Acting-Branch`;
     sends on tenant-resolved write routes without acting headers are rejected with 403.
-    Public tenant resolution accepts `X-Tenant-Code` (+ optional `X-Branch-Id`).
     Request locale is negotiated from `Accept-Language` (`en`, `bn`).
 
 servers:
@@ -3918,11 +3917,6 @@ components:
         Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
         only when impersonating — there is no default.
       schema: {type: integer, format: int64}
-    TenantCode:
-      name: X-Tenant-Code
-      in: header
-      description: Public tenant resolution code.
-      schema: {type: string}
 
   responses:
     BadRequest: *badRequest

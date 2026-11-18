@@ -28,7 +28,10 @@ REF=""
 REPO=""
 SOURCE_DIR=""
 KEEP=5
-HEALTH_URL="${IMS_HEALTH_URL:-http://127.0.0.1:8080/up}"
+# Readiness (DB, migrations, cache, queue), not just liveness: a release that
+# cannot reach its database must not stay live (H31). Loopback callers may
+# force a fresh run of the checks.
+HEALTH_URL="${IMS_HEALTH_URL:-http://127.0.0.1:8080/api/health?fresh=1}"
 RESTART=1
 SKIP_MIGRATE=0
 DRY_RUN=0
@@ -92,20 +95,26 @@ restart_services() {
   done
 }
 
-health_check() {
+# is_healthy polls the health URL; returns non-zero after 15 failed attempts.
+is_healthy() {
   log "health check: $HEALTH_URL"
   if [[ "$DRY_RUN" == "1" ]]; then
     printf '   [dry-run] curl -fsS %s\n' "$HEALTH_URL"
-    return
+    return 0
   fi
   for attempt in $(seq 1 15); do
-    if curl -fsS --max-time 3 "$HEALTH_URL" >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null 2>&1; then
       log "healthy after ${attempt} attempt(s)"
-      return
+      return 0
     fi
     sleep 1
   done
-  die "health check failed after 15 attempts ($HEALTH_URL)"
+  warn "health check failed after 15 attempts ($HEALTH_URL)"
+  return 1
+}
+
+health_check() {
+  is_healthy || die "health check failed ($HEALTH_URL)"
 }
 
 prune_releases() {
@@ -224,13 +233,26 @@ do_release() {
     run "$release_dir/ims" migrate
   fi
 
-  # Atomic symlink switch.
+  # Atomic symlink switch. Remember the previous release so a failed health
+  # check puts it back automatically (H31).
+  local previous
+  previous="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
   log "switching current -> $(basename "$release_dir")"
   run ln -sfn "$release_dir" "$CURRENT_LINK.new"
   run mv -T "$CURRENT_LINK.new" "$CURRENT_LINK"
 
   restart_services
-  health_check
+  if ! is_healthy; then
+    if [[ -n "$previous" && -d "$previous" ]]; then
+      warn "new release is unhealthy; restoring $(basename "$previous")"
+      run ln -sfn "$previous" "$CURRENT_LINK.new"
+      run mv -T "$CURRENT_LINK.new" "$CURRENT_LINK"
+      restart_services
+      is_healthy || warn "previous release is unhealthy too; investigate now"
+      die "release $version rolled back (migrations, if any, stay applied)"
+    fi
+    die "release $version is unhealthy and there is no previous release to restore"
+  fi
   prune_releases
 
   if [[ -n "$REF" && -z "$SOURCE_DIR" && "$DRY_RUN" == "0" && -d "$workdir" ]]; then
