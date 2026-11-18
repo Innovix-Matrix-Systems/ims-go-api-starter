@@ -196,7 +196,11 @@ state.
 
 **Auth** — opaque tokens behind `authn.Authenticator` (`id|secret`, SHA-256 at rest, per-device).
 `authn.IdentityFromContext(ctx)` gives the caller; `authz.Checker.MustCan(ctx, userID, perm)`
-enforces permissions (super-admin bypasses). The permission catalog lives in
+enforces permissions (super-admin bypasses). **Permission checks live in handlers** (or
+`authz.Require` route middleware) — the Laravel controller model. CLI/jobs/scheduled tasks are
+trusted and do not re-check permissions. Services stay permission-free unless they need a
+Gate-style decision, in which case they take the checker explicitly; services **always** enforce
+tenant scoping and business invariants regardless of caller. The permission catalog lives in
 `internal/authz/catalog.go` — add new permissions there and run `permission:sync`.
 
 **Pagination** — offset lists use `page` + `per_page` (default 10, max 100) via
@@ -270,6 +274,8 @@ Keep this list accurate; add to it when you make a non-obvious choice (also upda
 - No Postgres RLS (evaluated and dropped in Phase 6): explicit tenant-scoped SQL is the only
   isolation boundary; every tenant-scoped query must take and filter an explicit `tenant_id`.
 - Tenant/audit stamping happens in services, not model observers.
+- Permission checks happen in handlers/route middleware (Laravel controller style), not services;
+  services enforce tenancy + invariants. CLI/jobs are trusted callers.
 - `ActingGlobal` impersonation yields tenant `0`.
 - Bigserial sequences are synced after explicit-id seeding.
 - Subscriptions are created/charged before old ones are deactivated (safer ordering); gateway

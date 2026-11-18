@@ -8,8 +8,10 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 )
 
-// Require gates a route on a permission. Service-layer checks remain the
-// primary enforcement; this middleware is available for cheap route gating.
+// Require gates a route on a permission — the equivalent of Laravel's
+// `can:` middleware. Permission checks live at the HTTP edge (this middleware
+// or MustCan at the top of a handler); services enforce tenancy and
+// business invariants, not permissions.
 func Require(checker *Checker, permission string, responder *httpx.Responder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

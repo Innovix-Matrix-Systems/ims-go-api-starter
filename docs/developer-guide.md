@@ -31,9 +31,9 @@ subpackages (see `internal/modules/billing/`). Files:
 | File | Holds | Must NOT |
 |---|---|---|
 | `routes.go` | path → handler method registration only | contain logic |
-| `handler.go` | bind, validate, call service, respond | contain SQL or business rules |
+| `handler.go` | permission check (`MustCan`), bind, validate, call service, respond | contain SQL or business rules |
 | `request.go` | request DTOs + response DTOs + `NewXResponse` mappers | contain logic |
-| `service.go` | business rules, `MustCan`, tenancy, `WithTx` | import `httpx` or `authn` |
+| `service.go` | business rules, invariants, tenancy, `WithTx` | import `httpx` or `authn` |
 | `repository.go` | `Repository` interface + sqlc-backed impl, `database.MapError` | import `httpx`/`authn` |
 | `model.go` | domain structs + row mappers (`dbgen` types never leak out) | — |
 | `commands.go`, `scheduled.go` | optional CLI/scheduled contributions | — |
@@ -54,9 +54,18 @@ explicit ids — **every tenant-scoped query must filter `tenant_id`**. `scope.A
 or a global impersonation read) is the only case that skips the filter. Writes without acting
 headers on resolved routes are 403 at the middleware.
 
-**Authorization** — `checker.MustCan(ctx, identity.UserID, "feature.verb")` in the **service**
-(so CLI/jobs are covered too). Permissions live in `internal/authz/catalog.go`; add one there and run
-`ims permission:sync`.
+**Authorization** — permissions are checked at the HTTP edge, like a Laravel controller
+(`$this->authorize()`): either `checker.MustCan(ctx, identity.UserID, "feature.verb")` at the top of
+the handler, or `authz.Require(checker, perm, responder)` as route middleware (the `can:` middleware
+equivalent) when the route needs nothing else. CLI commands, queue jobs and scheduled tasks are
+trusted code and do not re-check permissions — exactly like artisan commands and queued jobs.
+Services stay permission-free by default; a service that needs a Gate-style decision (ownership,
+"can this actor touch that record") takes `*authz.Checker` (or a one-method interface) explicitly.
+What services **always** enforce regardless of caller: tenant scoping (`tenant_id` in SQL) and
+business invariants (e.g. Super-Admin cannot be stripped/deleted, no self role escalation) — those
+are data rules, not permissions. Permissions live in `internal/authz/catalog.go`; add one there and
+run `ims permission:sync`. A route-coverage test asserts every protected route returns 403 for a
+token without permissions.
 
 **Pagination** — `page, perPage, offset := httpx.PageParams(r)` (`per_page` default 10, max 100),
 whitelist ordering with `httpx.OrderParams(r, "id", "name", "created_at")`, respond with
@@ -233,8 +242,8 @@ If you also touched the dashboard, run `make web-typecheck` and `make web-build`
 ## 6. Recipe — add an endpoint to an existing module
 
 1. `request.go` — add the request/response DTO + mapper.
-2. `service.go` — add the method (`MustCan`, tenancy, rules, `WithTx` if it writes).
-3. `handler.go` — bind → validate → service → respond.
+2. `service.go` — add the method (tenancy, rules, `WithTx` if it writes).
+3. `handler.go` — `MustCan` → bind → validate → service → respond.
 4. `repository.go` + `sql/queries/<name>.sql` — add the query (only if it needs new SQL); `make sqlc`.
 5. `routes.go` — register the path.
 6. `api/openapi.yaml` — document it by hand, or `ims gen openapi --module=<name>` if the module

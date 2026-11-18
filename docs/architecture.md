@@ -249,3 +249,11 @@ The running list (keep it in sync with `AGENTS.md`):
     repository set (per-module), and an ORM-style alternative would mean rewriting the whole data
     layer and giving up compile-time SQL + explicit tenant scoping. `DATABASE_DRIVER=sqlite` is
     rejected at startup; the schema/queries remain Postgres-only.
+23. **Phase 13 — authorization at the HTTP edge.** Permission checks (`MustCan` at the top of a
+    handler, or `authz.Require` route middleware) live in the transport layer, mirroring Laravel
+    controllers/`can:` middleware. CLI commands, queue jobs and scheduled tasks are trusted callers
+    and do not re-check permissions. Services remain permission-free unless they need a Gate-style
+    decision, in which case they take `*authz.Checker` explicitly. Services and SQL **always**
+    enforce tenant scoping and business invariants (Super-Admin protection, no self-escalation)
+    regardless of caller. A route-coverage integration test asserts every protected route returns
+    403 to a token without permissions, so a forgotten handler check fails CI.
