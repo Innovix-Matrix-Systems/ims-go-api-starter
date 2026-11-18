@@ -26,11 +26,15 @@ import (
 // route either adds a permission check or an entry here, on purpose.
 var routesWithoutPermission = map[string]bool{
 	// public
-	"POST /api/v1/login":                      true,
-	"POST /api/v1/verify-otp":                 true,
-	"GET /api/v1/public/packages":             true,
-	"POST /api/v1/billing/{gateway}/callback": true,
-	"GET /api/v1/billing/{gateway}/callback":  true,
+	"POST /api/v1/login":                           true,
+	"POST /api/v1/verify-otp":                      true,
+	"POST /api/v1/forgot-password":                 true,
+	"POST /api/v1/reset-password":                  true,
+	"POST /api/v1/email/verification-notification": true,
+	"POST /api/v1/email/verify":                    true,
+	"GET /api/v1/public/packages":                  true,
+	"POST /api/v1/billing/{gateway}/callback":      true,
+	"GET /api/v1/billing/{gateway}/callback":       true,
 	// self-service: the caller's own session, profile and inbox
 	"POST /api/v1/logout":                                 true,
 	"GET /api/v1/user/profile":                            true,

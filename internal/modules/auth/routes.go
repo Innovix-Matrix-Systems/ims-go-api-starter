@@ -6,6 +6,12 @@ import "github.com/go-chi/chi/v5"
 func (h *Handler) RegisterPublicRoutes(r chi.Router) {
 	r.Post("/login", h.login)
 	r.Post("/verify-otp", h.verifyOTP)
+	if h.recovery != nil {
+		r.Post("/forgot-password", h.forgotPassword)
+		r.Post("/reset-password", h.resetPassword)
+		r.Post("/email/verification-notification", h.resendVerification)
+		r.Post("/email/verify", h.verifyEmail)
+	}
 }
 
 // RegisterRoutes mounts authenticated auth routes (tenant-resolved group).

@@ -166,3 +166,7 @@ ORDER BY
   CASE WHEN @order_by::text = 'created_at' AND @order_dir::text = 'desc' THEN u.created_at END DESC,
   u.id DESC
 LIMIT @page_limit OFFSET @page_offset;
+-- name: MarkUserEmailVerified :execrows
+UPDATE users
+SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
+WHERE id = @id AND deleted_at IS NULL;

@@ -14,6 +14,7 @@ import (
 // Handler serves authentication endpoints.
 type Handler struct {
 	service   *authn.Service
+	recovery  *authn.Recovery
 	users     *identity.Service
 	checker   *authz.Checker
 	binder    *httpx.Binder
@@ -24,6 +25,94 @@ type Handler struct {
 // NewHandler creates the auth handler.
 func NewHandler(service *authn.Service, users *identity.Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
 	return &Handler{service: service, users: users, checker: checker, binder: binder, validator: validator, responder: responder}
+}
+
+// WithRecovery enables the forgot-password and e-mail verification routes.
+func (h *Handler) WithRecovery(recovery *authn.Recovery) *Handler {
+	h.recovery = recovery
+	return h
+}
+
+// EmailRequest carries just an e-mail address.
+type EmailRequest struct {
+	Email string `json:"email" validate:"required,email,max=255"`
+}
+
+// ResetPasswordRequest completes a password reset.
+type ResetPasswordRequest struct {
+	Email                string `json:"email" validate:"required,email,max=255"`
+	Token                string `json:"token" validate:"required,max=200"`
+	Password             string `json:"password" validate:"required,min=8,max=72"`
+	PasswordConfirmation string `json:"password_confirmation" validate:"required,eqfield=Password"`
+}
+
+// VerifyEmailRequest confirms an e-mail address.
+type VerifyEmailRequest struct {
+	Token string `json:"token" validate:"required,max=200"`
+}
+
+// sentMessage is deliberately the same whether or not the address exists.
+const sentMessage = "If that e-mail address belongs to an account, a message is on its way."
+
+func (h *Handler) forgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req EmailRequest
+	if !h.bind(w, r, &req) {
+		return
+	}
+	if err := h.recovery.SendPasswordResetLink(r.Context(), req.Email); err != nil {
+		h.responder.Error(w, r, err)
+		return
+	}
+	h.responder.Message(w, r, http.StatusOK, sentMessage)
+}
+
+func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
+	var req ResetPasswordRequest
+	if !h.bind(w, r, &req) {
+		return
+	}
+	if err := h.recovery.ResetPassword(r.Context(), req.Email, req.Token, req.Password); err != nil {
+		h.responder.Error(w, r, err)
+		return
+	}
+	h.responder.Message(w, r, http.StatusOK, "Your password has been reset. Please sign in again.")
+}
+
+func (h *Handler) resendVerification(w http.ResponseWriter, r *http.Request) {
+	var req EmailRequest
+	if !h.bind(w, r, &req) {
+		return
+	}
+	if err := h.recovery.SendVerificationLink(r.Context(), req.Email); err != nil {
+		h.responder.Error(w, r, err)
+		return
+	}
+	h.responder.Message(w, r, http.StatusOK, sentMessage)
+}
+
+func (h *Handler) verifyEmail(w http.ResponseWriter, r *http.Request) {
+	var req VerifyEmailRequest
+	if !h.bind(w, r, &req) {
+		return
+	}
+	if err := h.recovery.VerifyEmail(r.Context(), req.Token); err != nil {
+		h.responder.Error(w, r, err)
+		return
+	}
+	h.responder.Message(w, r, http.StatusOK, "Your e-mail address has been verified.")
+}
+
+// bind decodes and validates a JSON body, writing the problem on failure.
+func (h *Handler) bind(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := h.binder.JSON(w, r, dst); err != nil {
+		h.responder.Error(w, r, err)
+		return false
+	}
+	if err := h.validator.Struct(r.Context(), dst); err != nil {
+		h.responder.Error(w, r, err)
+		return false
+	}
+	return true
 }
 
 // LoginRequest is the login payload.

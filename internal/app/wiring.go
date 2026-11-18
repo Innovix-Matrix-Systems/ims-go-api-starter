@@ -173,7 +173,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 		},
 		Platform:      platform,
 		System:        systemModule,
-		Auth:          auth.NewHandler(authService, userService, checker, binder, validator, responder),
+		Auth:          auth.NewHandler(authService, userService, checker, binder, validator, responder).WithRecovery(platform.Recovery),
 		Users:         identity.NewHandler(userService, platform.Files, platform.Exchange, checker, binder, validator, responder),
 		Tenants:       tenants.NewHandler(tenantService, checker, binder, validator, responder),
 		Branches:      branches.NewHandler(branchService, checker, binder, validator, responder),

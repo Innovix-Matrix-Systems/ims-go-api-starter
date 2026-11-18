@@ -32,6 +32,20 @@ type Service struct {
 	cfg        config.Auth
 	limits     LimitChecker
 	tx         *database.TxManager
+	verifier   Verifier
+}
+
+// Verifier sends the e-mail verification link to a newly created user
+// (implemented by authn.Recovery).
+type Verifier interface {
+	SendVerificationTo(ctx context.Context, userID int64) error
+}
+
+// WithVerifier sends verification mail to users created unverified
+// (AUTH_NEW_USERS_VERIFIED=false).
+func (s *Service) WithVerifier(verifier Verifier) *Service {
+	s.verifier = verifier
+	return s
 }
 
 // NewService creates the user service.
@@ -139,6 +153,10 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 	}
 	activeBranch := branchID
 
+	var verifiedAt time.Time
+	if s.cfg.NewUsersVerified {
+		verifiedAt = time.Now()
+	}
 	var user *User
 	err = s.withUserQuota(ctx, tenantID, func(repo Repository) error {
 		created, err := repo.Create(ctx, CreateInput{
@@ -153,7 +171,7 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 			Password:        hash,
 			Phone:           input.Phone,
 			IsActive:        isActive,
-			EmailVerifiedAt: time.Now(),
+			EmailVerifiedAt: verifiedAt,
 			ActorID:         &actorID,
 		})
 		if err != nil {
@@ -171,6 +189,11 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 		return nil, err
 	}
 	s.checker.InvalidateUser(ctx, user.ID)
+	if verifiedAt.IsZero() && s.verifier != nil {
+		// Best effort: the account exists either way and the user can ask
+		// for a new link through POST /email/verification-notification.
+		_ = s.verifier.SendVerificationTo(ctx, user.ID)
+	}
 	return user, nil
 }
 

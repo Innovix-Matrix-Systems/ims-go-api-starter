@@ -429,6 +429,20 @@ func (q *Queries) ListUsersForExport(ctx context.Context, arg ListUsersForExport
 	return items, nil
 }
 
+const markUserEmailVerified = `-- name: MarkUserEmailVerified :execrows
+UPDATE users
+SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) MarkUserEmailVerified(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, markUserEmailVerified, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const phoneExists = `-- name: PhoneExists :one
 SELECT EXISTS (
     SELECT 1 FROM users

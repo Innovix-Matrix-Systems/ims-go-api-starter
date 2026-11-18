@@ -172,6 +172,17 @@ type Auth struct {
 	OTPExpiry          time.Duration
 	DefaultPassword    string
 	BcryptRounds       int
+	// Account recovery / verification (Phase 18).
+	PasswordResetExpiry time.Duration // AUTH_PASSWORD_RESET_EXPIRY (default 60m)
+	EmailVerifyExpiry   time.Duration // AUTH_EMAIL_VERIFY_EXPIRY (default 24h)
+	// PasswordResetURL / EmailVerifyURL are the client pages the e-mails link
+	// to; {token} and {email} are replaced. Empty → APP_URL based defaults.
+	PasswordResetURL string
+	EmailVerifyURL   string
+	// NewUsersVerified marks users created by an admin/import as verified
+	// (AUTH_NEW_USERS_VERIFIED, default true). Set false to make them confirm
+	// their e-mail address first (a verification mail is sent).
+	NewUsersVerified bool
 }
 
 // Tenancy holds default tenant/branch seeding settings.
@@ -860,6 +871,17 @@ func (c *Config) loadAuth() error {
 	if cfg.CheckPhoneVerified, err = getBool("AUTH_CHECK_PHONE_VERIFIED", false); err != nil {
 		return err
 	}
+	if cfg.PasswordResetExpiry, err = getDuration("AUTH_PASSWORD_RESET_EXPIRY", time.Hour); err != nil {
+		return err
+	}
+	if cfg.EmailVerifyExpiry, err = getDuration("AUTH_EMAIL_VERIFY_EXPIRY", 24*time.Hour); err != nil {
+		return err
+	}
+	if cfg.NewUsersVerified, err = getBool("AUTH_NEW_USERS_VERIFIED", true); err != nil {
+		return err
+	}
+	cfg.PasswordResetURL = strings.TrimSpace(getString("AUTH_PASSWORD_RESET_URL", ""))
+	cfg.EmailVerifyURL = strings.TrimSpace(getString("AUTH_EMAIL_VERIFY_URL", ""))
 	if cfg.OTPEnabled, err = getBool("AUTH_OTP_ENABLED", false); err != nil {
 		return err
 	}
@@ -887,6 +909,12 @@ func (c *Config) loadAuth() error {
 	cfg.TokenExpiration = time.Duration(tokenMinutes) * time.Minute
 	cfg.LoginDecay = time.Duration(decayMinutes) * time.Minute
 	cfg.OTPExpiry = time.Duration(otpMinutes) * time.Minute
+	if cfg.PasswordResetURL == "" {
+		cfg.PasswordResetURL = strings.TrimRight(c.App.URL, "/") + "/reset-password?token={token}&email={email}"
+	}
+	if cfg.EmailVerifyURL == "" {
+		cfg.EmailVerifyURL = strings.TrimRight(c.App.URL, "/") + "/verify-email?token={token}"
+	}
 	c.Auth = cfg
 	return nil
 }

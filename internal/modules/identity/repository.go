@@ -42,6 +42,10 @@ type Repository interface {
 
 	// branches.UserChecker
 	ExistsInTenant(ctx context.Context, tenantID, userID int64) (bool, error)
+
+	// authn.AccountWriter
+	SetPassword(ctx context.Context, userID int64, hash string) error
+	MarkEmailVerified(ctx context.Context, userID int64) error
 }
 
 // ListFilter carries user list filters.
@@ -218,7 +222,7 @@ func (r *repository) Create(ctx context.Context, input CreateInput) (*User, erro
 		UserName:        input.UserName,
 		Name:            input.Name,
 		Email:           input.Email,
-		EmailVerifiedAt: timestamptz(input.EmailVerifiedAt),
+		EmailVerifiedAt: optionalTimestamptz(input.EmailVerifiedAt),
 		Phone:           input.Phone,
 		Password:        input.Password,
 		IsActive:        boolToInt16(input.IsActive),
@@ -386,6 +390,19 @@ func (r *repository) FindByID(ctx context.Context, id int64) (*authn.UserRecord,
 		return nil, err
 	}
 	return user.toRecord(), nil
+}
+
+// SetPassword implements authn.AccountWriter (password reset by token).
+func (r *repository) SetPassword(ctx context.Context, userID int64, hash string) error {
+	return r.UpdatePassword(ctx, tenancy.Unscoped(), userID, hash, &userID)
+}
+
+// MarkEmailVerified implements authn.AccountWriter.
+func (r *repository) MarkEmailVerified(ctx context.Context, userID int64) error {
+	if _, err := r.queries.MarkUserEmailVerified(ctx, userID); err != nil {
+		return database.MapError("users.mark_email_verified", err)
+	}
+	return nil
 }
 
 func (r *repository) TouchLogin(ctx context.Context, userID int64, device string) error {

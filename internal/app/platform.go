@@ -46,6 +46,7 @@ type Platform struct {
 	Cache            cache.Store
 	Storage          *storage.Registry
 	Queue            queue.Engine
+	Recovery         *authn.Recovery
 	QueueAdmin       queue.Admin
 	QueueRegistry    *queue.Registry
 	Telemetry        *telemetry.Collector
@@ -202,7 +203,10 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 	roleRepo := access.NewRoleRepository(txManager.Queries())
 	checker := authz.NewChecker(txManager.Queries(), store)
 	authenticator := authn.NewOpaqueAuthenticator(txManager.Queries(), identityRepo, cfg.Auth)
-	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard).WithTx(txManager)
+	recovery := authn.NewRecovery(identityRepo, identityRepo, authenticator, store, mail.EngineEnqueuer{Engine: telemetryQueue}, cfg.Auth, logger)
+	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard).
+		WithTx(txManager).
+		WithVerifier(recovery)
 	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, telemetryQueue, cfg, logger)
 	if err := exchangeService.RegisterJobs(queueRegistry); err != nil {
 		cacheCleanup()
@@ -406,6 +410,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		ScheduleRunner:   runner,
 		Checker:          checker,
 		Authenticator:    authenticator,
+		Recovery:         recovery,
 		IdentityRepo:     identityRepo,
 		Identity:         identityService,
 		Exchange:         exchangeService,
