@@ -5,7 +5,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -102,10 +101,19 @@ func KeyByIP(r *http.Request) string {
 	return host
 }
 
-// Middleware rejects requests over the limit with a 429 problem.
-func Middleware(limiter Limiter, keyFn func(*http.Request) string, responder *httpx.Responder) func(http.Handler) http.Handler {
+// Middleware rejects requests over the limit with a 429 problem. Paths in
+// skip (exact match, e.g. health probes) are never limited.
+func Middleware(limiter Limiter, keyFn func(*http.Request) string, responder *httpx.Responder, skip ...string) func(http.Handler) http.Handler {
+	skipped := make(map[string]bool, len(skip))
+	for _, path := range skip {
+		skipped[path] = true
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if skipped[r.URL.Path] {
+				next.ServeHTTP(w, r)
+				return
+			}
 			allowed, retryAfter := limiter.Allow(r.Context(), keyFn(r))
 			if allowed {
 				next.ServeHTTP(w, r)
@@ -115,8 +123,7 @@ func Middleware(limiter Limiter, keyFn func(*http.Request) string, responder *ht
 			if retry < 1 {
 				retry = 1
 			}
-			w.Header().Set("Retry-After", strconv.Itoa(retry))
-			responder.Error(w, r, apperr.New(apperr.RateLimitExceeded, "Too many requests. Please retry later."))
+			responder.Error(w, r, apperr.New(apperr.RateLimitExceeded, "Too many requests. Please retry later.").WithRetryAfter(retry))
 		})
 	}
 }

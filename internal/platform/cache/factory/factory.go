@@ -18,7 +18,7 @@ import (
 func New(cfg config.Config, queries *dbgen.Queries) (cache.Store, func(), error) {
 	switch cfg.Cache.Driver {
 	case "memory":
-		store := memory.New(cfg.Cache.Prefix)
+		store := memory.NewWithLimit(cfg.Cache.Prefix, cfg.Cache.MemoryMaxEntries)
 		return store, store.Close, nil
 
 	case "file":

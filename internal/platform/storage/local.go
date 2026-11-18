@@ -41,10 +41,15 @@ func (d *localDisk) Put(_ context.Context, path string, contents io.Reader, _ in
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	// Private-disk contents are readable by the service user only (L2).
+	dirMode, fileMode := os.FileMode(0o755), os.FileMode(0o644)
+	if d.urlPrefix == "" {
+		dirMode, fileMode = 0o700, 0o600
+	}
+	if err := os.MkdirAll(filepath.Dir(target), dirMode); err != nil {
 		return fmt.Errorf("storage: create directory for %q: %w", path, err)
 	}
-	file, err := os.Create(target)
+	file, err := os.OpenFile(target, os.O_RDWR|os.O_CREATE|os.O_TRUNC, fileMode)
 	if err != nil {
 		return fmt.Errorf("storage: create %q: %w", path, err)
 	}

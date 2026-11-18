@@ -76,6 +76,10 @@ func (h *Handler) fileStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
+	// Downloading tenant documents is an action, not a view (H14).
+	if _, ok := h.requireManage(w, r); !ok {
+		return
+	}
 	id, err := pathID(r)
 	if err != nil {
 		h.responder.Error(w, r, err)

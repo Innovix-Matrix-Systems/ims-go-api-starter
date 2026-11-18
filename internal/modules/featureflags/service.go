@@ -269,11 +269,8 @@ func (s *Service) userBlobForTarget(ctx context.Context, target Target) (blob, e
 
 func (s *Service) globalBlob(ctx context.Context) (blob, error) {
 	var cached blob
-	found, err := s.cache.Get(ctx, globalBlobKey(), &cached)
-	if err != nil {
-		return nil, apperr.Wrap(apperr.InternalServerError, "read feature flags cache", err)
-	}
-	if found {
+	// A cache outage degrades to the database instead of failing the request.
+	if found, err := s.cache.Get(ctx, globalBlobKey(), &cached); err == nil && found {
 		return cached, nil
 	}
 	rows, err := s.repo.ListGlobal(ctx)
@@ -291,11 +288,8 @@ func (s *Service) globalBlob(ctx context.Context) (blob, error) {
 func (s *Service) tenantBlob(ctx context.Context, tenantID int64) (blob, error) {
 	key := tenantBlobKey(tenantID)
 	var cached blob
-	found, err := s.cache.Get(ctx, key, &cached)
-	if err != nil {
-		return nil, apperr.Wrap(apperr.InternalServerError, "read feature flags cache", err)
-	}
-	if found {
+	// A cache outage degrades to the database instead of failing the request.
+	if found, err := s.cache.Get(ctx, key, &cached); err == nil && found {
 		return cached, nil
 	}
 	rows, err := s.repo.ListByTarget(ctx, Target{Type: TargetTenant, ID: tenantID})
@@ -313,11 +307,8 @@ func (s *Service) tenantBlob(ctx context.Context, tenantID int64) (blob, error) 
 func (s *Service) userBlob(ctx context.Context, userID int64) (blob, error) {
 	key := userBlobKey(userID)
 	var cached blob
-	found, err := s.cache.Get(ctx, key, &cached)
-	if err != nil {
-		return nil, apperr.Wrap(apperr.InternalServerError, "read feature flags cache", err)
-	}
-	if found {
+	// A cache outage degrades to the database instead of failing the request.
+	if found, err := s.cache.Get(ctx, key, &cached); err == nil && found {
 		return cached, nil
 	}
 	rows, err := s.repo.ListByTarget(ctx, Target{Type: TargetUser, ID: userID})

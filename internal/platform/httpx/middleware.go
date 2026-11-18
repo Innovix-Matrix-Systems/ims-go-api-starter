@@ -3,9 +3,11 @@ package httpx
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strconv"
@@ -39,12 +41,29 @@ func WithRequestID(ctx context.Context, id string) context.Context {
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
-		if id == "" {
+		if !validRequestID(id) {
+			// Missing or garbage (too long, control characters, log
+			// injection): use our own id instead of echoing it (M24).
 			id = newRequestID()
 		}
 		w.Header().Set("X-Request-ID", id)
 		next.ServeHTTP(w, r.WithContext(WithRequestID(r.Context(), id)))
 	})
+}
+
+// validRequestID accepts 1–128 characters of [A-Za-z0-9._:-].
+func validRequestID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == ':', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ResponseRecorder captures status and byte counts for logging and recover.
@@ -111,7 +130,10 @@ func Recover(logger *slog.Logger, rsp *Responder) func(http.Handler) http.Handle
 					"stack", string(stack),
 				)
 				if rec, ok := w.(*ResponseRecorder); ok && rec.WroteHeader() {
-					return
+					// Part of the response is already on the wire; abort the
+					// connection so the client sees a broken response rather
+					// than a truncated "success" (M23).
+					panic(http.ErrAbortHandler)
 				}
 				rsp.Panic(w, r, panicValue, stack)
 			}()
@@ -262,4 +284,34 @@ func newRequestID() string {
 		return fmt.Sprintf("req_%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(buf)
+}
+
+// IsLoopback reports whether the request comes from this machine (after
+// RealIP has applied trusted proxy headers).
+func IsLoopback(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// ProtectOps guards an operational endpoint (e.g. /metrics): with a token
+// it requires "Authorization: Bearer <token>"; without one it only answers
+// loopback callers. Anything else gets a plain 404 (the surface stays hidden).
+func ProtectOps(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token != "" {
+			given := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if subtle.ConstantTimeCompare([]byte(given), []byte(token)) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+		} else if IsLoopback(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	})
 }

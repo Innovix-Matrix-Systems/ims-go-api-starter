@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 )
 
 // Handler serves the health endpoint with a cached result store; ?fresh=1
@@ -28,7 +30,10 @@ func NewHandler(registry *Registry, ttl time.Duration) *Handler {
 
 // ServeHTTP implements http.Handler.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	fresh := r.URL.Query().Get("fresh") == "1"
+	// ?fresh=1 re-runs every check (DB, queue GROUP BY, ...): only local
+	// callers (deploy scripts, the box's own monitoring) may force it, so the
+	// public endpoint cannot be used to amplify load (M49).
+	fresh := r.URL.Query().Get("fresh") == "1" && httpx.IsLoopback(r)
 
 	results, ok := h.cached(fresh)
 	if !ok {
@@ -48,6 +53,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, post-check=0, pre-check=0")
+	// Readiness must fail closed: load balancers and deploy scripts read the
+	// status code, not the body (H18). /up stays a plain liveness 200.
+	if results.HasFailures() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
 	_ = json.NewEncoder(w).Encode(results)
 }
 

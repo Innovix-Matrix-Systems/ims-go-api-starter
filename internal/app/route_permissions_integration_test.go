@@ -55,6 +55,7 @@ var routesWithoutPermission = map[string]bool{
 	"GET /api/v1/data-processing/job/{jobId}/download": true,
 	"GET /api/v1/files/{id}":                           true, // creator or file.view
 	"DELETE /api/v1/files/{id}":                        true, // creator or file.delete
+	"GET /api/v1/files/{id}/download":                  true, // same rule as show
 	"GET /api/v1/feature-flags":                        true,
 	"GET /api/v1/billing/subscription/status":          true,
 }

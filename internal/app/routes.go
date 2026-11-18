@@ -24,6 +24,9 @@ func (d *Dependencies) Router() http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(httpx.RequestID)
+	if !d.Config.IsLocal() {
+		r.Use(httpx.PublicOrigin(d.Config.App.URL))
+	}
 	r.Use(httpx.RealIP(d.Config.HTTP.TrustedProxies))
 	if d.Config.Security.HeadersEnabled {
 		r.Use(httpx.SecurityHeaders)
@@ -43,7 +46,8 @@ func (d *Dependencies) Router() http.Handler {
 		r.Use(d.Metrics.Middleware)
 	}
 	r.Use(httpx.Timeout(d.Config.HTTP.RequestTimeout, d.Responder))
-	r.Use(ratelimit.Middleware(d.Limiter, ratelimit.KeyByIP, d.Responder))
+	// Health probes and metrics scrapes never spend the per-IP budget.
+	r.Use(ratelimit.Middleware(d.Limiter, ratelimit.KeyByIP, d.Responder, "/up", "/api/health", "/metrics"))
 	r.Use(d.I18n.Middleware(d.Config.App.SupportedLocales, d.Config.App.FallbackLocale))
 
 	r.Get("/up", d.up)
@@ -55,7 +59,7 @@ func (d *Dependencies) Router() http.Handler {
 		r.Get("/docs/openapi.yaml", docs.Spec)
 	}
 	if d.Config.Ops.MetricsEnabled && d.Metrics != nil {
-		r.Handle("/metrics", d.Metrics.Handler())
+		r.Handle("/metrics", httpx.ProtectOps(d.Config.Ops.MetricsToken, d.Metrics.Handler()))
 	}
 
 	// Developer dashboard: one gate for the SPA, its JSON API and the telemetry

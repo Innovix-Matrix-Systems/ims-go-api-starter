@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/app"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 )
 
 func registerScheduleCommands(registry *Registry, state *State) error {
@@ -44,6 +46,16 @@ func newScheduleCommand(state *State) *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+			// One scheduler per database: a second process would run every
+			// task twice (renewal reminders, expiry, backups).
+			release, ok, err := platform.Tx.TryHoldLock(ctx, database.SchedulerLockID)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("another scheduler is already running against this database; only one `ims schedule` process is allowed")
+			}
+			defer release()
 			return platform.ScheduleRunner.Start(ctx)
 		},
 	}

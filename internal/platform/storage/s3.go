@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"path/filepath"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -53,6 +55,10 @@ func (d *s3Disk) Put(ctx context.Context, path string, contents io.Reader, size 
 	}
 	if size > 0 {
 		input.ContentLength = aws.Int64(size)
+	}
+	// S3 otherwise serves everything as binary/octet-stream (M52).
+	if contentType := mime.TypeByExtension(filepath.Ext(path)); contentType != "" {
+		input.ContentType = aws.String(contentType)
 	}
 	if _, err := d.client.PutObject(ctx, input); err != nil {
 		return fmt.Errorf("storage: s3 put %q: %w", path, err)

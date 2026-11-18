@@ -63,7 +63,6 @@ internal/
   platform/   technical infra:
     database/   named pgx pools (registry), TxManager, goose+River migrate, dbtest helpers
     cache/      Store interface + factory/ + memory|file|redis|database drivers
-    cachekeys/  versioned, scope-aware cache keys
     queue/      queue.Engine (sync | River), job registry, River dispatch + health/stats
     scheduler/  task registry, cron runner, heartbeat + health
     httpx/      BindJSON, validator + message mapping, Problem (RFC 9457), response helpers,
@@ -209,9 +208,10 @@ tenant scoping and business invariants regardless of caller. The permission cata
 `limit` (default 20, max 100) + `cursor` (plus `unread_only`/`priority`) and
 `responder.Cursor`; `per_page` is intentionally ignored there.
 
-**Cache** — depend on `cache.Store` (never a driver directly). Namespace keys with
-`cachekeys.Key(ctx, store, scope, namespace, args...)` for anything derived from tenant data;
-`cachekeys.Bump` invalidates a namespace. `Remember` degrades to computing on cache errors.
+**Cache** — depend on `cache.Store` (never a driver directly). Keys are plain strings owned by
+the caching module; include the tenant id in any key derived from tenant data and delete the
+key in the same service method that writes the data. `Remember` degrades to computing on cache
+errors. Default driver: `memory` locally, `database` elsewhere (memory/file are per-process).
 
 **Queue** — declare jobs as `queue.Definition{Kind, Queue, Validate, Handle}` in a
 `queue.Registry`. Enqueue with the `queue.Engine` (sync executes inline; River persists).

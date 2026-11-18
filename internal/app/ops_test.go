@@ -51,11 +51,20 @@ func TestMetricsDisabledByDefault(t *testing.T) {
 
 func TestMetricsExposedWhenEnabled(t *testing.T) {
 	t.Setenv("METRICS_ENABLED", "true")
+	t.Setenv("METRICS_TOKEN", "scrape-secret")
 	router := newTestRouter(t)
 
 	doRequest(t, router, http.MethodGet, "/up", "")
 
-	rec := doRequest(t, router, http.MethodGet, "/metrics", "")
+	// Without the token (and not from loopback) /metrics stays hidden.
+	if rec := doRequest(t, router, http.MethodGet, "/metrics", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("anonymous status = %d, want 404", rec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	req.Header.Set("Authorization", "Bearer scrape-secret")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}

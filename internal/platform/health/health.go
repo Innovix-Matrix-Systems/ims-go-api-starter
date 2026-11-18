@@ -26,6 +26,10 @@ type CheckResult struct {
 	ShortSummary        string         `json:"shortSummary"`
 	Status              Status         `json:"status"`
 	Meta                map[string]any `json:"meta,omitempty"`
+	// Advisory checks are reported but never make the endpoint answer 503
+	// (e.g. backups, the separate scheduler process): an instance can serve
+	// traffic while they are unhealthy.
+	Advisory bool `json:"advisory,omitempty"`
 }
 
 // StoredResults is the payload returned by the health endpoint.
@@ -34,9 +38,12 @@ type StoredResults struct {
 	CheckResults []CheckResult `json:"checkResults"`
 }
 
-// HasFailures reports whether any check failed or crashed.
+// HasFailures reports whether any non-advisory check failed or crashed.
 func (s StoredResults) HasFailures() bool {
 	for _, r := range s.CheckResults {
+		if r.Advisory {
+			continue
+		}
 		if r.Status == StatusFailed || r.Status == StatusCrashed {
 			return true
 		}
@@ -52,7 +59,8 @@ type Check interface {
 
 // Registry holds the checks and runs them.
 type Registry struct {
-	checks []Check
+	checks   []Check
+	advisory map[int]bool
 }
 
 // NewRegistry creates an empty registry.
@@ -60,18 +68,28 @@ func NewRegistry() *Registry {
 	return &Registry{}
 }
 
-// Add appends a check.
+// Add appends a check whose failure makes the instance unready (503).
 func (r *Registry) Add(check Check) {
+	r.checks = append(r.checks, check)
+}
+
+// AddAdvisory appends a check that is reported but never fails readiness.
+func (r *Registry) AddAdvisory(check Check) {
+	if r.advisory == nil {
+		r.advisory = map[int]bool{}
+	}
+	r.advisory[len(r.checks)] = true
 	r.checks = append(r.checks, check)
 }
 
 // Run executes every check with a per-check timeout and returns the results.
 func (r *Registry) Run(ctx context.Context) StoredResults {
 	results := make([]CheckResult, 0, len(r.checks))
-	for _, check := range r.checks {
+	for i, check := range r.checks {
 		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		result := check.Run(checkCtx)
 		cancel()
+		result.Advisory = r.advisory[i]
 
 		if result.Name == "" {
 			result.Name = check.Name()

@@ -85,6 +85,10 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		dbRegistry.Close()
 		return nil, nil, err
 	}
+	if !cfg.IsLocal() && (cfg.Cache.Driver == "memory" || cfg.Cache.Driver == "file") {
+		logger.Warn("per-process cache driver outside local development: permission/tenancy caches, rate limits and the scheduler heartbeat are not shared between the API, worker and scheduler processes; use CACHE_DRIVER=database or redis",
+			"driver", cfg.Cache.Driver, "env", cfg.App.Env)
+	}
 
 	// Telemetry: the collector's sink writes through the same pools it
 	// observes, so the tracer attaches lazily once the collector exists.

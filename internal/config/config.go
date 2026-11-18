@@ -123,6 +123,8 @@ type Cache struct {
 	Driver  string
 	Prefix  string
 	FileDir string
+	// MemoryMaxEntries bounds the memory driver (CACHE_MEMORY_MAX_ENTRIES).
+	MemoryMaxEntries int
 }
 
 // Redis holds the Redis client settings (cache driver, queue-adjacent use).
@@ -286,7 +288,10 @@ type Mail struct {
 type Ops struct {
 	DocsEnabled    bool
 	MetricsEnabled bool
-	CORS           CORS
+	// MetricsToken, when set, is required as "Authorization: Bearer <token>"
+	// on /metrics. When empty, /metrics only answers loopback requests.
+	MetricsToken string
+	CORS         CORS
 }
 
 // CORS is the cross-origin policy. An empty AllowedOrigins list disables CORS
@@ -522,9 +527,9 @@ func (c *Config) Validate() error {
 		return errors.New("AUTH_TOKEN_EXPIRATION must be greater than zero in production (non-expiring tokens are not allowed)")
 	}
 	switch c.Files.Disk {
-	case "public", "s3":
+	case "private", "public", "s3":
 	default:
-		return fmt.Errorf("FILES_DISK %q is not supported (public|s3; local disks are not publicly addressable)", c.Files.Disk)
+		return fmt.Errorf("FILES_DISK %q is not supported (private|public|s3)", c.Files.Disk)
 	}
 	if c.Files.Disk == "s3" && !c.Storage.S3.Configured() {
 		return errors.New("FILES_DISK=s3 requires S3_REGION, S3_BUCKET, S3_ACCESS_KEY and S3_SECRET_KEY")
@@ -650,6 +655,12 @@ func (c *Config) loadHTTP() error {
 	if c.HTTP.RequestTimeout, err = getDuration("HTTP_REQUEST_TIMEOUT", 60*time.Second); err != nil {
 		return err
 	}
+	// The server write deadline must outlive the request timeout, otherwise
+	// the connection is cut before the Timeout middleware can write its 503
+	// and long downloads break mid-body (H23). 0 keeps "no write deadline".
+	if c.HTTP.WriteTimeout > 0 && c.HTTP.WriteTimeout <= c.HTTP.RequestTimeout {
+		c.HTTP.WriteTimeout = c.HTTP.RequestTimeout + 30*time.Second
+	}
 	if c.HTTP.MaxRequestBodyBytes, err = getInt64("HTTP_MAX_REQUEST_BODY_BYTES", 10*1024*1024); err != nil {
 		return err
 	}
@@ -731,10 +742,23 @@ func envKey(name string) string {
 }
 
 func (c *Config) loadCache() error {
+	// The memory driver is per-process: fine for local development, wrong for
+	// any deployment that runs more than one process (API + worker +
+	// scheduler share permission/tenancy caches and rate-limit counters).
+	// Outside local the default is the shared database driver.
+	defaultDriver := "database"
+	if c.IsLocal() {
+		defaultDriver = "memory"
+	}
+	maxEntries, err := getInt("CACHE_MEMORY_MAX_ENTRIES", 100000)
+	if err != nil {
+		return err
+	}
 	c.Cache = Cache{
-		Driver:  getString("CACHE_DRIVER", "memory"),
-		Prefix:  getString("CACHE_PREFIX", "ims-"),
-		FileDir: getString("CACHE_FILE_DIR", ""),
+		Driver:           getString("CACHE_DRIVER", defaultDriver),
+		Prefix:           getString("CACHE_PREFIX", "ims-"),
+		FileDir:          getString("CACHE_FILE_DIR", ""),
+		MemoryMaxEntries: maxEntries,
 	}
 	if c.Cache.FileDir == "" {
 		c.Cache.FileDir = filepath.Join(c.App.CacheDir, "data")
@@ -1080,6 +1104,7 @@ func (c *Config) loadOps() error {
 	c.Ops = Ops{
 		DocsEnabled:    docs,
 		MetricsEnabled: metrics,
+		MetricsToken:   strings.TrimSpace(getString("METRICS_TOKEN", "")),
 		CORS: CORS{
 			AllowedOrigins: splitCSV(getString("CORS_ALLOWED_ORIGINS", "")),
 			AllowedMethods: splitCSV(getString("CORS_ALLOWED_METHODS", "GET,POST,PATCH,PUT,DELETE,OPTIONS")),

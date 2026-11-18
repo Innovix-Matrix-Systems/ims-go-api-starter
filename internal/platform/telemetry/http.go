@@ -31,10 +31,17 @@ func (c *Collector) HTTPMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		sampled := c.Sample()
-		requestBody := c.readRequestBody(r)
+		// Bodies are only buffered for sampled requests (M50); the rest pay
+		// nothing beyond the timing below.
+		var requestBody []byte
+		bodyLimit := int64(0)
+		if sampled {
+			requestBody = c.readRequestBody(r)
+			bodyLimit = c.capture.MaxBodyBytes
+		}
 		ctx := WithCapture(r.Context(), sampled)
 		started := time.Now()
-		recorder := &captureWriter{ResponseWriter: w, limit: c.capture.MaxBodyBytes}
+		recorder := &captureWriter{ResponseWriter: w, limit: bodyLimit}
 
 		defer func() {
 			panicValue := recover()

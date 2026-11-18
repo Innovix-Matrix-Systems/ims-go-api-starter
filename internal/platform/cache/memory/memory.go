@@ -22,9 +22,15 @@ func (i item) expired(now time.Time) bool {
 	return !i.expiresAt.IsZero() && !now.Before(i.expiresAt)
 }
 
-// Store is an in-process cache store implementing cache.Store.
+// DefaultMaxEntries bounds a store created with New.
+const DefaultMaxEntries = 100000
+
+// Store is an in-process cache store implementing cache.Store. It holds at
+// most maxEntries keys: when full, expired entries are swept first, then an
+// arbitrary tenth of the entries is evicted (a cache may always forget).
 type Store struct {
-	prefix string
+	prefix     string
+	maxEntries int
 
 	mu    sync.Mutex
 	items map[string]item
@@ -36,16 +42,51 @@ type Store struct {
 
 var _ cache.Store = (*Store)(nil)
 
-// New creates a memory store. The prefix namespaces every key.
+// New creates a memory store bounded to DefaultMaxEntries. The prefix
+// namespaces every key.
 func New(prefix string) *Store {
+	return NewWithLimit(prefix, DefaultMaxEntries)
+}
+
+// NewWithLimit creates a memory store holding at most maxEntries keys
+// (maxEntries <= 0 uses DefaultMaxEntries).
+func NewWithLimit(prefix string, maxEntries int) *Store {
+	if maxEntries <= 0 {
+		maxEntries = DefaultMaxEntries
+	}
 	store := &Store{
-		prefix: prefix,
-		items:  map[string]item{},
-		now:    time.Now,
-		stop:   make(chan struct{}),
+		prefix:     prefix,
+		maxEntries: maxEntries,
+		items:      map[string]item{},
+		now:        time.Now,
+		stop:       make(chan struct{}),
 	}
 	go store.janitor()
 	return store
+}
+
+// makeRoom must be called with s.mu held before inserting fullKey.
+func (s *Store) makeRoom(fullKey string) {
+	if _, exists := s.items[fullKey]; exists || len(s.items) < s.maxEntries {
+		return
+	}
+	now := s.now()
+	for key, stored := range s.items {
+		if stored.expired(now) {
+			delete(s.items, key)
+		}
+	}
+	if len(s.items) < s.maxEntries {
+		return
+	}
+	evict := s.maxEntries/10 + 1
+	for key := range s.items {
+		if evict == 0 {
+			break
+		}
+		delete(s.items, key)
+		evict--
+	}
 }
 
 // Close stops the background janitor.
@@ -95,6 +136,7 @@ func (s *Store) Set(ctx context.Context, key string, value any, ttl time.Duratio
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.makeRoom(s.prefix + key)
 	s.items[s.prefix+key] = entry
 	return nil
 }
@@ -116,6 +158,7 @@ func (s *Store) SetNX(ctx context.Context, key string, value any, ttl time.Durat
 	if stored, ok := s.items[fullKey]; ok && !stored.expired(s.now()) {
 		return false, nil
 	}
+	s.makeRoom(fullKey)
 	s.items[fullKey] = entry
 	return true, nil
 }
@@ -187,6 +230,7 @@ func (s *Store) Increment(ctx context.Context, key string, delta int64) (int64, 
 	}
 	if !ok {
 		value := delta
+		s.makeRoom(fullKey)
 		s.items[fullKey] = item{number: &value}
 		return value, nil
 	}

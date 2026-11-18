@@ -2067,6 +2067,26 @@ paths:
         "403": *forbidden
         "404": *notFound
 
+  /api/v1/files/{id}/download:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+    get:
+      tags: [Files]
+      summary: Download a file (authorized; the only way to read private-disk files)
+      description: >-
+        Streams the file as an attachment. Same access rule as GET /files/{id}. When
+        FILES_DISK=private, the file `url` points here.
+      operationId: downloadFile
+      responses:
+        "200":
+          description: The file contents.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
   /api/v1/data-processing/jobs:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}

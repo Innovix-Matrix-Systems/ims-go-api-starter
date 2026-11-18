@@ -2,6 +2,8 @@ package files
 
 import (
 	"context"
+	"io"
+	"mime"
 	"net/http"
 	"strconv"
 
@@ -71,7 +73,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	}
 	data := make([]Response, 0, len(items))
 	for _, file := range items {
-		data = append(data, NewResponse(file, h.service.URL(r.Context(), file)))
+		data = append(data, NewResponse(file, h.fileURL(r, file)))
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
 	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
@@ -99,7 +101,7 @@ func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusCreated, NewResponse(*file, h.service.URL(r.Context(), *file)))
+	h.responder.Data(w, r, http.StatusCreated, NewResponse(*file, h.fileURL(r, *file)))
 }
 
 func (h *Handler) show(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +110,7 @@ func (h *Handler) show(w http.ResponseWriter, r *http.Request) {
 	if file == nil {
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*file, h.service.URL(r.Context(), *file)))
+	h.responder.Data(w, r, http.StatusOK, NewResponse(*file, h.fileURL(r, *file)))
 }
 
 func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +125,40 @@ func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.responder.NoContent(w)
+}
+
+// download streams the file through an authorized route (the only way to
+// read files on the private disk). Same access rule as show.
+func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
+	identity, _ := authn.IdentityFromContext(r.Context())
+	file, _ := h.ownedFile(w, r, identity.UserID, viewDecision)
+	if file == nil {
+		return
+	}
+	reader, _, err := h.service.Open(r.Context(), file.ID)
+	if err != nil {
+		h.responder.Error(w, r, err)
+		return
+	}
+	defer reader.Close()
+	w.Header().Set("Content-Type", file.MimeType)
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": file.FileName}))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("Cache-Control", "private, no-store")
+	if file.Size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(file.Size, 10))
+	}
+	_, _ = io.Copy(w, reader)
+}
+
+// fileURL is the public URL, or the authorized download route for private
+// files.
+func (h *Handler) fileURL(r *http.Request, file File) string {
+	if url := h.service.URL(r.Context(), file); url != "" {
+		return url
+	}
+	return httpx.AbsoluteURL(r, "/api/v1/files/"+strconv.FormatInt(file.ID, 10)+"/download")
 }
 
 type decision int

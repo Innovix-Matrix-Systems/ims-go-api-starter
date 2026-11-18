@@ -82,8 +82,10 @@ come from `httpx.CursorURL`. Management lists (users, developers, targets, files
 **Related data** — there is no lazy loading; load relations explicitly in bulk (see §4). Never run a
 query per row inside a response loop.
 
-**Cache** — depend on `cache.Store`; build keys with `cachekeys.Key(ctx, store, scope, "ns", args…)`
-and invalidate with `cachekeys.Bump(ctx, store, "ns")`.
+**Cache** — depend on `cache.Store` (like Laravel's `Cache` facade): `cache.Remember(...)` to read
+through, `store.Delete(ctx, key)` in the same service method that changes the data. Put the tenant id
+in every key derived from tenant data (`"settings:tenant:" + id`) and keep key builders next to the
+code that owns them.
 
 **Queue jobs** — declare `queue.Definition{Kind, Queue, Validate, Handle}` in a `queue.Registry`;
 enqueue via the `queue.Engine` (prefer `EnqueueTx` with your write). Jobs re-resolve tenancy from the
@@ -279,7 +281,7 @@ If you also touched the dashboard, run `make web-typecheck` and `make web-build`
 | Permissions catalog + checker | `internal/authz` |
 | Error codes | `internal/apperr` |
 | DB registry, TxManager, migrate | `internal/platform/database` |
-| Cache stores + versioned keys | `internal/platform/cache`, `internal/platform/cachekeys` |
+| Cache stores | `internal/platform/cache` |
 | Queue engines + registry | `internal/platform/queue` |
 | Scheduler + tasks | `internal/platform/scheduler`, `internal/app/platform.go` |
 | Storage disks, mail, i18n, health, metrics | `internal/platform/{storage,mail,i18n,health,metrics}` |

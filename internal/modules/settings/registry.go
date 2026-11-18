@@ -2,7 +2,10 @@
 // and service. Values resolve tenant override -> global row -> code default.
 package settings
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // ValueType describes the storage/validation type of a setting.
 type ValueType string
@@ -128,6 +131,11 @@ func (k Key) Coerce(value any) (any, error) {
 	case TypeInt:
 		switch typed := value.(type) {
 		case float64:
+			// JSON numbers are floats: accept only whole numbers that fit
+			// an int, never silently truncate 1.9 to 1 (M29).
+			if typed != math.Trunc(typed) || math.Abs(typed) > math.MaxInt32 {
+				return nil, fmt.Errorf("setting %q expects an integer", k.Name)
+			}
 			return int(typed), nil
 		case int:
 			return typed, nil

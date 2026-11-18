@@ -526,11 +526,8 @@ func (s *Service) overrideBlob(ctx context.Context, target Target) (blob, error)
 
 func (s *Service) globalBlob(ctx context.Context) (blob, error) {
 	var cached blob
-	found, err := s.cache.Get(ctx, globalBlobKey, &cached)
-	if err != nil {
-		return nil, apperr.Wrap(apperr.InternalServerError, "read settings cache", err)
-	}
-	if found {
+	// A cache outage degrades to the database instead of failing the request.
+	if found, err := s.cache.Get(ctx, globalBlobKey, &cached); err == nil && found {
 		return cached, nil
 	}
 	rows, err := s.repo.ListGlobal(ctx)
@@ -548,11 +545,8 @@ func (s *Service) globalBlob(ctx context.Context) (blob, error) {
 func (s *Service) tenantBlob(ctx context.Context, tenantID int64) (blob, error) {
 	key := tenantBlobKey(tenantID)
 	var cached blob
-	found, err := s.cache.Get(ctx, key, &cached)
-	if err != nil {
-		return nil, apperr.Wrap(apperr.InternalServerError, "read settings cache", err)
-	}
-	if found {
+	// A cache outage degrades to the database instead of failing the request.
+	if found, err := s.cache.Get(ctx, key, &cached); err == nil && found {
 		return cached, nil
 	}
 	rows, err := s.repo.ListByTarget(ctx, Target{Type: TargetTenant, ID: tenantID})
@@ -569,11 +563,8 @@ func (s *Service) tenantBlob(ctx context.Context, tenantID int64) (blob, error) 
 
 func (s *Service) groups(ctx context.Context) (*groupsSnapshot, error) {
 	var cached groupsSnapshot
-	found, err := s.cache.Get(ctx, groupsCacheKey, &cached)
-	if err != nil {
-		return nil, apperr.Wrap(apperr.InternalServerError, "read settings groups cache", err)
-	}
-	if found {
+	// A cache outage degrades to the database instead of failing the request.
+	if found, err := s.cache.Get(ctx, groupsCacheKey, &cached); err == nil && found {
 		return &cached, nil
 	}
 	snapshot, err := s.buildGroups(ctx)

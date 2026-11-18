@@ -106,9 +106,12 @@ surfaces. `model_has_roles.model_type` is the constant `user`.
 ## 6. Platform services
 
 - **Cache** (`platform/cache`): `Store` interface; drivers `memory`, `file`, `redis`,
-  `database` selected by `CACHE_DRIVER` via `cache/factory`. `cachekeys` implements
-  scope-aware versioned keys (`tenant:T:branch:B:namespace:vN:hash`) as the primary
-  invalidation mechanism. Contract tests (`cachetest`) run against every driver.
+  `database` selected by `CACHE_DRIVER` via `cache/factory` (default `memory` in local
+  environments, `database` elsewhere — `memory`/`file` are per-process). The memory driver is
+  bounded (`CACHE_MEMORY_MAX_ENTRIES`, default 100 000). Keys are plain strings owned by the
+  module that caches (e.g. `authz` permission sets, `tenancy` membership checks, settings);
+  each module deletes its own keys on writes — there is no global versioned-key layer.
+  Contract tests (`cachetest`) run against every driver.
 - **Queue** (`platform/queue`): typed job registry + `Engine` interface. `sync` executes inline
   (tests/CLI); `river` persists to Postgres with transactional enqueue (`EnqueueTx`). A single
   River job kind (`ims.job`) carries `{kind, payload, tenant_id, branch_id}`; the dispatcher

@@ -68,3 +68,31 @@ func (m *TxManager) WithTenantLock(ctx context.Context, resource string, tenantI
 		return fn(q)
 	})
 }
+
+// SchedulerLockID is the advisory lock that keeps one scheduler per database.
+const SchedulerLockID = int64(4804692)
+
+// TryHoldLock takes a session-level advisory lock on a dedicated connection
+// and keeps it until release is called. ok is false when another process
+// already holds it. Use it to make "one instance per deployment" rules
+// self-enforcing (e.g. the scheduler).
+func (m *TxManager) TryHoldLock(ctx context.Context, key int64) (release func(), ok bool, err error) {
+	conn, err := m.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("acquire lock connection: %w", err)
+	}
+	if err := conn.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", key).Scan(&ok); err != nil {
+		conn.Release()
+		return nil, false, fmt.Errorf("try advisory lock: %w", err)
+	}
+	if !ok {
+		conn.Release()
+		return nil, false, nil
+	}
+	return func() {
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_, _ = conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", key)
+		conn.Release()
+	}, true, nil
+}

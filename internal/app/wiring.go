@@ -106,9 +106,9 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	healthRegistry.Add(database.MigrationCheck{Pool: platform.DB.Primary().Pool})
 	healthRegistry.Add(cache.HealthCheck{Store: store})
 	healthRegistry.Add(queue.HealthCheck{Pool: platform.DB.Primary().Pool})
-	healthRegistry.Add(scheduler.HealthCheck{Store: store})
+	healthRegistry.AddAdvisory(scheduler.HealthCheck{Store: store})
 	if cfg.Backup.Enabled && platform.Backup != nil {
-		healthRegistry.Add(backup.HealthCheck{Service: platform.Backup})
+		healthRegistry.AddAdvisory(backup.HealthCheck{Service: platform.Backup})
 	}
 	healthHandler := health.NewHandler(healthRegistry, 30*time.Second)
 

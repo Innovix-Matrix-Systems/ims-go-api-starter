@@ -33,8 +33,9 @@ var allowedFileExtensions = map[string]bool{
 	"docx": true, "doc": true, "mp4": true, "mov": true, "mkv": true,
 }
 
+// SVG is deliberately not accepted: it can carry script (H17).
 var allowedImageExtensions = map[string]bool{
-	"jpg": true, "jpeg": true, "png": true, "bmp": true, "gif": true, "svg": true, "webp": true,
+	"jpg": true, "jpeg": true, "png": true, "bmp": true, "gif": true, "webp": true,
 }
 
 // StorageLimiter enforces the tenant's storage.mb plan limit (implemented by
@@ -51,6 +52,16 @@ type Service struct {
 	tx       *database.TxManager
 	logger   *slog.Logger
 	storage  StorageLimiter
+}
+
+// avatarDisk is where profile photos live. Avatars are shown in <img> tags
+// without a bearer token, so a private FILES_DISK keeps them on the public
+// disk; library files follow FILES_DISK.
+func (s *Service) avatarDisk() string {
+	if s.fileDisk == storage.DiskPrivate {
+		return storage.DiskPublic
+	}
+	return s.fileDisk
 }
 
 // WithStorageLimit enables the storage.mb quota check on uploads.
@@ -77,7 +88,7 @@ func (s *Service) Create(ctx context.Context, actorID int64, tenantID int64, hea
 			return nil, err
 		}
 	}
-	uploaded, err := s.storeOnDisk(ctx, header, allowedFileExtensions, MaxFileSize, false)
+	uploaded, err := s.storeOnDisk(ctx, s.fileDisk, header, allowedFileExtensions, MaxFileSize, false)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +119,8 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, tenan
 	if userID < 1 {
 		return apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
 	}
-	uploaded, err := s.storeOnDisk(ctx, header, allowedImageExtensions, MaxAvatarSize, true)
+	avatarDisk := s.avatarDisk()
+	uploaded, err := s.storeOnDisk(ctx, avatarDisk, header, allowedImageExtensions, MaxAvatarSize, true)
 	if err != nil {
 		return err
 	}
@@ -132,7 +144,7 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, tenan
 			Uuid:       uuidParam(uploaded.uuid),
 			Name:       uploaded.name,
 			FileName:   uploaded.fileName,
-			Disk:       s.fileDisk,
+			Disk:       avatarDisk,
 			Path:       uploaded.path,
 			MimeType:   uploaded.mime,
 			Size:       uploaded.size,
@@ -153,7 +165,7 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, tenan
 		return nil
 	})
 	if err != nil {
-		s.removeFromDisk(ctx, s.fileDisk, uploaded.path)
+		s.removeFromDisk(ctx, avatarDisk, uploaded.path)
 		return err
 	}
 
@@ -222,6 +234,11 @@ func (s *Service) Open(ctx context.Context, id int64) (io.ReadCloser, *File, err
 
 // URL resolves the public URL of a stored file; failures degrade to "".
 func (s *Service) URL(ctx context.Context, file File) string {
+	if file.Disk == storage.DiskPrivate {
+		// Private files have no public URL; the handler points clients at
+		// the authorized download route instead.
+		return ""
+	}
 	disk, err := s.disks.Disk(file.Disk)
 	if err != nil {
 		s.logWarn(ctx, "file disk unavailable", file, err)
@@ -278,7 +295,7 @@ type upload struct {
 
 // storeOnDisk validates the upload, writes it to its disk and returns the
 // metadata needed for the file row.
-func (s *Service) storeOnDisk(ctx context.Context, header *multipart.FileHeader, allowed map[string]bool, maxSize int64, requireImage bool) (*upload, error) {
+func (s *Service) storeOnDisk(ctx context.Context, diskName string, header *multipart.FileHeader, allowed map[string]bool, maxSize int64, requireImage bool) (*upload, error) {
 	if header == nil || header.Filename == "" {
 		return nil, apperr.Validation(map[string][]string{"file": {"The file field is required."}})
 	}
@@ -308,7 +325,7 @@ func (s *Service) storeOnDisk(ctx context.Context, header *multipart.FileHeader,
 		return nil, apperr.Wrap(apperr.InternalServerError, "The uploaded file could not be inspected.", err)
 	}
 	detected := mime.String()
-	if requireImage && !strings.HasPrefix(detected, "image/") {
+	if requireImage && (!strings.HasPrefix(detected, "image/") || strings.Contains(detected, "svg")) {
 		return nil, apperr.Validation(map[string][]string{"file": {"The file field must be an image."}})
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
@@ -317,7 +334,7 @@ func (s *Service) storeOnDisk(ctx context.Context, header *multipart.FileHeader,
 
 	id := uuid.New()
 	path := "files/" + id.String() + "/" + fileName
-	disk, err := s.disks.Disk(s.fileDisk)
+	disk, err := s.disks.Disk(diskName)
 	if err != nil {
 		return nil, apperr.Wrap(apperr.ServiceUnavailable, "The file storage is not available.", err)
 	}

@@ -126,6 +126,11 @@ func (h *Handler) getBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) downloadBackup(w http.ResponseWriter, r *http.Request) {
+	// A backup is a full copy of every tenant's data: viewing the dashboard
+	// (dev.view) is not enough to take one home (H14).
+	if _, ok := h.requireManage(w, r); !ok {
+		return
+	}
 	id, err := pathID(r)
 	if err != nil {
 		h.responder.Error(w, r, err)

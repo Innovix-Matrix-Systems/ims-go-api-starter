@@ -42,12 +42,15 @@ func (d *SMTPDriver) Send(ctx context.Context, message Message) error {
 		if dialErr != nil {
 			return fmt.Errorf("mail: smtp dial: %w", dialErr)
 		}
+		// A stalled SMTP server must not hang the mail worker forever (M52).
+		_ = conn.SetDeadline(smtpDeadline(ctx))
 		client, err = smtp.NewClient(conn, serverName)
 	} else {
 		conn, dialErr := net.DialTimeout("tcp", addr, 10*time.Second)
 		if dialErr != nil {
 			return fmt.Errorf("mail: smtp dial: %w", dialErr)
 		}
+		_ = conn.SetDeadline(smtpDeadline(ctx))
 		client, err = smtp.NewClient(conn, serverName)
 	}
 	if err != nil {
@@ -110,4 +113,13 @@ func (d *SMTPDriver) render(message Message) string {
 // extra SMTP headers or recipients.
 func sanitizeHeader(value string) string {
 	return strings.NewReplacer("\r", "", "\n", "", "\x00", "").Replace(value)
+}
+
+// smtpDeadline bounds the whole SMTP conversation: the context deadline when
+// there is one, otherwise two minutes.
+func smtpDeadline(ctx context.Context) time.Time {
+	if deadline, ok := ctx.Deadline(); ok {
+		return deadline
+	}
+	return time.Now().Add(2 * time.Minute)
 }
