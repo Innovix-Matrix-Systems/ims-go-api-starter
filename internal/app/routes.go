@@ -97,15 +97,26 @@ func (d *Dependencies) Router() http.Handler {
 
 			r.Group(func(r chi.Router) {
 				r.Use(tenancy.Exempt())
-				d.Tenants.RegisterRoutes(r)
-				d.Permissions.RegisterRoutes(r)
-				d.Users.RegisterRoutesExempt(r)
-				d.Roles.RegisterRoutesExempt(r)
-				d.Billing.RegisterRoutesExempt(r)
+
+				// Shared exempt surfaces: files are creator-scoped (plus the
+				// system-only file.view.all / file.delete permissions) and
+				// permission metadata carries no tenant data.
 				d.Files.RegisterRoutes(r)
-				d.Notifications.RegisterRoutesExempt(r)
-				d.Settings.RegisterInternalRoutes(r)
-				d.Flags.RegisterInternalRoutes(r)
+				d.Permissions.RegisterRoutes(r)
+
+				// System-only exempt families: tenant-bound identities are
+				// rejected before their handlers run, so a granted system
+				// permission alone can never reach cross-tenant endpoints.
+				r.Group(func(r chi.Router) {
+					r.Use(tenancy.InternalOnly(d.Responder))
+					d.Tenants.RegisterRoutes(r)
+					d.Users.RegisterRoutesExempt(r)
+					d.Roles.RegisterRoutesExempt(r)
+					d.Billing.RegisterRoutesExempt(r)
+					d.Notifications.RegisterRoutesExempt(r)
+					d.Settings.RegisterInternalRoutes(r)
+					d.Flags.RegisterInternalRoutes(r)
+				})
 			})
 		})
 	})

@@ -12,6 +12,35 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// Canonical APP_ENV values. The raw value is trimmed and lowercased once at
+// load and validated against this allowlist, so "production ", "Production"
+// or a typo like "prodution" can never silently disable production
+// hardening.
+const (
+	EnvLocal       = "local"
+	EnvDevelopment = "development"
+	EnvDev         = "dev"
+	EnvStaging     = "staging"
+	EnvProduction  = "production"
+)
+
+var allowedEnvs = map[string]bool{
+	EnvLocal:       true,
+	EnvDevelopment: true,
+	EnvDev:         true,
+	EnvStaging:     true,
+	EnvProduction:  true,
+}
+
+// normalizeEnv trims, lowercases and validates an APP_ENV value.
+func normalizeEnv(raw string) (string, error) {
+	env := strings.ToLower(strings.TrimSpace(raw))
+	if !allowedEnvs[env] {
+		return "", fmt.Errorf("APP_ENV %q is not supported (allowed: local, development, dev, staging, production)", raw)
+	}
+	return env, nil
+}
+
 // Config is the fully typed application configuration assembled from
 // environment variables (.env + process environment).
 type Config struct {
@@ -303,14 +332,14 @@ func (s S3) Configured() bool {
 
 // IsProduction reports whether the application runs in production.
 func (c *Config) IsProduction() bool {
-	return strings.EqualFold(c.App.Env, "production")
+	return c.App.Env == EnvProduction
 }
 
 // IsLocal reports whether the app is running on a developer machine. The
 // developer Playground is only exposed in local/development environments.
 func (c *Config) IsLocal() bool {
-	switch strings.ToLower(strings.TrimSpace(c.App.Env)) {
-	case "local", "development", "dev":
+	switch c.App.Env {
+	case EnvLocal, EnvDevelopment, EnvDev:
 		return true
 	default:
 		return false
@@ -320,6 +349,31 @@ func (c *Config) IsLocal() bool {
 // IsDebug reports whether verbose/debug behavior is enabled and allowed.
 func (c *Config) IsDebug() bool {
 	return c.App.Debug && !c.IsProduction()
+}
+
+// RunningUnderServiceManager reports whether the process was started by a
+// service manager (systemd sets INVOCATION_ID for every unit invocation).
+func RunningUnderServiceManager() bool {
+	return os.Getenv("INVOCATION_ID") != ""
+}
+
+// ValidateDeploymentPosture refuses to serve a development-postured config
+// under a service manager (systemd — i.e. a deployment). A dev env ships with
+// the dashboard on, docs on, unmasked 5xx details and text logs; booting that
+// as a service is almost always a provisioning mistake. Override explicitly
+// with APP_ALLOW_LOCAL_UNDER_SYSTEMD=true.
+func (c *Config) ValidateDeploymentPosture() error {
+	if !c.IsLocal() || !RunningUnderServiceManager() {
+		return nil
+	}
+	allow, err := getBool("APP_ALLOW_LOCAL_UNDER_SYSTEMD", false)
+	if err != nil {
+		return err
+	}
+	if allow {
+		return nil
+	}
+	return fmt.Errorf("refusing to serve: APP_ENV=%q is a development posture but the process runs under a service manager; set APP_ENV=%s (or %s) for deployments, or APP_ALLOW_LOCAL_UNDER_SYSTEMD=true to override", c.App.Env, EnvStaging, EnvProduction)
 }
 
 // Load resolves the environment file (explicit flag → APP_ENV_FILE → .env),
@@ -464,6 +518,9 @@ func (c *Config) Validate() error {
 	if c.Auth.TokenExpiration < 0 {
 		return errors.New("AUTH_TOKEN_EXPIRATION must not be negative")
 	}
+	if c.IsProduction() && c.Auth.TokenExpiration == 0 {
+		return errors.New("AUTH_TOKEN_EXPIRATION must be greater than zero in production (non-expiring tokens are not allowed)")
+	}
 	switch c.Files.Disk {
 	case "public", "s3":
 	default:
@@ -547,9 +604,13 @@ func validateConnection(conn Connection) error {
 }
 
 func (c *Config) loadApp(envFile string) error {
+	env, err := normalizeEnv(getString("APP_ENV", "local"))
+	if err != nil {
+		return err
+	}
 	c.App = App{
 		Name:             getString("APP_NAME", "ims-go-api"),
-		Env:              getString("APP_ENV", "local"),
+		Env:              env,
 		URL:              getString("APP_URL", "http://localhost:8080"),
 		Timezone:         getString("APP_TIMEZONE", "UTC"),
 		Locale:           getString("APP_LOCALE", "en"),
@@ -743,9 +804,13 @@ func (c *Config) loadSchedule() error {
 	return nil
 }
 
+// DefaultSeedPassword is the well-known default for AUTH_DEFAULT_PASSWORD.
+// Seeding with it is refused in production.
+const DefaultSeedPassword = "123456"
+
 func (c *Config) loadAuth() error {
 	cfg := Auth{
-		DefaultPassword: getString("AUTH_DEFAULT_PASSWORD", "123456"),
+		DefaultPassword: getString("AUTH_DEFAULT_PASSWORD", DefaultSeedPassword),
 	}
 
 	var err error
@@ -771,7 +836,9 @@ func (c *Config) loadAuth() error {
 		return err
 	}
 
-	tokenMinutes, err := getInt("AUTH_TOKEN_EXPIRATION", 0)
+	// 1440 minutes (24 h): a non-zero default so a stolen token cannot live
+	// forever; raise via AUTH_TOKEN_EXPIRATION for long-lived device tokens.
+	tokenMinutes, err := getInt("AUTH_TOKEN_EXPIRATION", 1440)
 	if err != nil {
 		return err
 	}

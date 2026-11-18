@@ -16,7 +16,7 @@ func New(env, level string, debug bool, out io.Writer) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: parseLevel(level, debug)}
 
 	var handler slog.Handler
-	switch strings.ToLower(env) {
+	switch strings.ToLower(strings.TrimSpace(env)) {
 	case "production", "staging":
 		handler = slog.NewJSONHandler(out, opts)
 	default:

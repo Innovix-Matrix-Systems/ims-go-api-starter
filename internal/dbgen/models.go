@@ -192,6 +192,7 @@ type File struct {
 	UpdatedBy  *int64             `json:"updated_by"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	TenantID   *int64             `json:"tenant_id"`
 }
 
 type ModelHasRole struct {

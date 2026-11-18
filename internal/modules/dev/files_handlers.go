@@ -124,9 +124,11 @@ func (h *Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	started := time.Now()
-	file, opErr := h.fileService.Get(r.Context(), id)
+	// The dev dashboard is a system surface: dev.manage holders are tenantless
+	// platform accounts, so the scoped variants run with all_tenants.
+	file, opErr := h.fileService.Get(r.Context(), id, true, 0)
 	if opErr == nil {
-		opErr = h.fileService.Delete(r.Context(), id)
+		opErr = h.fileService.Delete(r.Context(), id, true, 0)
 	}
 	params := map[string]any{"file_id": id}
 	if file != nil {

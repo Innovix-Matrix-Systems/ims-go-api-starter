@@ -24,7 +24,7 @@ const avatarMaxBytes = 5 << 20
 // PhotoManager resolves and updates user profile photos (implemented by the
 // files module; nil disables avatar handling).
 type PhotoManager interface {
-	UpdateAvatar(ctx context.Context, actorID, userID int64, header *multipart.FileHeader) error
+	UpdateAvatar(ctx context.Context, actorID, userID int64, tenantID int64, header *multipart.FileHeader) error
 	PhotoURL(ctx context.Context, userID int64) (string, error)
 	PhotoURLs(ctx context.Context, userIDs []int64) (map[int64]string, error)
 }
@@ -408,7 +408,7 @@ func (h *Handler) updateAvatar(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, targetID, header); err != nil {
+	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, targetID, target.TenantIDValue(), header); err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
@@ -589,7 +589,7 @@ func (h *Handler) changePasswordInternal(w http.ResponseWriter, r *http.Request)
 // destroyInternal soft-deletes a user across tenants.
 func (h *Handler) destroyInternal(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserDelete); err != nil {
+	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalDelete); err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
@@ -609,7 +609,7 @@ func (h *Handler) destroyInternal(w http.ResponseWriter, r *http.Request) {
 // assignRoleInternal replaces a user's roles across tenants.
 func (h *Handler) assignRoleInternal(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserRoleAssign); err != nil {
+	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalRoleAssign); err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
@@ -663,7 +663,7 @@ func (h *Handler) updateUserAvatarInternal(w http.ResponseWriter, r *http.Reques
 		h.responder.Error(w, r, err)
 		return
 	}
-	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, id, header); err != nil {
+	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, id, target.TenantIDValue(), header); err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
@@ -687,7 +687,7 @@ func (h *Handler) updateProfileAvatarInternal(w http.ResponseWriter, r *http.Req
 		h.responder.Error(w, r, err)
 		return
 	}
-	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, identity.UserID, header); err != nil {
+	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, identity.UserID, identity.TenantID, header); err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}

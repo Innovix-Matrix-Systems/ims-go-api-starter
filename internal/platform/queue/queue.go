@@ -50,6 +50,12 @@ type Definition struct {
 	Timeout     time.Duration
 	Validate    func(payload []byte) error
 	Handle      func(ctx context.Context, payload []byte) error
+	// SystemJob marks kinds that legitimately run without a tenant scope
+	// (global notifications, tenantless self-service, platform-wide work
+	// whose payload carries its own targets). Enqueues of every other kind
+	// must carry a tenant: an unscoped envelope would execute the handler
+	// across all tenants (there is no "no filter" tenant on purpose).
+	SystemJob bool
 }
 
 // Engine submits jobs for execution.

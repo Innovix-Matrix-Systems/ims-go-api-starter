@@ -133,6 +133,26 @@ func Exempt() func(http.Handler) http.Handler {
 	}
 }
 
+// InternalOnly rejects requests from identities that belong to a tenant.
+// Mounted (per route family) inside the tenant-exempt group so a tenant-bound
+// caller can never reach cross-tenant handlers even with a granted system
+// permission: "internal" is a property of the account, not something a route
+// group can assert. Tenantless platform accounts pass through — including
+// impersonating super-admins, whose own identities are tenantless. Route
+// families that deliberately serve tenant-bound callers (files, permission
+// metadata, self-service profile handlers) must not mount this gate.
+func InternalOnly(responder *httpx.Responder) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if identity, ok := authn.IdentityFromContext(r.Context()); ok && identity.TenantID != 0 {
+				responder.Error(w, r, apperr.New(apperr.Forbidden, "This endpoint is restricted to internal accounts."))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // BranchCheckKey namespaces cached branch-membership checks.
 func BranchCheckKey(tenantID, branchID int64) string {
 	return fmt.Sprintf("branch_check:%d:%d", branchID, tenantID)

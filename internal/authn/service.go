@@ -2,7 +2,6 @@ package authn
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"strings"
 
@@ -28,38 +27,49 @@ type LoginResult struct {
 
 // Service implements the login, OTP verification and logout workflows.
 type Service struct {
-	users    UserLookup
-	auth     Authenticator
-	otp      *OTPService
-	throttle *Throttle
-	cfg      config.Auth
+	users     UserLookup
+	auth      Authenticator
+	otp       *OTPService
+	throttle  *Throttle
+	cfg       config.Auth
+	dummyHash []byte
 }
 
 // NewService creates the authentication workflow service.
 func NewService(users UserLookup, auth Authenticator, otp *OTPService, throttle *Throttle, cfg config.Auth) *Service {
-	return &Service{users: users, auth: auth, otp: otp, throttle: throttle, cfg: cfg}
+	// A throwaway hash at the configured cost: comparing against it on the
+	// unknown-email path equalises timing with the wrong-password path.
+	dummy, _ := bcrypt.GenerateFromPassword([]byte("ims-go-api-starter:dummy:credentials"), cfg.BcryptRounds)
+	return &Service{users: users, auth: auth, otp: otp, throttle: throttle, cfg: cfg, dummyHash: dummy}
 }
 
 // Login authenticates credentials and issues a device token (or dispatches an
 // OTP when enabled).
+//
+// The response for "unknown email" and "wrong password" is identical in
+// status, body and (via the dummy hash) timing; account-status checks run
+// only after the password matches, so login cannot be used to enumerate
+// accounts or their state.
 func (s *Service) Login(ctx context.Context, email, password, device, ip string) (*LoginResult, error) {
-	key := loginThrottleKey(email, ip)
-	if err := s.checkThrottle(ctx, key); err != nil {
+	if err := s.checkThrottles(ctx, email, ip); err != nil {
 		return nil, err
 	}
 
-	record, err := s.findUser(ctx, email)
-	if err != nil {
+	record, err := s.users.FindByEmail(ctx, email)
+	if err != nil && !apperr.Is(err, apperr.ResourceNotFound) {
 		return nil, err
+	}
+	if record == nil || bcrypt.CompareHashAndPassword([]byte(record.Password), []byte(password)) != nil {
+		if record == nil {
+			_ = bcrypt.CompareHashAndPassword(s.dummyHash, []byte(password))
+		}
+		s.hitThrottles(ctx, email, ip)
+		return nil, apperr.New(apperr.InvalidCredentials, "The provided credentials are incorrect.")
 	}
 	if err := s.verifyBeforeLogin(record); err != nil {
 		return nil, err
 	}
 
-	if bcrypt.CompareHashAndPassword([]byte(record.Password), []byte(password)) != nil {
-		_ = s.throttle.Hit(ctx, key)
-		return nil, apperr.New(apperr.InvalidCredentials, "The provided password is incorrect.")
-	}
 	if s.cfg.OTPEnabled {
 		if _, err := s.otp.Send(ctx, record.ID, record.Email); err != nil {
 			return nil, err
@@ -70,29 +80,33 @@ func (s *Service) Login(ctx context.Context, email, password, device, ip string)
 			Message: "An OTP has been sent to your registered contact.",
 		}, nil
 	}
-	return s.completeLogin(ctx, record, device, key)
+	return s.completeLogin(ctx, record, device, email, ip)
 }
 
 // VerifyOTP completes a login started with an OTP challenge.
 func (s *Service) VerifyOTP(ctx context.Context, email, code, device, ip string) (*LoginResult, error) {
-	key := loginThrottleKey(email, ip)
-	if err := s.checkThrottle(ctx, key); err != nil {
+	if err := s.checkThrottles(ctx, email, ip); err != nil {
 		return nil, err
 	}
 
-	record, err := s.findUser(ctx, email)
-	if err != nil {
+	record, err := s.users.FindByEmail(ctx, email)
+	if err != nil && !apperr.Is(err, apperr.ResourceNotFound) {
 		return nil, err
+	}
+	if record == nil {
+		_ = bcrypt.CompareHashAndPassword(s.dummyHash, []byte(code))
+		s.hitThrottles(ctx, email, ip)
+		return nil, apperr.New(apperr.InvalidCredentials, "The provided credentials are incorrect.")
 	}
 	if err := s.verifyBeforeLogin(record); err != nil {
 		return nil, err
 	}
 
 	if err := s.otp.Verify(ctx, record.ID, code); err != nil {
-		_ = s.throttle.Hit(ctx, key)
+		s.hitThrottles(ctx, email, ip)
 		return nil, err
 	}
-	return s.completeLogin(ctx, record, device, key)
+	return s.completeLogin(ctx, record, device, email, ip)
 }
 
 // Logout revokes the caller's token for one device.
@@ -100,12 +114,12 @@ func (s *Service) Logout(ctx context.Context, userID int64, device string) error
 	return s.auth.Revoke(ctx, userID, device)
 }
 
-func (s *Service) completeLogin(ctx context.Context, record *UserRecord, device, throttleKey string) (*LoginResult, error) {
+func (s *Service) completeLogin(ctx context.Context, record *UserRecord, device, email, ip string) (*LoginResult, error) {
 	token, err := s.auth.Issue(ctx, record.ID, device)
 	if err != nil {
 		return nil, err
 	}
-	_ = s.throttle.Clear(ctx, throttleKey)
+	s.clearThrottles(ctx, email, ip)
 	if err := s.users.TouchLogin(ctx, record.ID, device); err != nil {
 		return nil, err
 	}
@@ -117,10 +131,20 @@ func (s *Service) completeLogin(ctx context.Context, record *UserRecord, device,
 	}, nil
 }
 
-func (s *Service) checkThrottle(ctx context.Context, key string) error {
-	tooMany, retryAfter, err := s.throttle.TooMany(ctx, key)
+// Throttling keeps two independent counters — one per account, one per IP —
+// and locks on either. IP rotation no longer resets a targeted account's
+// budget, and password spraying one account from many IPs is bounded by the
+// per-IP counter.
+func (s *Service) checkThrottles(ctx context.Context, email, ip string) error {
+	tooMany, retryAfter, err := s.throttle.TooMany(ctx, accountThrottleKey(email))
 	if err != nil {
 		return apperr.Wrap(apperr.InternalServerError, "check login attempts", err)
+	}
+	if !tooMany {
+		tooMany, retryAfter, err = s.throttle.TooMany(ctx, ipThrottleKey(ip))
+		if err != nil {
+			return apperr.Wrap(apperr.InternalServerError, "check login attempts", err)
+		}
 	}
 	if !tooMany {
 		return nil
@@ -132,17 +156,14 @@ func (s *Service) checkThrottle(ctx context.Context, key string) error {
 	return apperr.New(apperr.AccountLocked, "Too many login attempts. Please try again later.").WithRetryAfter(seconds)
 }
 
-func (s *Service) findUser(ctx context.Context, email string) (*UserRecord, error) {
-	record, err := s.users.FindByEmail(ctx, email)
-	if err != nil {
-		if apperr.Is(err, apperr.ResourceNotFound) {
-			return nil, apperr.Validation(map[string][]string{
-				"email": {"The selected email is invalid."},
-			})
-		}
-		return nil, err
-	}
-	return record, nil
+func (s *Service) hitThrottles(ctx context.Context, email, ip string) {
+	_ = s.throttle.Hit(ctx, accountThrottleKey(email))
+	_ = s.throttle.Hit(ctx, ipThrottleKey(ip))
+}
+
+func (s *Service) clearThrottles(ctx context.Context, email, ip string) {
+	_ = s.throttle.Clear(ctx, accountThrottleKey(email))
+	_ = s.throttle.Clear(ctx, ipThrottleKey(ip))
 }
 
 func (s *Service) verifyBeforeLogin(record *UserRecord) error {
@@ -158,6 +179,10 @@ func (s *Service) verifyBeforeLogin(record *UserRecord) error {
 	return nil
 }
 
-func loginThrottleKey(email, ip string) string {
-	return fmt.Sprintf("login:%s|%s", strings.ToLower(strings.TrimSpace(email)), ip)
+func accountThrottleKey(email string) string {
+	return "login:acct:" + strings.ToLower(strings.TrimSpace(email))
+}
+
+func ipThrottleKey(ip string) string {
+	return "login:ip:" + ip
 }

@@ -51,8 +51,10 @@ func NewService(repo Repository, disks *storage.Registry, fileDisk string, tx *d
 	return &Service{repo: repo, disks: disks, fileDisk: fileDisk, tx: tx, logger: logger}
 }
 
-// Create stores a standalone library file.
-func (s *Service) Create(ctx context.Context, actorID int64, header *multipart.FileHeader) (*File, error) {
+// Create stores a standalone library file. tenantID stamps the caller's
+// tenant (0 for tenantless platform accounts — the row stays global and is
+// only visible to holders of the system-only file.view.all permission).
+func (s *Service) Create(ctx context.Context, actorID int64, tenantID int64, header *multipart.FileHeader) (*File, error) {
 	uploaded, err := s.storeOnDisk(ctx, header, allowedFileExtensions, MaxFileSize, false)
 	if err != nil {
 		return nil, err
@@ -66,6 +68,7 @@ func (s *Service) Create(ctx context.Context, actorID int64, header *multipart.F
 		MimeType:  uploaded.mime,
 		Size:      uploaded.size,
 		Type:      uploaded.fileType,
+		TenantID:  tenantIDPtr(tenantID),
 		CreatedBy: actorIDPtr(actorID),
 	})
 	if err != nil {
@@ -77,8 +80,9 @@ func (s *Service) Create(ctx context.Context, actorID int64, header *multipart.F
 
 // UpdateAvatar replaces the user's profile file (single-file collection):
 // the new file is stored first, old rows are swapped in one transaction, and
-// the superseded disk files are removed afterwards.
-func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, header *multipart.FileHeader) error {
+// the superseded disk files are removed afterwards. tenantID stamps the
+// target user's tenant (0 keeps the row global).
+func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, tenantID int64, header *multipart.FileHeader) error {
 	if userID < 1 {
 		return apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
 	}
@@ -114,6 +118,7 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, heade
 			OwnerType:  &ownerType,
 			OwnerID:    &userID,
 			Collection: &collection,
+			TenantID:   tenantIDPtr(tenantID),
 			CreatedBy:  actor,
 			UpdatedBy:  actor,
 		}); err != nil {
@@ -136,12 +141,13 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, heade
 	return nil
 }
 
-// Get loads a file by ID.
-func (s *Service) Get(ctx context.Context, id int64) (*File, error) {
-	return s.repo.Get(ctx, id)
+// Get loads a file by ID within the caller's tenant scope (allTenants is only
+// true for tenantless system callers).
+func (s *Service) Get(ctx context.Context, id int64, allTenants bool, tenantID int64) (*File, error) {
+	return s.repo.GetInTenant(ctx, id, allTenants, tenantID)
 }
 
-// List returns files with pagination and filters.
+// List returns files with pagination and filters (tenant-scoped by the filter).
 func (s *Service) List(ctx context.Context, filter ListFilter) ([]File, int64, error) {
 	items, err := s.repo.List(ctx, filter)
 	if err != nil {
@@ -155,13 +161,15 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]File, int64, e
 }
 
 // Delete removes a file row and its disk file (attached files included; the
-// owner simply loses the attachment).
-func (s *Service) Delete(ctx context.Context, id int64) error {
-	file, err := s.repo.Get(ctx, id)
+// owner simply loses the attachment). The delete is tenant-scoped: tenantless
+// callers (allTenants) may delete any file; tenant-bound callers only their
+// own tenant's.
+func (s *Service) Delete(ctx context.Context, id int64, allTenants bool, tenantID int64) error {
+	file, err := s.repo.GetInTenant(ctx, id, allTenants, tenantID)
 	if err != nil {
 		return err
 	}
-	if err := s.repo.Delete(ctx, id); err != nil {
+	if err := s.repo.Delete(ctx, id, allTenants, tenantID); err != nil {
 		return err
 	}
 	s.removeFromDisk(ctx, file.Disk, file.Path)
@@ -361,4 +369,13 @@ func actorIDPtr(actorID int64) *int64 {
 		return nil
 	}
 	return &actorID
+}
+
+// tenantIDPtr maps the caller's effective tenant to the column (0 → NULL:
+// the row is a global file owned by a tenantless platform account).
+func tenantIDPtr(tenantID int64) *int64 {
+	if tenantID < 1 {
+		return nil
+	}
+	return &tenantID
 }

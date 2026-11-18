@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
 func TestRegistryValidation(t *testing.T) {
@@ -49,7 +50,8 @@ func TestSyncEngineDispatch(t *testing.T) {
 	}
 
 	engine := NewSyncEngine(registry)
-	if err := engine.Enqueue(context.Background(), "test.echo", map[string]string{"hello": "world"}, EnqueueOptions{}); err != nil {
+	ctx := tenancy.WithScope(context.Background(), tenancy.Scope{TenantID: 1, BranchID: 2})
+	if err := engine.Enqueue(ctx, "test.echo", map[string]string{"hello": "world"}, EnqueueOptions{}); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
 	if !validated || string(handled) != `{"hello":"world"}` {
@@ -59,6 +61,45 @@ func TestSyncEngineDispatch(t *testing.T) {
 	err := engine.Enqueue(context.Background(), "missing.kind", nil, EnqueueOptions{})
 	if !apperr.Is(err, apperr.InvalidInput) {
 		t.Fatalf("unknown kind error = %v, want INVALID_INPUT", err)
+	}
+}
+
+// TestEnqueueRefusesUnscopedScope proves the M48 fix: a tenant-less envelope
+// is refused unless the definition is explicitly a system job — a job would
+// otherwise execute with "no filter" across all tenants.
+func TestEnqueueRefusesUnscopedScope(t *testing.T) {
+	registry := NewRegistry()
+	ran := false
+	mustRegister := func(def Definition) {
+		t.Helper()
+		if err := registry.Register(def); err != nil {
+			t.Fatalf("Register() error = %v", err)
+		}
+	}
+	mustRegister(Definition{
+		Kind:   "test.scoped",
+		Handle: func(context.Context, []byte) error { ran = true; return nil },
+	})
+	mustRegister(Definition{
+		Kind:      "test.system",
+		SystemJob: true,
+		Handle:    func(context.Context, []byte) error { ran = true; return nil },
+	})
+
+	engine := NewSyncEngine(registry)
+	unscoped := context.Background()
+
+	if err := engine.Enqueue(unscoped, "test.scoped", nil, EnqueueOptions{}); !apperr.Is(err, apperr.InvalidInput) {
+		t.Fatalf("unscoped enqueue error = %v, want INVALID_INPUT", err)
+	}
+	if ran {
+		t.Fatal("handler ran for an unscoped enqueue")
+	}
+	if err := engine.Enqueue(unscoped, "test.system", nil, EnqueueOptions{}); err != nil {
+		t.Fatalf("system job enqueue error = %v", err)
+	}
+	if !ran {
+		t.Fatal("system job did not run")
 	}
 }
 

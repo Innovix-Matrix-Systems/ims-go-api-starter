@@ -48,14 +48,17 @@ type TargetInput struct {
 	ID   *int64
 }
 
-// ListFilter carries admin list filters.
+// ListFilter carries admin list filters. AllTenants is true only for
+// internal scopes; tenant-bound callers are scoped to TenantID.
 type ListFilter struct {
-	Search   string
-	Priority string
-	OrderBy  string
-	OrderDir string
-	Limit    int32
-	Offset   int32
+	AllTenants bool
+	TenantID   int64
+	Search     string
+	Priority   string
+	OrderBy    string
+	OrderDir   string
+	Limit      int32
+	Offset     int32
 }
 
 // Visibility carries the caller's addressability inputs.
@@ -83,8 +86,9 @@ type FeedParams struct {
 type Repository interface {
 	CreateWithTargets(ctx context.Context, input CreateInput) (*Notification, []Target, error)
 	Get(ctx context.Context, id int64) (*Notification, error)
-	UpdateWithTargets(ctx context.Context, id int64, input UpdateInput) (*Notification, []Target, error)
-	Delete(ctx context.Context, id int64) error
+	GetInTenant(ctx context.Context, id int64, allTenants bool, tenantID int64) (*Notification, error)
+	UpdateWithTargets(ctx context.Context, id int64, allTenants bool, tenantID int64, input UpdateInput) (*Notification, []Target, error)
+	Delete(ctx context.Context, id int64, allTenants bool, tenantID int64) error
 	List(ctx context.Context, filter ListFilter) ([]Notification, error)
 	Count(ctx context.Context, filter ListFilter) (int64, error)
 	ListTargets(ctx context.Context, notificationID int64) ([]Target, error)
@@ -154,20 +158,38 @@ func (r *repository) Get(ctx context.Context, id int64) (*Notification, error) {
 	return &notification, nil
 }
 
-func (r *repository) UpdateWithTargets(ctx context.Context, id int64, input UpdateInput) (*Notification, []Target, error) {
+func (r *repository) GetInTenant(ctx context.Context, id int64, allTenants bool, tenantID int64) (*Notification, error) {
+	row, err := r.queries.GetNotificationInTenant(ctx, dbgen.GetNotificationInTenantParams{
+		ID:         id,
+		AllTenants: allTenants,
+		TenantID:   &tenantID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.Newf(apperr.ResourceNotFound, "Notification with ID '%d' was not found.", id)
+		}
+		return nil, database.MapError("notifications.get_in_tenant", err)
+	}
+	notification := mapNotification(row)
+	return &notification, nil
+}
+
+func (r *repository) UpdateWithTargets(ctx context.Context, id int64, allTenants bool, tenantID int64, input UpdateInput) (*Notification, []Target, error) {
 	var updated dbgen.Notification
 	var targets []Target
 	err := r.tx.WithTx(ctx, func(q *dbgen.Queries) error {
-		row, err := q.UpdateNotification(ctx, dbgen.UpdateNotificationParams{
-			ID:        id,
-			EventType: input.EventType,
-			Priority:  input.Priority,
-			Title:     input.Title,
-			Body:      input.Body,
-			Data:      input.Data,
-			GroupKey:  input.GroupKey,
-			ExpiresAt: timestamptz(input.ExpiresAt),
-			UpdatedBy: input.UpdatedBy,
+		row, err := q.UpdateNotificationInTenant(ctx, dbgen.UpdateNotificationInTenantParams{
+			ID:         id,
+			EventType:  input.EventType,
+			Priority:   input.Priority,
+			Title:      input.Title,
+			Body:       input.Body,
+			Data:       input.Data,
+			GroupKey:   input.GroupKey,
+			ExpiresAt:  timestamptz(input.ExpiresAt),
+			UpdatedBy:  input.UpdatedBy,
+			AllTenants: allTenants,
+			TenantID:   &tenantID,
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -193,8 +215,12 @@ func (r *repository) UpdateWithTargets(ctx context.Context, id int64, input Upda
 	return &notification, targets, nil
 }
 
-func (r *repository) Delete(ctx context.Context, id int64) error {
-	affected, err := r.queries.DeleteNotification(ctx, id)
+func (r *repository) Delete(ctx context.Context, id int64, allTenants bool, tenantID int64) error {
+	affected, err := r.queries.DeleteNotificationInTenant(ctx, dbgen.DeleteNotificationInTenantParams{
+		ID:         id,
+		AllTenants: allTenants,
+		TenantID:   &tenantID,
+	})
 	if err != nil {
 		return database.MapError("notifications.delete", err)
 	}
@@ -206,6 +232,8 @@ func (r *repository) Delete(ctx context.Context, id int64) error {
 
 func (r *repository) List(ctx context.Context, filter ListFilter) ([]Notification, error) {
 	rows, err := r.queries.ListNotifications(ctx, dbgen.ListNotificationsParams{
+		AllTenants: filter.AllTenants,
+		TenantID:   &filter.TenantID,
 		Search:     optionalString(filter.Search),
 		Priority:   optionalPriority(filter.Priority),
 		OrderBy:    filter.OrderBy,
@@ -225,8 +253,10 @@ func (r *repository) List(ctx context.Context, filter ListFilter) ([]Notificatio
 
 func (r *repository) Count(ctx context.Context, filter ListFilter) (int64, error) {
 	total, err := r.queries.CountNotifications(ctx, dbgen.CountNotificationsParams{
-		Search:   optionalString(filter.Search),
-		Priority: optionalPriority(filter.Priority),
+		AllTenants: filter.AllTenants,
+		TenantID:   &filter.TenantID,
+		Search:     optionalString(filter.Search),
+		Priority:   optionalPriority(filter.Priority),
 	})
 	if err != nil {
 		return 0, database.MapError("notifications.count", err)
@@ -247,7 +277,16 @@ func (r *repository) ListTargets(ctx context.Context, notificationID int64) ([]T
 }
 
 // ResolveUserIDs expands target rules to the distinct user IDs they address.
+// Role- and branch-targeted expansion is scoped to the notification's tenant:
+// a tenant-bound notification can never fan out beyond its own tenant, even
+// when a role id collides across tenants (all_tenants is only true for
+// global notifications, whose targets carry no USER/ROLE/BRANCH rules).
 func (r *repository) ResolveUserIDs(ctx context.Context, tenantID *int64, targets []Target) ([]int64, error) {
+	allTenants := tenantID == nil
+	scopeTenant := int64(0)
+	if tenantID != nil {
+		scopeTenant = *tenantID
+	}
 	seen := map[int64]struct{}{}
 	for _, target := range targets {
 		var ids []int64
@@ -262,12 +301,20 @@ func (r *repository) ResolveUserIDs(ctx context.Context, tenantID *int64, target
 			if target.TargetID == nil {
 				continue
 			}
-			ids, err = r.queries.ListUserIDsByRoleIDs(ctx, []int64{*target.TargetID})
+			ids, err = r.queries.ListUserIDsByRoleIDs(ctx, dbgen.ListUserIDsByRoleIDsParams{
+				RoleIds:    []int64{*target.TargetID},
+				AllTenants: allTenants,
+				TenantID:   &scopeTenant,
+			})
 		case TargetBranch:
 			if target.TargetID == nil {
 				continue
 			}
-			ids, err = r.queries.ListUserIDsByBranch(ctx, target.TargetID)
+			ids, err = r.queries.ListUserIDsByBranch(ctx, dbgen.ListUserIDsByBranchParams{
+				BranchID:   target.TargetID,
+				AllTenants: allTenants,
+				TenantID:   &scopeTenant,
+			})
 		case TargetTenant:
 			if tenantID == nil {
 				ids, err = r.queries.ListGlobalUserIDs(ctx)

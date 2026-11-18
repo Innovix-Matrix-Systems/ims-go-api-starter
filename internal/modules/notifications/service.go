@@ -92,7 +92,7 @@ func (s *Service) Update(ctx context.Context, scope tenancy.Scope, actorID, id i
 		input.UpdatedBy = &actorID
 	}
 
-	notification, targets, err := s.repo.UpdateWithTargets(ctx, id, input)
+	notification, targets, err := s.repo.UpdateWithTargets(ctx, id, scope.AllTenants(), scope.EffectiveTenantID(), input)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -111,7 +111,7 @@ func (s *Service) Delete(ctx context.Context, scope tenancy.Scope, id int64) err
 	if err != nil {
 		return err
 	}
-	if err := s.repo.Delete(ctx, id); err != nil {
+	if err := s.repo.Delete(ctx, id, scope.AllTenants(), scope.EffectiveTenantID()); err != nil {
 		return err
 	}
 	s.dispatchDecrement(ctx, tenantValue(existing.TenantID), userIDs)
@@ -124,18 +124,14 @@ func (s *Service) Get(ctx context.Context, scope tenancy.Scope, id int64) (*Noti
 }
 
 func (s *Service) scopedGet(ctx context.Context, scope tenancy.Scope, id int64) (*Notification, error) {
-	notification, err := s.repo.Get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if !scope.AllTenants() && notification.TenantID != nil && *notification.TenantID != scope.EffectiveTenantID() {
-		return nil, apperr.Newf(apperr.ResourceNotFound, "Notification with ID '%d' was not found.", id)
-	}
-	return notification, nil
+	return s.repo.GetInTenant(ctx, id, scope.AllTenants(), scope.EffectiveTenantID())
 }
 
-// List returns notifications with pagination and filters (admin view).
-func (s *Service) List(ctx context.Context, filter ListFilter) ([]Notification, int64, error) {
+// List returns notifications with pagination and filters (admin view). The
+// filter is tenant-scoped: all_tenants is only true for internal scopes.
+func (s *Service) List(ctx context.Context, scope tenancy.Scope, filter ListFilter) ([]Notification, int64, error) {
+	filter.AllTenants = scope.AllTenants()
+	filter.TenantID = scope.EffectiveTenantID()
 	items, err := s.repo.List(ctx, filter)
 	if err != nil {
 		return nil, 0, err

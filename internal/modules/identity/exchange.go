@@ -398,6 +398,7 @@ func (s *ExchangeService) RegisterJobs(registry *queue.Registry) error {
 			Queue:       queue.QueueHeavy,
 			MaxRetries:  1,
 			Timeout:     30 * time.Minute,
+			SystemJob:   true,
 			Validate:    validateExchangePayload,
 			Handle: func(ctx context.Context, payload []byte) error {
 				var input userExchangePayload
@@ -413,6 +414,7 @@ func (s *ExchangeService) RegisterJobs(registry *queue.Registry) error {
 			Queue:       queue.QueueHeavy,
 			MaxRetries:  1,
 			Timeout:     30 * time.Minute,
+			SystemJob:   true,
 			Validate:    validateExchangePayload,
 			Handle: func(ctx context.Context, payload []byte) error {
 				var input userExchangePayload

@@ -128,6 +128,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
+	scope, _ := tenancy.FromContext(r.Context())
 	page, perPage, offset := httpx.PageParams(r)
 	orderBy, orderDir := httpx.OrderParams(r, "created_at", "created_at", "title", "priority")
 	filter := ListFilter{
@@ -147,7 +148,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	items, total, err := h.service.List(r.Context(), filter)
+	items, total, err := h.service.List(r.Context(), scope, filter)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return

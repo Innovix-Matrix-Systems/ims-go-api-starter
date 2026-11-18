@@ -264,6 +264,9 @@ func (e *RiverEngine) prepare(ctx context.Context, kind string, payload any, opt
 		args.TenantID = scope.EffectiveTenantID()
 		args.BranchID = scope.EffectiveBranchID()
 	}
+	if err := checkScope(def, args.TenantID); err != nil {
+		return jobArgs{}, nil, err
+	}
 
 	channel := ChannelConfig(e.cfg, def.Queue)
 	attempts := channel.Tries

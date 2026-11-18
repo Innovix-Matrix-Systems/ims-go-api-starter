@@ -76,11 +76,11 @@ func TestDeveloperFilesEndToEnd(t *testing.T) {
 	}
 
 	imageBytes := []byte("\x89PNG\r\n\x1a\n" + "preview-bytes")
-	image, err := deps.Platform.Files.Create(ctx, tenantUserID, multipartHeader(t, "file", "alpha.png", imageBytes))
+	image, err := deps.Platform.Files.Create(ctx, tenantUserID, tenantID, multipartHeader(t, "file", "alpha.png", imageBytes))
 	if err != nil {
 		t.Fatalf("create image: %v", err)
 	}
-	document, err := deps.Platform.Files.Create(ctx, tenantUserID, multipartHeader(t, "file", "notes.docx", []byte("PK-document-bytes")))
+	document, err := deps.Platform.Files.Create(ctx, tenantUserID, tenantID, multipartHeader(t, "file", "notes.docx", []byte("PK-document-bytes")))
 	if err != nil {
 		t.Fatalf("create document: %v", err)
 	}

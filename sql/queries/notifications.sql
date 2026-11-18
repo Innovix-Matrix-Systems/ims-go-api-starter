@@ -10,7 +10,16 @@ RETURNING *;
 -- name: GetNotification :one
 SELECT * FROM notifications WHERE id = @id;
 
--- name: UpdateNotification :one
+-- Scoped admin reads (fail-closed): all_tenants is only true for internal
+-- scopes; a tenant-bound caller matches their tenant only. Global
+-- notifications (tenant_id IS NULL) are invisible to tenant-bound callers.
+
+-- name: GetNotificationInTenant :one
+SELECT * FROM notifications
+WHERE id = @id
+  AND (@all_tenants::boolean OR tenant_id = @tenant_id);
+
+-- name: UpdateNotificationInTenant :one
 UPDATE notifications
 SET event_type = @event_type,
     priority   = @priority,
@@ -22,14 +31,18 @@ SET event_type = @event_type,
     updated_by = @updated_by,
     updated_at = now()
 WHERE id = @id
+  AND (@all_tenants::boolean OR tenant_id = @tenant_id)
 RETURNING *;
 
--- name: DeleteNotification :execrows
-DELETE FROM notifications WHERE id = @id;
+-- name: DeleteNotificationInTenant :execrows
+DELETE FROM notifications
+WHERE id = @id
+  AND (@all_tenants::boolean OR tenant_id = @tenant_id);
 
 -- name: ListNotifications :many
 SELECT * FROM notifications
-WHERE (@search::text IS NULL OR title ILIKE '%' || @search || '%')
+WHERE (@all_tenants::boolean OR tenant_id = @tenant_id)
+  AND (@search::text IS NULL OR title ILIKE '%' || @search || '%')
   AND (sqlc.narg('priority')::text IS NULL OR priority = sqlc.narg('priority')::text)
 ORDER BY
   CASE WHEN @order_by::text = 'created_at' AND @order_dir::text = 'asc' THEN created_at END ASC,
@@ -43,7 +56,8 @@ LIMIT @page_limit OFFSET @page_offset;
 
 -- name: CountNotifications :one
 SELECT count(*) FROM notifications
-WHERE (@search::text IS NULL OR title ILIKE '%' || @search || '%')
+WHERE (@all_tenants::boolean OR tenant_id = @tenant_id)
+  AND (@search::text IS NULL OR title ILIKE '%' || @search || '%')
   AND (sqlc.narg('priority')::text IS NULL OR priority = sqlc.narg('priority')::text);
 
 -- name: CreateNotificationTarget :one
@@ -61,7 +75,10 @@ SELECT * FROM notification_targets WHERE notification_id = @notification_id ORDE
 SELECT id FROM users WHERE deleted_at IS NULL AND id = ANY(@ids::bigint[]);
 
 -- name: ListUserIDsByBranch :many
-SELECT id FROM users WHERE deleted_at IS NULL AND branch_id = @branch_id;
+SELECT id FROM users
+WHERE deleted_at IS NULL
+  AND branch_id = @branch_id
+  AND (@all_tenants::boolean OR tenant_id = @tenant_id);
 
 -- name: ListUserIDsByTenant :many
 SELECT id FROM users WHERE deleted_at IS NULL AND tenant_id = @tenant_id;
@@ -74,7 +91,8 @@ SELECT DISTINCT u.id
 FROM users u
 JOIN model_has_roles mhr ON mhr.model_type = 'user' AND mhr.model_id = u.id
 WHERE u.deleted_at IS NULL
-  AND mhr.role_id = ANY(@role_ids::bigint[]);
+  AND mhr.role_id = ANY(@role_ids::bigint[])
+  AND (@all_tenants::boolean OR u.tenant_id = @tenant_id);
 
 -- name: InsertNotificationDeliveries :many
 INSERT INTO notification_deliveries (tenant_id, notification_id, user_id, status)

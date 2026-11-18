@@ -73,3 +73,14 @@ func encodePayload(registry *Registry, kind string, payload any) ([]byte, Defini
 	}
 	return data, def, nil
 }
+
+// checkScope refuses tenant-less envelopes for jobs that are not marked as
+// system jobs: the worker restores the envelope scope verbatim, and tenant 0
+// means "no filter" — an unscoped execution across all tenants.
+func checkScope(def Definition, tenantID int64) error {
+	if tenantID > 0 || def.SystemJob {
+		return nil
+	}
+	return apperr.Newf(apperr.InvalidInput,
+		"Job %q requires a tenant scope: enqueue under a tenant context or mark the kind as a system job.", def.Kind)
+}

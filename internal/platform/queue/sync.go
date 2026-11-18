@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
 // SyncEngine executes jobs inline. It powers tests, local development and
@@ -30,6 +32,13 @@ func (e *SyncEngine) Enqueue(ctx context.Context, kind string, payload any, opts
 		if err := def.Validate(data); err != nil {
 			return err
 		}
+	}
+	var tenantID int64
+	if scope, ok := tenancy.FromContext(ctx); ok {
+		tenantID = scope.EffectiveTenantID()
+	}
+	if err := checkScope(def, tenantID); err != nil {
+		return err
 	}
 	return def.Handle(ctx, data)
 }

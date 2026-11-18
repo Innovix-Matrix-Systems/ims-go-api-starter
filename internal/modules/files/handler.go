@@ -11,6 +11,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
 // multipartSlack leaves room for multipart framing beyond the file limit.
@@ -28,6 +29,19 @@ func NewHandler(service *Service, checker *authz.Checker, responder *httpx.Respo
 	return &Handler{service: service, checker: checker, responder: responder}
 }
 
+// tenantFilter resolves the data-access tenant for the caller: impersonation
+// wins, then the identity's own tenant. A tenantless (platform) caller sees
+// all files — reachable only with the system-only file.view.all permission.
+func tenantFilter(r *http.Request) (allTenants bool, tenantID int64) {
+	scope, _ := tenancy.FromContext(r.Context())
+	identity, _ := authn.IdentityFromContext(r.Context())
+	tenantID = scope.EffectiveTenantID()
+	if tenantID == 0 {
+		tenantID = identity.TenantID
+	}
+	return tenantID == 0, tenantID
+}
+
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
 	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermFileViewAll); err != nil {
@@ -35,11 +49,14 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	allTenants, tenantID := tenantFilter(r)
 	page, perPage, offset := httpx.PageParams(r)
 	filter := ListFilter{
-		Type:   r.URL.Query().Get("type"),
-		Limit:  int32(perPage),
-		Offset: int32(offset),
+		AllTenants: allTenants,
+		TenantID:   tenantID,
+		Type:       r.URL.Query().Get("type"),
+		Limit:      int32(perPage),
+		Offset:     int32(offset),
 	}
 	if raw := r.URL.Query().Get("attached"); raw != "" {
 		if value, err := strconv.ParseBool(raw); err == nil {
@@ -76,7 +93,8 @@ func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	file, err := h.service.Create(r.Context(), identity.UserID, header)
+	_, tenantID := tenantFilter(r)
+	file, err := h.service.Create(r.Context(), identity.UserID, tenantID, header)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return
@@ -99,7 +117,8 @@ func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
 	if file == nil {
 		return
 	}
-	if err := h.service.Delete(r.Context(), file.ID); err != nil {
+	allTenants, tenantID := tenantFilter(r)
+	if err := h.service.Delete(r.Context(), file.ID, allTenants, tenantID); err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
@@ -113,16 +132,17 @@ const (
 	deleteDecision
 )
 
-// ownedFile loads the file and applies the access policy: full-permission
-// roles may access any file; otherwise the creator needs the granular
-// permission (view/delete) and—for delete—also file.create.
+// ownedFile loads the file (tenant-scoped) and applies the access policy:
+// full-permission roles may access any file; otherwise the creator needs the
+// granular permission (view/delete) and—for delete—also file.create.
 func (h *Handler) ownedFile(w http.ResponseWriter, r *http.Request, userID int64, decision decision) (*File, error) {
 	id, err := filePathID(r)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return nil, err
 	}
-	file, err := h.service.Get(r.Context(), id)
+	allTenants, tenantID := tenantFilter(r)
+	file, err := h.service.Get(r.Context(), id, allTenants, tenantID)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return nil, err

@@ -277,9 +277,27 @@ func (s *Service) Delete(ctx context.Context, scope tenancy.Scope, actorID, id i
 
 // AssignRoles replaces a user's roles.
 func (s *Service) AssignRoles(ctx context.Context, scope tenancy.Scope, actorID, targetID int64, roleIDs []int64) (*User, error) {
+	if len(roleIDs) == 0 {
+		return nil, apperr.Validation(map[string][]string{
+			"roles": {"The roles field must have at least one item."},
+		})
+	}
 	target, err := s.Get(ctx, scope, targetID)
 	if err != nil {
 		return nil, err
+	}
+	targetIsSuper, err := s.checker.IsSuperAdmin(ctx, target.ID)
+	if err != nil {
+		return nil, err
+	}
+	if targetIsSuper {
+		actorIsSuper, err := s.checker.IsSuperAdmin(ctx, actorID)
+		if err != nil {
+			return nil, err
+		}
+		if !actorIsSuper {
+			return nil, apperr.New(apperr.Forbidden, "The super admin user cannot be modified.")
+		}
 	}
 	if scope.Internal && target.TenantIDValue() == 0 {
 		if err := s.validateSystemRoles(ctx, roleIDs); err != nil {
