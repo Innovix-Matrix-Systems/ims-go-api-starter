@@ -248,3 +248,9 @@ SELECT EXISTS (
     WHERE id = @id AND deleted_at IS NULL
       AND (@tenant_id::bigint = 0 OR tenant_id = @tenant_id::bigint)
 );
+
+-- name: PurgeExpiredNotifications :execrows
+-- Retention: notifications expired for more than a week are invisible in
+-- every feed query already; their targets/reads/deliveries cascade.
+DELETE FROM notifications
+WHERE expires_at IS NOT NULL AND expires_at < now() - interval '7 days';

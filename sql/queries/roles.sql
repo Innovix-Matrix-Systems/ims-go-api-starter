@@ -92,6 +92,14 @@ WHERE mr.model_type = @model_type AND mr.model_id = @model_id
   AND r.hidden = false
 ORDER BY r.id;
 
+-- name: UserRoleRefsForUsers :many
+-- Role refs for a whole page of users in one query (no N+1).
+SELECT mr.model_id AS user_id, r.id, r.name, r.is_system FROM roles r
+JOIN model_has_roles mr ON mr.role_id = r.id
+WHERE mr.model_type = @model_type AND mr.model_id = ANY(@user_ids::bigint[])
+  AND r.hidden = false
+ORDER BY mr.model_id, r.id;
+
 -- name: ListUserIDsWithRole :many
 SELECT model_id FROM model_has_roles
 WHERE model_type = @model_type AND role_id = @role_id;

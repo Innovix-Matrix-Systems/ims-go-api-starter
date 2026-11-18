@@ -245,6 +245,48 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		return nil, nil, err
 	}
 
+	// Retention (M30/M31): tables that otherwise grow forever.
+	if err := scheduleRegistry.Register(scheduler.Task{
+		ID:          "notifications.purge-expired",
+		Spec:        "30 3 * * *",
+		Description: "Deletes notifications that expired more than 7 days ago.",
+		Timeout:     30 * time.Minute,
+		Overlap:     scheduler.OverlapSkip,
+		Run: func(ctx context.Context) error {
+			purged, err := txManager.Queries().PurgeExpiredNotifications(ctx)
+			if err != nil {
+				return err
+			}
+			logger.Info("expired notifications purged", "count", purged)
+			return nil
+		},
+	}); err != nil {
+		cacheCleanup()
+		dbRegistry.Close()
+		return nil, nil, err
+	}
+	if cfg.Cache.Driver == "database" {
+		if err := scheduleRegistry.Register(scheduler.Task{
+			ID:          "cache.purge-expired",
+			Spec:        "15 * * * *",
+			Description: "Deletes expired rows from the database cache table.",
+			Timeout:     10 * time.Minute,
+			Overlap:     scheduler.OverlapSkip,
+			Run: func(ctx context.Context) error {
+				purged, err := txManager.Queries().CacheDeleteExpired(ctx)
+				if err != nil {
+					return err
+				}
+				logger.Info("expired cache rows purged", "count", purged)
+				return nil
+			},
+		}); err != nil {
+			cacheCleanup()
+			dbRegistry.Close()
+			return nil, nil, err
+		}
+	}
+
 	if err := scheduleRegistry.Register(scheduler.Task{
 		ID:          "billing.expire-subscriptions",
 		Spec:        "0 */6 * * *",

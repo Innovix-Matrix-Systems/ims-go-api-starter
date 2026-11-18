@@ -934,6 +934,21 @@ func (q *Queries) NotificationVisibleToUser(ctx context.Context, arg Notificatio
 	return visible, err
 }
 
+const purgeExpiredNotifications = `-- name: PurgeExpiredNotifications :execrows
+DELETE FROM notifications
+WHERE expires_at IS NOT NULL AND expires_at < now() - interval '7 days'
+`
+
+// Retention: notifications expired for more than a week are invisible in
+// every feed query already; their targets/reads/deliveries cascade.
+func (q *Queries) PurgeExpiredNotifications(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredNotifications)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateNotificationInTenant = `-- name: UpdateNotificationInTenant :one
 UPDATE notifications
 SET event_type = $1,

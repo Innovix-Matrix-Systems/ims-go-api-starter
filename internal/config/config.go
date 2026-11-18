@@ -116,6 +116,10 @@ type Connection struct {
 	MaxConns    int32
 	MinConns    int32
 	ConnTimeout time.Duration
+	// StatementTimeout / IdleInTxTimeout are server-side backstops for code
+	// paths without a context deadline (CLI, ad-hoc calls). 0 disables.
+	StatementTimeout time.Duration
+	IdleInTxTimeout  time.Duration
 }
 
 // Cache holds the cache driver settings.
@@ -725,6 +729,12 @@ func loadConnection(name, prefix string) (Connection, error) {
 	conn.MaxConns = int32(maxConns)
 	conn.MinConns = int32(minConns)
 	conn.ConnTimeout = connTimeout
+	if conn.StatementTimeout, err = getDuration(prefix+"STATEMENT_TIMEOUT", 5*time.Minute); err != nil {
+		return Connection{}, err
+	}
+	if conn.IdleInTxTimeout, err = getDuration(prefix+"IDLE_IN_TX_TIMEOUT", time.Minute); err != nil {
+		return Connection{}, err
+	}
 	return conn, nil
 }
 

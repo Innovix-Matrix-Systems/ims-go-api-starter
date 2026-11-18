@@ -35,33 +35,31 @@ func NewChecker(queries *dbgen.Queries, store cache.Store) *Checker {
 }
 
 // IsSuperAdmin reports whether the user holds the Super-Admin system role.
+// The answer is cached with the user's permission set.
 func (c *Checker) IsSuperAdmin(ctx context.Context, userID int64) (bool, error) {
-	ok, err := c.queries.UserHasRole(ctx, dbgen.UserHasRoleParams{
-		ModelType: ModelTypeUser,
-		ModelID:   userID,
-		RoleName:  SuperAdminRole,
-	})
+	access, err := c.accessFor(ctx, userID)
 	if err != nil {
-		return false, database.MapError("authz.super_admin", err)
+		return false, err
 	}
-	return ok, nil
+	return access.Super, nil
 }
 
 // Can reports whether the user holds the permission (Super-Admin bypasses).
+// One cache read answers both questions, so a warm request costs no query.
 func (c *Checker) Can(ctx context.Context, userID int64, permission string) (bool, error) {
-	super, err := c.IsSuperAdmin(ctx, userID)
+	access, err := c.accessFor(ctx, userID)
 	if err != nil {
 		return false, err
 	}
-	if super {
+	if access.Super {
 		return true, nil
 	}
-	permissions, err := c.permissionsFor(ctx, userID)
-	if err != nil {
-		return false, err
+	for _, name := range access.Permissions {
+		if name == permission {
+			return true, nil
+		}
 	}
-	_, ok := permissions[permission]
-	return ok, nil
+	return false, nil
 }
 
 // MustCan returns FORBIDDEN unless the user holds the permission.
@@ -104,6 +102,26 @@ func (c *Checker) RoleRefs(ctx context.Context, userID int64) ([]RoleRef, error)
 	return refs, nil
 }
 
+// RoleRefsForUsers returns role refs for many users with one query (list
+// pages); users without roles map to an empty slice.
+func (c *Checker) RoleRefsForUsers(ctx context.Context, userIDs []int64) (map[int64][]RoleRef, error) {
+	out := make(map[int64][]RoleRef, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := c.queries.UserRoleRefsForUsers(ctx, dbgen.UserRoleRefsForUsersParams{
+		ModelType: ModelTypeUser,
+		UserIds:   userIDs,
+	})
+	if err != nil {
+		return nil, database.MapError("authz.role_refs_batch", err)
+	}
+	for _, row := range rows {
+		out[row.UserID] = append(out[row.UserID], RoleRef{ID: row.ID, Name: row.Name, IsSystem: row.IsSystem})
+	}
+	return out, nil
+}
+
 // InvalidateUser drops the cached permission set for one user.
 func (c *Checker) InvalidateUser(ctx context.Context, userID int64) {
 	_ = c.cache.Delete(ctx, permissionCacheKey(userID))
@@ -140,30 +158,40 @@ func (c *Checker) InvalidatePermission(ctx context.Context, permissionID int64) 
 	return nil
 }
 
-func (c *Checker) permissionsFor(ctx context.Context, userID int64) (map[string]struct{}, error) {
+// userAccess is what the checker caches per user: the Super-Admin flag and
+// the permission names granted through roles.
+type userAccess struct {
+	Super       bool     `json:"super"`
+	Permissions []string `json:"permissions"`
+}
+
+func (c *Checker) accessFor(ctx context.Context, userID int64) (userAccess, error) {
 	key := permissionCacheKey(userID)
-	var names []string
-	found, err := c.cache.Get(ctx, key, &names)
+	var access userAccess
+	// A cache outage degrades to the database instead of failing requests.
+	if found, err := c.cache.Get(ctx, key, &access); err == nil && found {
+		return access, nil
+	}
+	super, err := c.queries.UserHasRole(ctx, dbgen.UserHasRoleParams{
+		ModelType: ModelTypeUser,
+		ModelID:   userID,
+		RoleName:  SuperAdminRole,
+	})
 	if err != nil {
-		return nil, apperr.Wrap(apperr.InternalServerError, "read permission cache", err)
+		return userAccess{}, database.MapError("authz.super_admin", err)
 	}
-	if !found {
-		names, err = c.queries.UserPermissionNames(ctx, dbgen.UserPermissionNamesParams{
-			ModelType: ModelTypeUser,
-			ModelID:   userID,
-		})
-		if err != nil {
-			return nil, database.MapError("authz.permissions", err)
-		}
-		_ = c.cache.Set(ctx, key, names, c.ttl)
+	names, err := c.queries.UserPermissionNames(ctx, dbgen.UserPermissionNamesParams{
+		ModelType: ModelTypeUser,
+		ModelID:   userID,
+	})
+	if err != nil {
+		return userAccess{}, database.MapError("authz.permissions", err)
 	}
-	set := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		set[name] = struct{}{}
-	}
-	return set, nil
+	access = userAccess{Super: super, Permissions: names}
+	_ = c.cache.Set(ctx, key, access, c.ttl)
+	return access, nil
 }
 
 func permissionCacheKey(userID int64) string {
-	return fmt.Sprintf("perm:user:%d", userID)
+	return fmt.Sprintf("authz:access:user:%d", userID)
 }

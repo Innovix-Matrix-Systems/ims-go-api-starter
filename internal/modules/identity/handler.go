@@ -84,13 +84,17 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 			photos = resolved
 		}
 	}
+	ids := make([]int64, 0, len(users))
+	for _, user := range users {
+		ids = append(ids, user.ID)
+	}
+	roles, err := h.checker.RoleRefsForUsers(r.Context(), ids)
+	if err != nil {
+		roles = map[int64][]authz.RoleRef{}
+	}
 	data := make([]Response, 0, len(users))
 	for _, user := range users {
-		roles, err := h.checker.RoleRefs(r.Context(), user.ID)
-		if err != nil {
-			roles = nil
-		}
-		data = append(data, NewResponse(user, roles, stringPtr(photos[user.ID])))
+		data = append(data, NewResponse(user, roles[user.ID], stringPtr(photos[user.ID])))
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
 	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)

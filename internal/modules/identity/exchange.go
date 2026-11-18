@@ -359,12 +359,12 @@ func (s *ExchangeService) buildUserExport(ctx context.Context, filter ExportRequ
 		for _, row := range rows {
 			values := []any{
 				row.ID,
-				fallbackText(row.Name),
-				fallbackText(row.Email),
-				fallbackText(pointerText(row.Phone)),
+				safeCell(fallbackText(row.Name)),
+				safeCell(fallbackText(row.Email)),
+				safeCell(fallbackText(pointerText(row.Phone))),
 				statusText(row.IsActive),
-				fallbackText(row.RoleNames),
-				fallbackText(row.BranchName),
+				safeCell(fallbackText(row.RoleNames)),
+				safeCell(fallbackText(row.BranchName)),
 				row.CreatedAt.Format("02-01-2006 15:04:05"),
 			}
 			cell := fmt.Sprintf("A%d", rowIndex)
@@ -576,7 +576,12 @@ func readSpreadsheet(reader io.Reader, extension string) ([][]string, error) {
 		csvReader.TrimLeadingSpace = true
 		return csvReader.ReadAll()
 	case "xlsx":
-		workbook, err := excelize.OpenReader(reader)
+		// Bound decompression: a tiny crafted xlsx must not expand into
+		// gigabytes in a worker (M76).
+		workbook, err := excelize.OpenReader(reader, excelize.Options{
+			UnzipSizeLimit:    64 << 20,
+			UnzipXMLSizeLimit: 16 << 20,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -704,4 +709,18 @@ func randomPassword() (string, error) {
 		return "", apperr.Wrap(apperr.InternalServerError, "generate password", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// safeCell neutralises spreadsheet formula injection (M77): user-controlled
+// text starting with = + - @ (or a tab/CR) is prefixed with a quote so Excel
+// and LibreOffice show it as text instead of evaluating it.
+func safeCell(value string) string {
+	if value == "" {
+		return value
+	}
+	switch value[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + value
+	}
+	return value
 }

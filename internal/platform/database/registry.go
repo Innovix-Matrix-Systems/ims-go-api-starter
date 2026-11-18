@@ -5,6 +5,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -73,6 +74,14 @@ func openConn(ctx context.Context, cfg config.Connection, options openOptions) (
 		poolCfg.MaxConns = cfg.MaxConns
 		poolCfg.MinConns = cfg.MinConns
 		poolCfg.ConnConfig.ConnectTimeout = cfg.ConnTimeout
+		// Backstops (H28): a runaway query or a forgotten open transaction
+		// cannot pin a pool connection forever, deadline or not.
+		if cfg.StatementTimeout > 0 {
+			poolCfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(cfg.StatementTimeout.Milliseconds(), 10)
+		}
+		if cfg.IdleInTxTimeout > 0 {
+			poolCfg.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = strconv.FormatInt(cfg.IdleInTxTimeout.Milliseconds(), 10)
+		}
 		if options.tracer != nil {
 			poolCfg.ConnConfig.Tracer = options.tracer
 		}

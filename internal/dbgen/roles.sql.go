@@ -581,3 +581,49 @@ func (q *Queries) UserRoleRefs(ctx context.Context, arg UserRoleRefsParams) ([]U
 	}
 	return items, nil
 }
+
+const userRoleRefsForUsers = `-- name: UserRoleRefsForUsers :many
+SELECT mr.model_id AS user_id, r.id, r.name, r.is_system FROM roles r
+JOIN model_has_roles mr ON mr.role_id = r.id
+WHERE mr.model_type = $1 AND mr.model_id = ANY($2::bigint[])
+  AND r.hidden = false
+ORDER BY mr.model_id, r.id
+`
+
+type UserRoleRefsForUsersParams struct {
+	ModelType string  `json:"model_type"`
+	UserIds   []int64 `json:"user_ids"`
+}
+
+type UserRoleRefsForUsersRow struct {
+	UserID   int64  `json:"user_id"`
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	IsSystem bool   `json:"is_system"`
+}
+
+// Role refs for a whole page of users in one query (no N+1).
+func (q *Queries) UserRoleRefsForUsers(ctx context.Context, arg UserRoleRefsForUsersParams) ([]UserRoleRefsForUsersRow, error) {
+	rows, err := q.db.Query(ctx, userRoleRefsForUsers, arg.ModelType, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserRoleRefsForUsersRow{}
+	for rows.Next() {
+		var i UserRoleRefsForUsersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.ID,
+			&i.Name,
+			&i.IsSystem,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

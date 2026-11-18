@@ -30,7 +30,7 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 13 | [phase-13-authorization-data-integrity.md](phase-13-authorization-data-integrity.md) | **Done** (2026-11-19) |
 | 14 | [phase-14-billing-correctness.md](phase-14-billing-correctness.md) | **Done** (2026-11-19) |
 | 15 | [phase-15-platform-hardening.md](phase-15-platform-hardening.md) | **Done** (2026-11-19, some deferred) |
-| 16 | [phase-16-performance-data-layer.md](phase-16-performance-data-layer.md) | Draft (P2 — review §9, H28, M19–M43, M75–M79) |
+| 16 | [phase-16-performance-data-layer.md](phase-16-performance-data-layer.md) | **Done** (2026-11-19, some deferred) |
 | 17 | [phase-17-product-ops-maturity.md](phase-17-product-ops-maturity.md) | Draft (P2/P3 — review H29–H31, M44–M74, docs drift) |
 
 Remediation phases 12–17 are derived from [docs/codebase-review.md](../docs/codebase-review.md)
