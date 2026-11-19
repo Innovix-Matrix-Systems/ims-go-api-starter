@@ -126,3 +126,43 @@ WHERE u.deleted_at IS NULL
     OR u.name ILIKE '%' || @search::text || '%'
     OR u.email ILIKE '%' || @search::text || '%'
   );
+
+-- name: DevInspectorRoles :many
+-- Platform roles (no tenant) with their permission and user counts.
+SELECT r.id, r.name, r.guard_name, r.is_system,
+       (SELECT count(*) FROM role_has_permissions rp WHERE rp.role_id = r.id)::bigint AS permission_count,
+       (SELECT count(*) FROM model_has_roles mr WHERE mr.role_id = r.id)::bigint AS user_count
+FROM roles r
+WHERE r.tenant_id IS NULL
+ORDER BY r.id;
+
+-- name: DevInspectorTenantRoleCount :one
+SELECT count(*) FROM roles WHERE tenant_id IS NOT NULL;
+
+-- name: DevInspectorPermissions :many
+SELECT name, "group", description, is_system FROM permissions ORDER BY "group", name;
+
+-- name: FinishDevAction :exec
+UPDATE dev_actions
+SET status = @status, error_message = @error_message, duration_ms = @duration_ms, params = @params
+WHERE id = @id;
+
+-- name: ListDevCommandRuns :many
+-- Command runs (dev_actions rows with action 'command.run'), newest first.
+SELECT * FROM dev_actions
+WHERE action = 'command.run'
+  AND (@target::text = '' OR target = @target::text)
+  AND (@before_id::bigint = 0 OR id < @before_id::bigint)
+ORDER BY id DESC
+LIMIT @row_limit;
+
+-- name: DevCommandRunSummary :many
+-- Last run and run count per command.
+SELECT DISTINCT ON (target) target, status, created_at,
+       count(*) OVER (PARTITION BY target)::bigint AS runs
+FROM dev_actions
+WHERE action = 'command.run' AND target IS NOT NULL
+ORDER BY target, id DESC;
+
+-- name: GetDevAction :one
+SELECT * FROM dev_actions WHERE id = @id;

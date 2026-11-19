@@ -13,3 +13,8 @@ var dist embed.FS
 func Dist() (fs.FS, error) {
 	return fs.Sub(dist, "dist/client")
 }
+
+// PackageJSON is the dashboard's package.json (listed by the Inspector).
+//
+//go:embed package.json
+var PackageJSON []byte

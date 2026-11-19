@@ -137,6 +137,7 @@ func (d *Dependencies) Router() http.Handler {
 		d.Responder.Error(w, r, apperr.New(apperr.MethodNotAllowed, "The HTTP method is not supported for this resource."))
 	})
 
+	d.routes = r
 	return r
 }
 

@@ -72,6 +72,16 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Delete("/settings/{key}", h.resetDevSetting)
 	r.Patch("/settings/{key}/group", h.assignDevSettingGroup)
 
+	r.Get("/inspector/routes", h.inspectorRoutes)
+	r.Get("/inspector/access", h.inspectorAccess)
+	r.Get("/inspector/config", h.inspectorConfig)
+	r.Get("/inspector/packages", h.inspectorPackages)
+
+	r.Get("/commands", h.listCommands)
+	r.Get("/commands/runs", h.listCommandRuns)
+	r.Get("/commands/runs/{id}", h.getCommandRun)
+	r.With(h.manage).Post("/commands/{name}/run", h.runCommand)
+
 	r.Get("/flags", h.listFlags)
 	r.Patch("/flags", h.updateFlags)
 	r.Post("/flags/sync", h.syncFlags)

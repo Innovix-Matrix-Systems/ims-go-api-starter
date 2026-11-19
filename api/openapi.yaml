@@ -2703,6 +2703,198 @@ paths:
         "403": *forbidden
         "404": *notFound
 
+  /dev/api/inspector/routes:
+    get:
+      tags: [Dev]
+      summary: Every registered route with its handler, middleware and permissions
+      operationId: devInspectorRoutes
+      responses:
+        "200":
+          description: Route table (like `php artisan route:list`).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevRouteReport"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/inspector/access:
+    get:
+      tags: [Dev]
+      summary: Platform roles and the permission catalog compared with the database
+      operationId: devInspectorAccess
+      responses:
+        "200":
+          description: Roles, permissions and catalog drift.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevAccessReport"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/inspector/config:
+    get:
+      tags: [Dev]
+      summary: Effective configuration by section, secrets masked
+      operationId: devInspectorConfig
+      responses:
+        "200":
+          description: Configuration sections.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/DevConfigSection"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/inspector/packages:
+    get:
+      tags: [Dev]
+      summary: Go modules and dashboard npm packages
+      operationId: devInspectorPackages
+      responses:
+        "200":
+          description: Dependencies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevPackagesReport"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/commands:
+    get:
+      tags: [Dev]
+      summary: Allowlisted maintenance commands with their last run
+      operationId: devListCommands
+      responses:
+        "200":
+          description: Commands.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/DevCommand"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/commands/runs:
+    get:
+      tags: [Dev]
+      summary: Command run history, newest first
+      operationId: devListCommandRuns
+      parameters:
+        - {name: command, in: query, schema: {type: string}, description: Only runs of this command.}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: cursor, in: query, schema: {type: string}, description: Last seen run id (exclusive).}
+      responses:
+        "200":
+          description: Cursor-paginated runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/DevCommandRun"}
+                  links: {type: object, nullable: true}
+                  meta:
+                    type: object
+                    properties:
+                      next_cursor: {type: string}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/commands/runs/{id}:
+    get:
+      tags: [Dev]
+      summary: One command run with its output
+      operationId: devGetCommandRun
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevCommandRun"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/commands/{name}/run:
+    post:
+      tags: [Dev]
+      summary: Run an allowlisted command (dev.manage)
+      description: Quick commands answer 200 with the finished run; background commands answer 202 with a running record to poll.
+      operationId: devRunCommand
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}, example: "permission:sync"}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                options:
+                  type: object
+                  additionalProperties: {type: string}
+      responses:
+        "200":
+          description: Finished run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevCommandRun"}
+        "202":
+          description: Background run started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevCommandRun"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
   /dev/api/actions:
     get:
       tags: [Dev]
@@ -5264,6 +5456,132 @@ components:
         params: {type: object, additionalProperties: true}
         status: {type: string, enum: [ok, error]}
         error_message: {type: string, nullable: true}
+        duration_ms: {type: integer}
+        created_at: {type: string, format: date-time}
+
+    DevRouteReport:
+      type: object
+      required: [global, routes]
+      properties:
+        global:
+          type: array
+          items: {type: string}
+          description: Middleware every route runs, in order.
+        routes:
+          type: array
+          items:
+            type: object
+            required: [method, path, handler, permissions, middleware]
+            properties:
+              method: {type: string}
+              path: {type: string}
+              handler: {type: string}
+              permissions: {type: array, items: {type: string}}
+              middleware: {type: array, items: {type: string}}
+
+    DevAccessReport:
+      type: object
+      required: [roles, tenant_roles, permissions, declared_not_stored, stored_not_declared, developer_permissions, admin_permissions]
+      properties:
+        roles:
+          type: array
+          items:
+            type: object
+            required: [id, name, guard, is_system, permissions, users]
+            properties:
+              id: {type: integer, format: int64}
+              name: {type: string}
+              guard: {type: string}
+              is_system: {type: boolean}
+              permissions: {type: integer, format: int64}
+              users: {type: integer, format: int64}
+        tenant_roles: {type: integer, format: int64}
+        permissions:
+          type: array
+          items:
+            type: object
+            required: [name, group, description, is_system, declared, stored]
+            properties:
+              name: {type: string}
+              group: {type: string}
+              description: {type: string}
+              is_system: {type: boolean}
+              declared: {type: boolean}
+              stored: {type: boolean}
+        declared_not_stored: {type: array, items: {type: string}}
+        stored_not_declared: {type: array, items: {type: string}}
+        developer_permissions: {type: array, items: {type: string}}
+        admin_permissions: {type: array, items: {type: string}}
+
+    DevConfigSection:
+      type: object
+      required: [name, entries]
+      properties:
+        name: {type: string}
+        entries:
+          type: array
+          items:
+            type: object
+            required: [key, value, masked]
+            properties:
+              key: {type: string}
+              value: {type: string}
+              masked: {type: boolean}
+
+    DevPackagesReport:
+      type: object
+      required: [go_version, module, packages]
+      properties:
+        go_version: {type: string}
+        module: {type: string}
+        packages:
+          type: array
+          items:
+            type: object
+            required: [name, version, kind, runtime]
+            properties:
+              name: {type: string}
+              version: {type: string}
+              kind: {type: string, enum: [require, indirect, dependency, devDependency]}
+              runtime: {type: string, enum: [go, npm]}
+
+    DevCommand:
+      type: object
+      required: [name, label, description, group, confirm, background, options, runs, last_status, last_run_at]
+      properties:
+        name: {type: string}
+        label: {type: string}
+        description: {type: string}
+        group: {type: string}
+        confirm: {type: boolean, description: The command changes data; ask before running.}
+        background: {type: boolean, description: Runs in the background; poll the run.}
+        options:
+          type: array
+          items:
+            type: object
+            required: [name, label, type, default]
+            properties:
+              name: {type: string}
+              label: {type: string}
+              type: {type: string, enum: [bool, number, text, select]}
+              default: {type: string}
+              choices: {type: array, items: {type: string}}
+              description: {type: string}
+        runs: {type: integer, format: int64}
+        last_status: {type: string, nullable: true}
+        last_run_at: {type: string, format: date-time, nullable: true}
+
+    DevCommandRun:
+      type: object
+      required: [id, command, actor_user_id, status, options, output, error, duration_ms, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        command: {type: string}
+        actor_user_id: {type: integer, format: int64}
+        status: {type: string, enum: [running, ok, error]}
+        options: {type: object, additionalProperties: {type: string}}
+        output: {type: string}
+        error: {type: string, nullable: true}
         duration_ms: {type: integer}
         created_at: {type: string, format: date-time}
 

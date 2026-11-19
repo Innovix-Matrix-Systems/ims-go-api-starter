@@ -14,17 +14,35 @@ import (
 // business invariants, not permissions.
 func Require(checker *Checker, permission string, responder *httpx.Responder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			identity, ok := authn.IdentityFromContext(r.Context())
-			if !ok {
-				responder.Error(w, r, apperr.New(apperr.Unauthorized, "Authentication is required."))
-				return
-			}
-			if err := checker.MustCan(r.Context(), identity.UserID, permission); err != nil {
-				responder.Error(w, r, err)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+		return &Gate{checker: checker, permission: permission, responder: responder, next: next}
 	}
+}
+
+// Gate is the handler Require wraps a route with. It is a named type so
+// tooling (the dev dashboard's route inspector) can read which permission a
+// route needs.
+type Gate struct {
+	checker    *Checker
+	permission string
+	responder  *httpx.Responder
+	next       http.Handler
+}
+
+// Permission is the permission this gate requires.
+func (g *Gate) Permission() string { return g.permission }
+
+// Next is the wrapped handler.
+func (g *Gate) Next() http.Handler { return g.next }
+
+func (g *Gate) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	identity, ok := authn.IdentityFromContext(r.Context())
+	if !ok {
+		g.responder.Error(w, r, apperr.New(apperr.Unauthorized, "Authentication is required."))
+		return
+	}
+	if err := g.checker.MustCan(r.Context(), identity.UserID, g.permission); err != nil {
+		g.responder.Error(w, r, err)
+		return
+	}
+	g.next.ServeHTTP(w, r)
 }

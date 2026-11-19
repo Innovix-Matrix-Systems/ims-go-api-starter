@@ -34,8 +34,10 @@ const navigation: NavGroup[] = [
     items: [
       { to: '/queue', label: 'Queue', icon: 'queue' },
       { to: '/backups', label: 'Backups', icon: 'backup' },
-      { to: '/actions', label: 'Commands', icon: 'actions' },
+      { to: '/commands', label: 'Commands', icon: 'terminal' },
+      { to: '/inspector', label: 'Inspector', icon: 'inspector' },
       { to: '/system', label: 'System', icon: 'system' },
+      { to: '/actions', label: 'Audit log', icon: 'actions' },
     ],
   },
   {

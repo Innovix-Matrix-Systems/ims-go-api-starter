@@ -141,3 +141,11 @@ export interface SystemInfo {
   started_at?: string
   uptime_seconds?: number
 }
+export type DevRouteReport = components['schemas']['DevRouteReport']
+export type DevRoute = DevRouteReport['routes'][number]
+export type DevAccessReport = components['schemas']['DevAccessReport']
+export type DevConfigSection = components['schemas']['DevConfigSection']
+export type DevPackagesReport = components['schemas']['DevPackagesReport']
+export type DevCommand = components['schemas']['DevCommand']
+export type DevCommandOption = DevCommand['options'][number]
+export type DevCommandRun = components['schemas']['DevCommandRun']

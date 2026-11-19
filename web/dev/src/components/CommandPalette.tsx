@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useRouter } from '@tanstack/react-router'
 import { useEffect } from 'react'
 import { api, fetchMe, getCachedMe, logoutRedirect } from '../api/client'
-import type { CursorPage, DevBackupRun, DevException, DevJob, DevRequestSummary } from '../api/types'
+import type { CursorPage, DevBackupRun, DevCommand, DevException, DevJob, DevRequestSummary } from '../api/types'
 import { useToast } from './Toasts'
 import { Icon, type IconName } from './ui'
 import { formatDuration } from '../format'
@@ -15,7 +15,9 @@ const pages = [
   { to: '/exceptions', label: 'Exceptions', icon: 'exceptions' },
   { to: '/queue', label: 'Queue', icon: 'queue' },
   { to: '/backups', label: 'Backups', icon: 'backup' },
-  { to: '/actions', label: 'Commands', icon: 'actions' },
+  { to: '/commands', label: 'Commands', icon: 'terminal' },
+  { to: '/inspector', label: 'Inspector', icon: 'inspector' },
+  { to: '/actions', label: 'Audit log', icon: 'actions' },
   { to: '/system', label: 'System health', icon: 'system' },
   { to: '/sessions', label: 'Sessions', icon: 'sessions' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
@@ -24,6 +26,13 @@ const pages = [
   { to: '/developers', label: 'Developers', icon: 'developers' },
   { to: '/playground', label: 'Playground', icon: 'playground', localOnly: true },
 ] as const satisfies ReadonlyArray<{ to: string; label: string; icon: IconName; localOnly?: boolean }>
+
+const inspectorTabs = [
+  { tab: 'routes', label: 'Inspector — Routes', icon: 'route' },
+  { tab: 'access', label: 'Inspector — Roles & permissions', icon: 'shield' },
+  { tab: 'config', label: 'Inspector — Config', icon: 'settings' },
+  { tab: 'packages', label: 'Inspector — Packages', icon: 'package' },
+] as const
 
 const links = [
   { label: 'API docs (Scalar)', url: '/docs' },
@@ -73,6 +82,12 @@ export function CommandPalette({
     enabled: open,
     staleTime: 5_000,
     retry: false,
+  })
+  const commands = useQuery({
+    queryKey: ['commands', 'list'],
+    queryFn: ({ signal }) => api<DevCommand[]>('/dev/api/commands', { signal }),
+    enabled: open,
+    staleTime: 30_000,
   })
   const exceptions = useQuery({
     queryKey: ['commands', 'exceptions'],
@@ -167,6 +182,37 @@ export function CommandPalette({
                 </Command.Item>
               ))}
             </Command.Group>
+
+            <Command.Group heading="Inspector">
+              {inspectorTabs.map((item) => (
+                <Command.Item
+                  key={item.tab}
+                  value={`${item.label} inspect`}
+                  className="command-item"
+                  onSelect={() => select(() => void navigate({ to: '/inspector', search: { tab: item.tab } }))}
+                >
+                  <Icon name={item.icon} />
+                  {item.label}
+                </Command.Item>
+              ))}
+            </Command.Group>
+
+            {(commands.data?.length ?? 0) > 0 ? (
+              <Command.Group heading="Run a command">
+                {commands.data?.map((command) => (
+                  <Command.Item
+                    key={command.name}
+                    value={`run ${command.name} ${command.label} ${command.description}`}
+                    className="command-item"
+                    onSelect={() => select(() => void navigate({ to: '/commands', search: { run: command.name } }))}
+                  >
+                    <Icon name="terminal" />
+                    {command.label}
+                    <span className="command-hint mono">{command.name}</span>
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            ) : null}
 
             <Command.Group heading="Links">
               {links.map((link) => (

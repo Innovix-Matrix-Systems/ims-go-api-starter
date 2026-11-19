@@ -53,6 +53,8 @@ type Deps struct {
 	Collector     *telemetry.Collector
 	Logger        *slog.Logger
 	RetentionDays int
+	Inspector     *InspectorService
+	Commands      *CommandService
 	Binder        *httpx.Binder
 	Validator     *httpx.Validator
 	Responder     *httpx.Responder
@@ -69,6 +71,11 @@ type panelBase struct {
 	binder      *httpx.Binder
 	validator   *httpx.Validator
 	responder   *httpx.Responder
+}
+
+// manage is route middleware for dashboard mutations (dev.manage).
+func (h *Handler) manage(next http.Handler) http.Handler {
+	return authz.Require(h.checker, authz.PermDevManage, h.responder)(next)
 }
 
 // requireManage resolves the caller and enforces dev.manage for mutations.

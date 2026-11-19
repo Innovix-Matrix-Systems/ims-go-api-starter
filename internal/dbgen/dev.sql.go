@@ -102,6 +102,186 @@ func (q *Queries) CountDevUserTargetsWithOverrides(ctx context.Context) (int64, 
 	return count, err
 }
 
+const devCommandRunSummary = `-- name: DevCommandRunSummary :many
+SELECT DISTINCT ON (target) target, status, created_at,
+       count(*) OVER (PARTITION BY target)::bigint AS runs
+FROM dev_actions
+WHERE action = 'command.run' AND target IS NOT NULL
+ORDER BY target, id DESC
+`
+
+type DevCommandRunSummaryRow struct {
+	Target    *string            `json:"target"`
+	Status    string             `json:"status"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	Runs      int64              `json:"runs"`
+}
+
+// Last run and run count per command.
+func (q *Queries) DevCommandRunSummary(ctx context.Context) ([]DevCommandRunSummaryRow, error) {
+	rows, err := q.db.Query(ctx, devCommandRunSummary)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevCommandRunSummaryRow{}
+	for rows.Next() {
+		var i DevCommandRunSummaryRow
+		if err := rows.Scan(
+			&i.Target,
+			&i.Status,
+			&i.CreatedAt,
+			&i.Runs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const devInspectorPermissions = `-- name: DevInspectorPermissions :many
+SELECT name, "group", description, is_system FROM permissions ORDER BY "group", name
+`
+
+type DevInspectorPermissionsRow struct {
+	Name        string  `json:"name"`
+	Group       string  `json:"group"`
+	Description *string `json:"description"`
+	IsSystem    bool    `json:"is_system"`
+}
+
+func (q *Queries) DevInspectorPermissions(ctx context.Context) ([]DevInspectorPermissionsRow, error) {
+	rows, err := q.db.Query(ctx, devInspectorPermissions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevInspectorPermissionsRow{}
+	for rows.Next() {
+		var i DevInspectorPermissionsRow
+		if err := rows.Scan(
+			&i.Name,
+			&i.Group,
+			&i.Description,
+			&i.IsSystem,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const devInspectorRoles = `-- name: DevInspectorRoles :many
+SELECT r.id, r.name, r.guard_name, r.is_system,
+       (SELECT count(*) FROM role_has_permissions rp WHERE rp.role_id = r.id)::bigint AS permission_count,
+       (SELECT count(*) FROM model_has_roles mr WHERE mr.role_id = r.id)::bigint AS user_count
+FROM roles r
+WHERE r.tenant_id IS NULL
+ORDER BY r.id
+`
+
+type DevInspectorRolesRow struct {
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	GuardName       string `json:"guard_name"`
+	IsSystem        bool   `json:"is_system"`
+	PermissionCount int64  `json:"permission_count"`
+	UserCount       int64  `json:"user_count"`
+}
+
+// Platform roles (no tenant) with their permission and user counts.
+func (q *Queries) DevInspectorRoles(ctx context.Context) ([]DevInspectorRolesRow, error) {
+	rows, err := q.db.Query(ctx, devInspectorRoles)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevInspectorRolesRow{}
+	for rows.Next() {
+		var i DevInspectorRolesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.GuardName,
+			&i.IsSystem,
+			&i.PermissionCount,
+			&i.UserCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const devInspectorTenantRoleCount = `-- name: DevInspectorTenantRoleCount :one
+SELECT count(*) FROM roles WHERE tenant_id IS NOT NULL
+`
+
+func (q *Queries) DevInspectorTenantRoleCount(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, devInspectorTenantRoleCount)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const finishDevAction = `-- name: FinishDevAction :exec
+UPDATE dev_actions
+SET status = $1, error_message = $2, duration_ms = $3, params = $4
+WHERE id = $5
+`
+
+type FinishDevActionParams struct {
+	Status       string  `json:"status"`
+	ErrorMessage *string `json:"error_message"`
+	DurationMs   int32   `json:"duration_ms"`
+	Params       []byte  `json:"params"`
+	ID           int64   `json:"id"`
+}
+
+func (q *Queries) FinishDevAction(ctx context.Context, arg FinishDevActionParams) error {
+	_, err := q.db.Exec(ctx, finishDevAction,
+		arg.Status,
+		arg.ErrorMessage,
+		arg.DurationMs,
+		arg.Params,
+		arg.ID,
+	)
+	return err
+}
+
+const getDevAction = `-- name: GetDevAction :one
+SELECT id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at FROM dev_actions WHERE id = $1
+`
+
+func (q *Queries) GetDevAction(ctx context.Context, id int64) (DevAction, error) {
+	row := q.db.QueryRow(ctx, getDevAction, id)
+	var i DevAction
+	err := row.Scan(
+		&i.ID,
+		&i.ActorUserID,
+		&i.Action,
+		&i.Target,
+		&i.Params,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.DurationMs,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertDevAction = `-- name: InsertDevAction :one
 INSERT INTO dev_actions (actor_user_id, action, target, params, status, error_message, duration_ms)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -157,6 +337,52 @@ type ListDevActionsParams struct {
 
 func (q *Queries) ListDevActions(ctx context.Context, arg ListDevActionsParams) ([]DevAction, error) {
 	rows, err := q.db.Query(ctx, listDevActions, arg.BeforeID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevAction{}
+	for rows.Next() {
+		var i DevAction
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorUserID,
+			&i.Action,
+			&i.Target,
+			&i.Params,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.DurationMs,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listDevCommandRuns = `-- name: ListDevCommandRuns :many
+SELECT id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at FROM dev_actions
+WHERE action = 'command.run'
+  AND ($1::text = '' OR target = $1::text)
+  AND ($2::bigint = 0 OR id < $2::bigint)
+ORDER BY id DESC
+LIMIT $3
+`
+
+type ListDevCommandRunsParams struct {
+	Target   string `json:"target"`
+	BeforeID int64  `json:"before_id"`
+	RowLimit int32  `json:"row_limit"`
+}
+
+// Command runs (dev_actions rows with action 'command.run'), newest first.
+func (q *Queries) ListDevCommandRuns(ctx context.Context, arg ListDevCommandRunsParams) ([]DevAction, error) {
+	rows, err := q.db.Query(ctx, listDevCommandRuns, arg.Target, arg.BeforeID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

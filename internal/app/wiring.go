@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	webdev "github.com/Innovix-Matrix-Systems/ims-go-api-starter/web/dev"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
@@ -75,7 +77,9 @@ type Dependencies struct {
 	Settings      *settings.Handler
 	Flags         *featureflags.Handler
 	Dev           *dev.Handler
-	DevUI         *webui.Handler
+	// routes is the built router, read by the dashboard's route inspector.
+	routes chi.Routes
+	DevUI  *webui.Handler
 }
 
 // NewDependencies constructs the dependency graph for the HTTP API mode. The
@@ -153,7 +157,8 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 		responder,
 	)
 
-	deps := &Dependencies{
+	var deps *Dependencies
+	deps = &Dependencies{
 		Config:        cfg,
 		Logger:        logger,
 		Responder:     responder,
@@ -212,9 +217,16 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 			Collector:     platform.Telemetry,
 			Logger:        logger,
 			RetentionDays: cfg.DevDashboard.RetentionDays,
-			Binder:        binder,
-			Validator:     validator,
-			Responder:     responder,
+			Inspector: dev.NewInspectorService(queries, cfg, func() chi.Routes {
+				if deps == nil {
+					return nil
+				}
+				return deps.routes
+			}),
+			Commands:  dev.NewCommandService(queries, logger, devCommands(platform, permissionService, healthRegistry)...),
+			Binder:    binder,
+			Validator: validator,
+			Responder: responder,
 		}),
 		DevUI: devUI,
 		Billing: billing.NewHandler(

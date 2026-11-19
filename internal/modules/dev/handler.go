@@ -36,6 +36,8 @@ type Handler struct {
 	roleService       *access.RoleService
 	collector         *telemetry.Collector
 	retentionDays     int
+	inspector         *InspectorService
+	commands          *CommandService
 }
 
 // NewHandler creates the developer dashboard handler.
@@ -71,6 +73,8 @@ func NewHandler(deps Deps) *Handler {
 		roleService:       deps.RoleService,
 		collector:         deps.Collector,
 		retentionDays:     deps.RetentionDays,
+		inspector:         deps.Inspector,
+		commands:          deps.Commands,
 	}
 }
 
