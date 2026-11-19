@@ -5,6 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { api } from '../api/client'
 import type { CursorPage, DevJob, DevQueue } from '../api/types'
 import { DataTable } from '../components/DataTable'
+import { Select } from '../components/inputs'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -325,20 +326,19 @@ function QueuePage() {
       <div className="filters">
         <label className="field">
           <span className="field-label">Queue</span>
-          <select className="select" value={queueFilter} onChange={(event) => setQueueFilter(event.target.value)}>
-            <option value="">Any</option>
-            {['critical', 'default', 'heavy'].map((name) => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-          </select>
+          <Select
+            value={queueFilter}
+            onChange={setQueueFilter}
+            options={[{ value: '', label: 'Any' }, ...['critical', 'default', 'heavy'].map((name) => ({ value: name, label: name }))]}
+          />
         </label>
         <label className="field">
           <span className="field-label">State</span>
-          <select className="select" value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
-            {states.map((state) => (
-              <option key={state || 'any'} value={state}>{state || 'Any'}</option>
-            ))}
-          </select>
+          <Select
+            value={stateFilter}
+            onChange={setStateFilter}
+            options={states.map((state) => ({ value: state, label: state || 'Any' }))}
+          />
         </label>
         <label className="field grow">
           <span className="field-label">Application kind</span>

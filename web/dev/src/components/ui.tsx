@@ -42,8 +42,18 @@ export type IconName =
   | 'list'
   | 'download'
   | 'backup'
+  | 'calendar'
+  | 'inspector'
+  | 'shield'
+  | 'package'
+  | 'route'
 
 const paths: Record<IconName, ReactNode> = {
+  calendar: <><rect x="3.5" y="5" width="17" height="15" rx="2" /><path d="M3.5 10h17M8 3v4M16 3v4" /></>,
+  inspector: <><circle cx="10.5" cy="10.5" r="6" /><path d="m20 20-5-5M8 10.5h5M10.5 8v5" /></>,
+  shield: <><path d="M12 3 4.5 6v6c0 4.4 3.2 7.8 7.5 9 4.3-1.2 7.5-4.6 7.5-9V6z" /><path d="m9 12 2 2 4-4" /></>,
+  package: <><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z" /><path d="m4 7.5 8 4.5 8-4.5M12 12v9" /></>,
+  route: <><circle cx="6" cy="18" r="2" /><circle cx="18" cy="6" r="2" /><path d="M8 18h7a3 3 0 0 0 0-6H9a3 3 0 0 1 0-6h7" /></>,
   overview: <><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></>,
   telescope: <><circle cx="12" cy="12" r="8" /><path d="M12 4v4M12 16v4M4 12h4M16 12h4" /><circle cx="12" cy="12" r="2.5" /></>,
   requests: <><path d="M4 7h16M4 12h10M4 17h13" /><circle cx="20" cy="17" r="2" /></>,

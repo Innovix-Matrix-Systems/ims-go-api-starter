@@ -11,6 +11,7 @@ import type {
   DevBackupStats,
 } from '../api/types'
 import { DataTable } from '../components/DataTable'
+import { Select } from '../components/inputs'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -440,14 +441,19 @@ function BackupsPage() {
           actions={
             <label className="field">
               <span className="field-label">Status</span>
-              <select className="select" value={status} onChange={(event) => setStatus(event.target.value)}>
-                <option value="">All statuses</option>
-                <option value="completed">Completed</option>
-                <option value="partial">Partial</option>
-                <option value="failed">Failed</option>
-                <option value="running">Running</option>
-                <option value="pending">Pending</option>
-              </select>
+              <Select
+                size="sm"
+                value={status}
+                onChange={setStatus}
+                options={[
+                  { value: '', label: 'All statuses' },
+                  { value: 'completed', label: 'Completed' },
+                  { value: 'partial', label: 'Partial' },
+                  { value: 'failed', label: 'Failed' },
+                  { value: 'running', label: 'Running' },
+                  { value: 'pending', label: 'Pending' },
+                ]}
+              />
             </label>
           }
         />

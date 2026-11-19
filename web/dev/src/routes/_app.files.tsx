@@ -5,6 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { api, apiBlob } from '../api/client'
 import type { DevFile, DevFilePage, DevFileStats, DevTarget, DevTargetPage } from '../api/types'
 import { DataTable } from '../components/DataTable'
+import { DatePicker, Select } from '../components/inputs'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -398,51 +399,63 @@ function FilesPage() {
           </label>
           <label className="field">
             <span className="field-label">Type</span>
-            <select className="select" value={type} onChange={(event) => setType(event.target.value)}>
-              <option value="">All types</option>
-              <option value="image">Image</option>
-              <option value="video">Video</option>
-              <option value="document">Document</option>
-              <option value="other">Other</option>
-            </select>
+            <Select
+              value={type}
+              onChange={setType}
+              options={[
+                { value: '', label: 'All types' },
+                { value: 'image', label: 'Image' },
+                { value: 'video', label: 'Video' },
+                { value: 'document', label: 'Document' },
+                { value: 'other', label: 'Other' },
+              ]}
+            />
           </label>
           <label className="field">
             <span className="field-label">Disk</span>
-            <select className="select" value={disk} onChange={(event) => setDisk(event.target.value)}>
-              <option value="">All disks</option>
-              {(stats.data?.by_disk ?? []).map((item) => (
-                <option key={item.disk} value={item.disk}>
-                  {item.disk} ({item.files})
-                </option>
-              ))}
-            </select>
+            <Select
+              value={disk}
+              onChange={setDisk}
+              options={[
+                { value: '', label: 'All disks' },
+                ...(stats.data?.by_disk ?? []).map((item) => ({
+                  value: item.disk,
+                  label: item.disk,
+                  hint: `${item.files}`,
+                })),
+              ]}
+            />
           </label>
           <label className="field">
             <span className="field-label">Attachment</span>
-            <select className="select" value={attached} onChange={(event) => setAttached(event.target.value)}>
-              <option value="">All files</option>
-              <option value="true">Attached</option>
-              <option value="false">Library</option>
-            </select>
+            <Select
+              value={attached}
+              onChange={setAttached}
+              options={[
+                { value: '', label: 'All files' },
+                { value: 'true', label: 'Attached' },
+                { value: 'false', label: 'Library' },
+              ]}
+            />
           </label>
           <label className="field">
             <span className="field-label">Tenant</span>
-            <select
-              className="select"
-              value={selectedTenant?.id ?? ''}
-              onChange={(event) => {
-                const id = Number.parseInt(event.target.value, 10)
+            <Select
+              value={selectedTenant ? String(selectedTenant.id) : ''}
+              onChange={(value) => {
+                const id = Number.parseInt(value, 10)
                 setSelectedTenant(tenantOptions.find((item) => item.id === id) ?? null)
               }}
-            >
-              <option value="">All tenants</option>
-              {tenantOptions.map((tenant) => (
-                <option key={tenant.id} value={tenant.id}>
-                  {tenant.name}
-                  {tenant.code ? ` (${tenant.code})` : ''}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: 'All tenants' },
+                ...tenantOptions.map((tenant) => ({
+                  value: String(tenant.id),
+                  label: tenant.name,
+                  text: `${tenant.name} ${tenant.code ?? ''}`,
+                  hint: tenant.code ?? undefined,
+                })),
+              ]}
+            />
           </label>
           {tenants.data && tenants.data.meta.total > tenantOptions.length ? (
             <label className="field">
@@ -458,31 +471,15 @@ function FilesPage() {
           ) : null}
           <label className="field">
             <span className="field-label">From</span>
-            <input
-              className="input"
-              type="date"
-              value={createdFrom}
-              onChange={(event) => setCreatedFrom(event.target.value)}
-            />
+            <DatePicker value={createdFrom} onChange={setCreatedFrom} max={createdTo || undefined} placeholder="Any date" />
           </label>
           <label className="field">
             <span className="field-label">To</span>
-            <input
-              className="input"
-              type="date"
-              value={createdTo}
-              onChange={(event) => setCreatedTo(event.target.value)}
-            />
+            <DatePicker value={createdTo} onChange={setCreatedTo} min={createdFrom || undefined} placeholder="Any date" />
           </label>
           <label className="field">
             <span className="field-label">Sort</span>
-            <select className="select" value={sort} onChange={(event) => setSort(event.target.value)}>
-              {sortOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <Select value={sort} onChange={setSort} options={sortOptions} />
           </label>
         </div>
 
@@ -751,7 +748,9 @@ function FileThumb({ file, variant = 'card' }: { file: DevFile; variant?: 'card'
     gcTime: 10 * 60_000,
     retry: false,
   })
-  const url = useBlobURL(blob.data)
+  // The drawer preview shares this cache entry, so a PDF opened there is
+  // cached too: only ever render images as <img>.
+  const url = useBlobURL(previewable ? blob.data : undefined)
 
   return (
     <div className={`file-thumb ${variant}`}>

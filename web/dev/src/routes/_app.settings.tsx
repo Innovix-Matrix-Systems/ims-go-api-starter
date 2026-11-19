@@ -3,6 +3,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useDeferredValue, useEffect, useMemo, useState, type DragEvent } from 'react'
 import { api } from '../api/client'
 import type { DevTarget, Page, SettingsGroup, SettingsItem } from '../api/types'
+import { Select } from '../components/inputs'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -471,25 +472,26 @@ function SettingsPage() {
             </label>
             <label className="field grow">
               <span className="field-label">Tenant</span>
-              <select
-                className="select"
-                value={tenant?.id ?? ''}
-                onChange={(event) => {
-                  const id = Number.parseInt(event.target.value, 10)
+              <Select
+                value={tenant ? String(tenant.id) : ''}
+                placeholder="Select a tenant…"
+                onChange={(value) => {
+                  const id = Number.parseInt(value, 10)
                   setTenant([...(tenants.data?.data ?? []), ...(tenant ? [tenant] : [])].find((item) => item.id === id) ?? null)
                   setEditingKey(null)
                 }}
-              >
-                <option value="">Select a tenant...</option>
-                {tenant && !(tenants.data?.data ?? []).some((item) => item.id === tenant.id) ? (
-                  <option value={tenant.id}>{tenant.name}</option>
-                ) : null}
-                {(tenants.data?.data ?? []).map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} - {item.code ?? `#${item.id}`}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  ...(tenant && !(tenants.data?.data ?? []).some((item) => item.id === tenant.id)
+                    ? [{ value: String(tenant.id), label: tenant.name }]
+                    : []),
+                  ...(tenants.data?.data ?? []).map((item) => ({
+                    value: String(item.id),
+                    label: item.name,
+                    text: `${item.name} ${item.code ?? ''}`,
+                    hint: item.code ?? `#${item.id}`,
+                  })),
+                ]}
+              />
             </label>
             {tenants.isFetching ? (
               <span className="small dim" style={{ paddingBottom: 9 }}>
@@ -889,25 +891,19 @@ function SettingsPage() {
             </dl>
             <label className="field">
               <span className="field-label">Move to group</span>
-              <select
-                className="select"
+              <Select
                 value={editing.group.id > 0 ? String(editing.group.id) : ''}
+                placeholder="Unsynced group - run Sync catalog"
                 disabled={assignGroup.isPending}
-                onChange={(event) => {
-                  const id = Number.parseInt(event.target.value, 10)
+                onChange={(value) => {
+                  const id = Number.parseInt(value, 10)
                   if (!id || id === editing.group.id) return
                   assignGroup.mutate({ key: editing.key, groupId: id })
                 }}
-              >
-                {editing.group.id <= 0 ? <option value="">Unsynced group - run Sync catalog</option> : null}
-                {boardGroups
+                options={boardGroups
                   .filter((group) => group.id > 0)
-                  .map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-              </select>
+                  .map((group) => ({ value: String(group.id), label: group.name }))}
+              />
             </label>
             {!editing.editable ? (
               <ErrorBox message="This key is global-only; it cannot be overridden per tenant." />
@@ -915,15 +911,15 @@ function SettingsPage() {
             <label className="field">
               <span className="field-label">Value</span>
               {editing.type === 'bool' ? (
-                <select
-                  className="select"
+                <Select
                   value={formValue === 'true' ? 'true' : 'false'}
                   disabled={!editing.editable}
-                  onChange={(event) => setFormValue(event.target.value)}
-                >
-                  <option value="true">Enabled</option>
-                  <option value="false">Disabled</option>
-                </select>
+                  onChange={setFormValue}
+                  options={[
+                    { value: 'true', label: 'Enabled' },
+                    { value: 'false', label: 'Disabled' },
+                  ]}
+                />
               ) : editing.type === 'json' ? (
                 <textarea
                   className="textarea mono"
@@ -993,19 +989,16 @@ function SettingsPage() {
           <div className="stack">
             <label className="field">
               <span className="field-label">Destination group</span>
-              <select
-                className="select"
+              <Select
                 value={moveTargetId}
-                onChange={(event) => setMoveTargetId(event.target.value)}
-              >
-                {moveTargets.length === 0 ? <option value="">No other groups</option> : null}
-                {moveTargets.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                    {group.is_system ? ' (system)' : ''}
-                  </option>
-                ))}
-              </select>
+                placeholder="No other groups"
+                onChange={setMoveTargetId}
+                options={moveTargets.map((group) => ({
+                  value: String(group.id),
+                  label: group.name,
+                  hint: group.is_system ? 'system' : undefined,
+                }))}
+              />
             </label>
             <div className="small dim">
               Currently in <b>{moving.group.name}</b>. You can also drag the row onto a group in the left list.
