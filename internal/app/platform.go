@@ -196,6 +196,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	billingPackageService := billingservice.NewPackageService(billingPackages).WithTx(txManager)
 	billingSubscriptionService := billingservice.NewSubscriptionService(billingSubscriptions, billingPackages, billingPayments, billingApprovals, orchestrator).
 		WithNotifier(notificationsService).
+		WithCurrency(cfg.Billing.Currency).
 		WithTx(txManager).
 		WithActivity(activityRecorder)
 	billingPaymentService := billingservice.NewPaymentService(billingPayments, cfg.Billing.Currency)

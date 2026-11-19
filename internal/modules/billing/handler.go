@@ -256,6 +256,39 @@ func (h *Handler) overrides(w http.ResponseWriter, r *http.Request) {
 	h.Data(w, r, http.StatusOK, NewSubscriptionResponse(*subscription))
 }
 
+// assignPlan puts a tenant on a package (support, sales deals, comps) and
+// records the manual payment when one is given.
+func (h *Handler) assignPlan(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := h.PathID(w, r, "tenant_id")
+	if !ok {
+		return
+	}
+	var req AssignPlanRequest
+	if !h.Bind(w, r, &req) {
+		return
+	}
+	subscription, payment, err := h.subscriptions.Assign(r.Context(), service.AssignInput{
+		TenantID:      tenantID,
+		PackageID:     req.PackageID,
+		ActorID:       authn.UserID(r),
+		PaymentMethod: req.PaymentMethod,
+		Amount:        req.Amount,
+	})
+	if err != nil {
+		h.Error(w, r, err)
+		return
+	}
+	var paymentResponse *PaymentResponse
+	if payment != nil {
+		value := NewPaymentResponse(*payment)
+		paymentResponse = &value
+	}
+	h.Data(w, r, http.StatusCreated, map[string]any{
+		"subscription": NewSubscriptionResponse(*subscription),
+		"payment":      paymentResponse,
+	})
+}
+
 func (h *Handler) listAllPayments(w http.ResponseWriter, r *http.Request) {
 	page, perPage, offset := httpx.PageParams(r)
 	items, total, err := h.payments.List(r.Context(), r.URL.Query().Get("status"), int32(perPage), int32(offset))

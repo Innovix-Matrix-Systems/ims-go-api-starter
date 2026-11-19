@@ -26,6 +26,7 @@ func (h *Handler) RegisterRoutesExempt(r chi.Router) {
 	r.With(h.can("subscription.view.all")).Get("/billing/internal/subscriptions", h.listSubscriptions)
 	r.With(h.can("subscription.manage")).Post("/billing/internal/subscriptions/{id}/cancel", h.cancelSubscription)
 	r.With(h.can("subscription.override")).Post("/billing/internal/subscriptions/{id}/overrides", h.overrides)
+	r.With(h.can("subscription.manage")).Post("/billing/internal/tenants/{tenant_id}/subscription", h.assignPlan)
 	r.With(h.can("payment.view.all")).Get("/billing/internal/payments", h.listAllPayments)
 	r.With(h.can("payment.record")).Post("/billing/internal/payments", h.recordPayment)
 	r.With(h.can("payment_approval.view.all")).Get("/billing/internal/payment-approvals", h.listApprovals)

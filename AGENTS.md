@@ -227,7 +227,9 @@ file gets a URL; private files go through the authorized download route.
 
 **Billing** — `service.Guard` resolves features/limits (overrides → package); resource services
 enforce limits through small `LimitChecker` interfaces under `WithTenantLock`. Gateway callbacks
-are always confirmed with the gateway.
+are always confirmed with the gateway. Staff move a tenant onto a plan with `SubscriptionService.Assign`
+(`POST /billing/internal/tenants/{tenant_id}/subscription`); an override set to `null` is removed.
+Billing management belongs in the product's admin app, not the developer dashboard.
 
 ## Database workflow (critical rules — details in the `db-change` skill)
 

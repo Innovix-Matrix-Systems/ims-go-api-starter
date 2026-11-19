@@ -1645,8 +1645,43 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Set per-tenant feature overrides */
+        /**
+         * Set per-tenant feature overrides
+         * @description Merges the given feature overrides into the subscription. Values are booleans (switch a feature) or numbers (a limit); `null` removes the override so the feature falls back to the plan. Keys must be catalog features.
+         */
         post: operations["setSubscriptionOverrides"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/internal/tenants/{tenant_id}/subscription": {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional super-admin impersonation tenant id. Omit both acting headers for a
+                 *     read-only global view; set them before a write on a tenant-resolved route.
+                 *     Sent only when impersonating — there is no default.
+                 */
+                "X-Acting-Tenant"?: components["parameters"]["ActingTenant"];
+                /**
+                 * @description Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+                 *     only when impersonating — there is no default.
+                 */
+                "X-Acting-Branch"?: components["parameters"]["ActingBranch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign a plan to a tenant (system)
+         * @description Ends the tenant's current subscription and starts an active one on the package, in one transaction. With `payment_method` (cash or bank transfer) a completed payment is recorded for `amount`, which defaults to the package price; without it the plan is assigned free of charge. Hidden (inactive) packages can be assigned. Overrides start empty on the new subscription.
+         */
+        post: operations["assignTenantPlan"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4357,6 +4392,30 @@ export interface components {
             data: {
                 subscription: components["schemas"]["Subscription"];
                 payment: components["schemas"]["Payment"];
+            };
+        };
+        /**
+         * @example {
+         *       "package_id": 2,
+         *       "payment_method": "cash",
+         *       "amount": 1500
+         *     }
+         */
+        AssignPlanRequest: {
+            /** Format: int64 */
+            package_id: number;
+            /** @enum {string} */
+            payment_method?: "cash" | "bank_transfer";
+            /**
+             * Format: int64
+             * @description Defaults to the package price. Requires payment_method.
+             */
+            amount?: number;
+        };
+        AssignPlanEnvelope: {
+            data: {
+                subscription: components["schemas"]["Subscription"];
+                payment: components["schemas"]["Payment"] | null;
             };
         };
         Payment: {
@@ -10501,9 +10560,18 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "overrides": {
+                 *         "users.max": 10,
+                 *         "reports.export": true,
+                 *         "branches.max": null
+                 *       }
+                 *     }
+                 */
                 "application/json": {
                     overrides: {
-                        [key: string]: unknown;
+                        [key: string]: (boolean | number) | null;
                     };
                 };
             };
@@ -10516,6 +10584,89 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SubscriptionEnvelope"];
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    assignTenantPlan: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional super-admin impersonation tenant id. Omit both acting headers for a
+                 *     read-only global view; set them before a write on a tenant-resolved route.
+                 *     Sent only when impersonating — there is no default.
+                 */
+                "X-Acting-Tenant"?: components["parameters"]["ActingTenant"];
+                /**
+                 * @description Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+                 *     only when impersonating — there is no default.
+                 */
+                "X-Acting-Branch"?: components["parameters"]["ActingBranch"];
+            };
+            path: {
+                tenant_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description The new subscription and the recorded payment (null when free of charge). */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignPlanEnvelope"];
+                };
+            };
+            /** @description Malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             /** @description Missing, invalid or expired bearer token. */

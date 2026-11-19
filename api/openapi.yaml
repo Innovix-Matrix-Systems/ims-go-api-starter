@@ -1780,6 +1780,10 @@ paths:
     post:
       tags: [Billing]
       summary: Set per-tenant feature overrides
+      description: >-
+        Merges the given feature overrides into the subscription. Values are booleans (switch a
+        feature) or numbers (a limit); `null` removes the override so the feature falls back to the
+        plan. Keys must be catalog features.
       operationId: setSubscriptionOverrides
       parameters:
         - $ref: "#/components/parameters/PathID"
@@ -1793,13 +1797,55 @@ paths:
               properties:
                 overrides:
                   type: object
-                  additionalProperties: true
+                  additionalProperties:
+                    nullable: true
+                    oneOf:
+                      - {type: boolean}
+                      - {type: number}
+            example:
+              overrides: {users.max: 10, reports.export: true, branches.max: null}
       responses:
         "200":
           description: The updated subscription.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/SubscriptionEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/billing/internal/tenants/{tenant_id}/subscription:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Billing]
+      summary: Assign a plan to a tenant (system)
+      description: >-
+        Ends the tenant's current subscription and starts an active one on the package, in one
+        transaction. With `payment_method` (cash or bank transfer) a completed payment is recorded
+        for `amount`, which defaults to the package price; without it the plan is assigned free of
+        charge. Hidden (inactive) packages can be assigned. Overrides start empty on the new
+        subscription.
+      operationId: assignTenantPlan
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: {type: integer, format: int64, minimum: 1}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AssignPlanRequest"}
+      responses:
+        "201":
+          description: The new subscription and the recorded payment (null when free of charge).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AssignPlanEnvelope"}
+        "400": *badRequest
         "401": *unauthorized
         "403": *forbidden
         "404": *notFound
@@ -5186,6 +5232,35 @@ components:
           properties:
             subscription: {$ref: "#/components/schemas/Subscription"}
             payment: {$ref: "#/components/schemas/Payment"}
+
+    AssignPlanRequest:
+      type: object
+      required: [package_id]
+      properties:
+        package_id: {type: integer, format: int64, minimum: 1}
+        payment_method: {type: string, enum: [cash, bank_transfer]}
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Defaults to the package price. Requires payment_method.
+      example:
+        package_id: 2
+        payment_method: cash
+        amount: 1500
+
+    AssignPlanEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [subscription, payment]
+          properties:
+            subscription: {$ref: "#/components/schemas/Subscription"}
+            payment:
+              allOf: [{$ref: "#/components/schemas/Payment"}]
+              nullable: true
 
     Payment:
       type: object

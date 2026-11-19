@@ -186,6 +186,12 @@ surfaces. `model_has_roles.model_type` is the constant `user`.
   `storage.mb`; resolution overrides → package → denied. Guard returns 402 problems with
   `meta {feature_key, limit, current}`.
 - **Packages**: CRUD + features (replace-on-update), public endpoint for active packages.
+- **Admin assignment**: `POST /billing/internal/tenants/{tenant_id}/subscription` (staff,
+  `subscription.manage`) ends the current subscription and starts an active one in one
+  transaction; with `payment_method` cash/bank it records a completed payment (amount defaults to
+  the price), without it the plan is free of charge. Hidden packages can be assigned.
+- **Overrides** (`subscription.override`) live on the subscription as JSON and merge in; a `null`
+  value removes one, so the feature falls back to the plan. A new subscription starts with none.
 - **Subscriptions**: `trial|pending|active|past_due|cancelled|expired`; `nextExpiry` monthly/
   yearly/one-time(≈100y). Subscribe creates a pending subscription, charges, then records a
   manual approval for cash/bank. Subscribe is idempotent per tenant + package + method: while a

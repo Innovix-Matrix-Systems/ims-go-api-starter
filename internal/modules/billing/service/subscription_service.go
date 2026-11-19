@@ -25,6 +25,7 @@ type SubscriptionService struct {
 	tx            *database.TxManager
 	now           func() time.Time
 	activity      *activity.Recorder
+	currency      string
 }
 
 // WithActivity records subscription changes in the tenant's activity log.
@@ -66,6 +67,7 @@ func NewSubscriptionService(
 		approvals:     approvals,
 		orchestrator:  orchestrator,
 		now:           time.Now,
+		currency:      "BDT",
 	}
 }
 
@@ -286,7 +288,8 @@ func (s *SubscriptionService) Cancel(ctx context.Context, subscriptionID int64, 
 	return cancelled, nil
 }
 
-// ApplyOverrides merges per-tenant feature overrides (super-admin only).
+// ApplyOverrides merges per-tenant feature overrides (super-admin only). A
+// null value removes that override, so the feature falls back to the plan.
 func (s *SubscriptionService) ApplyOverrides(ctx context.Context, subscriptionID int64, overrides map[string]any) (*domain.Subscription, error) {
 	subscription, err := s.subscriptions.Get(ctx, subscriptionID)
 	if err != nil {
@@ -299,10 +302,10 @@ func (s *SubscriptionService) ApplyOverrides(ctx context.Context, subscriptionID
 			})
 		}
 		switch value.(type) {
-		case bool, float64, int, int64:
+		case nil, bool, float64, int, int64:
 		default:
 			return nil, apperr.Validation(map[string][]string{
-				"overrides": {"Override values must be booleans or numbers."},
+				"overrides": {"Override values must be booleans, numbers or null (remove)."},
 			})
 		}
 	}
@@ -311,6 +314,10 @@ func (s *SubscriptionService) ApplyOverrides(ctx context.Context, subscriptionID
 		merged[key] = value
 	}
 	for key, value := range overrides {
+		if value == nil {
+			delete(merged, key)
+			continue
+		}
 		merged[key] = value
 	}
 	encoded, err := json.Marshal(merged)
