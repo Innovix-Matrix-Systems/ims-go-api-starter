@@ -1,8 +1,10 @@
 # AGENTS.md — Working Guide for This Repository
 
 Instructions for AI coding agents (and humans) working on the IMS Go API Starter. Read this before
-writing code. Architecture detail lives in [`docs/architecture.md`](docs/architecture.md) and the
-developer guide is [`docs/developer-guide.md`](docs/developer-guide.md). Task recipes live in
+writing code. The human documentation lives in [`docs/`](docs/README.md) (rendered as a site by
+`website/`): start with the [tutorial](docs/tutorial/first-module.mdx), the
+[guides](docs/guides/modules.md) and the [design decisions](docs/architecture/decisions.md). Task
+recipes live in
 **skills**: `.agents/skills/` (canonical) and the identical copy in `.claude/skills/`
 (`make skills-sync` copies, `make gen-check` fails on drift).
 
@@ -37,11 +39,13 @@ make dev-api               # API only, hot reload via air
 make build                 # bin/ims (CGO-free)
 make check                 # format-check + vet + lint + unit tests
 make generate              # sqlc + oapi-codegen + OpenAPI regions
-make gen-check             # fails when generated code, OpenAPI regions or skills drifted
+make gen-check             # fails when generated code, OpenAPI regions, docs reference pages or skills drifted
 make openapi-check         # spec valid + no route drift (every route must be in api/openapi.yaml)
 make migrate               # goose + River migrations
 make web-typecheck         # dashboard: tsc --noEmit
 make web-build             # dashboard: build web/dev/dist (embedded by the binary)
+make docs-gen              # docs/reference/* from the CLI, .env.example, permission catalog, Makefile
+make docs                  # docs site preview at :4321 (website/, Node 22.23+); make docs-build checks links
 
 # Integration tests (real Postgres; each package gets its own schema):
 $env:DATABASE_TEST_DSN = "postgres://postgres:postgres@127.0.0.1:5432/ims_go_api_test?sslmode=disable"
@@ -56,7 +60,11 @@ feature with a message that says what changed and why.
 
 ```text
 cmd/app/                      single binary entry point
-module.go                     root package: embeds go.mod (dashboard Inspector → Packages)
+module.go                     root package: embeds go.mod and VERSION
+VERSION                       release version (semver); release builds stamp it, local builds report <v>-dev
+CHANGELOG.md                  Keep a Changelog; update it with every user-visible change
+docs/                         human documentation (Markdown, renders on GitHub and as the site)
+website/                      Astro Starlight shell that renders docs/ (deployed to Cloudflare on release)
 web/dev/                      dashboard SPA (TanStack Router/Query, cmdk); embed.go also embeds package.json
   src/components/ui.tsx       Card, Button, Chip, Drawer, Modal, Tabs, StatCard, Icon, ...
   src/components/inputs.tsx   Select, DatePicker, TimePicker (use these, never native <select>/date)
@@ -162,7 +170,7 @@ Rules of the layering (enforced by review and `route_permissions_integration_tes
    `make openapi-check`.
 7. Tests: unit tests with fakes; an integration test with `testkit` including a cross-tenant
    isolation check.
-8. Record non-obvious decisions in `docs/architecture.md` §11 and the list below.
+8. Record non-obvious decisions in `docs/architecture/decisions.md` and the list below; update the guide in `docs/guides/`.
 
 ## Route groups (registered in `internal/app/routes.go`)
 
@@ -257,7 +265,7 @@ Billing management belongs in the product's admin app, not the developer dashboa
 ## Design decisions (deliberate)
 
 Keep this list accurate; add to it when you make a non-obvious choice (also update
-`docs/architecture.md`).
+`docs/architecture/decisions.md`).
 
 - Explicit query scoping (SQL parameters) instead of ORM global scopes; no Postgres RLS.
 - Permission checks on routes/handlers (Laravel `can:` / controller style); services enforce
@@ -276,7 +284,7 @@ Keep this list accurate; add to it when you make a non-obvious choice (also upda
 
 ## When a task is ambiguous
 
-1. Check `docs/architecture.md` (§11 lists the deliberate decisions) and the developer guide.
+1. Check `docs/architecture/decisions.md` and the matching guide in `docs/guides/`.
 2. Prefer the established pattern in this codebase over inventing a new one — the reference
    modules are `branches` (small), `identity` (rich) and `billing` (big).
-3. Record a new non-obvious decision in `docs/architecture.md` §11 and in the list above.
+3. Record a new non-obvious decision in `docs/architecture/decisions.md` and in the list above.

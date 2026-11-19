@@ -16,4 +16,4 @@ repeats the essentials.
 - Schema changes: goose migration → `make sqlc` → commit generated code.
 - Before finishing: `gofmt -l .` empty, `golangci-lint run ./...` clean, tests green
   (integration tests need `DATABASE_TEST_DSN`; use `-race -p 2` locally).
-- Record deliberate design decisions in `specs/` + `docs/architecture.md`.
+- Record deliberate design decisions in `docs/architecture/decisions.md` (and `AGENTS.md`).

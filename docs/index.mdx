@@ -1,0 +1,75 @@
+---
+title: IMS Go API Starter
+description: Laravel's developer experience, Go's performance. A multi-tenant API starter that ships as one binary, with a developer dashboard built in.
+template: splash
+hero:
+  tagline: Laravel's developer experience, Go's performance. A multi-tenant API that ships as one CGO-free binary — it serves the API, runs migrations, queue workers and the scheduler, and embeds a Telescope-style developer dashboard.
+  image:
+    file: ./images/dev-dashboard.png
+    alt: The developer dashboard overview page
+  actions:
+    - text: Get started
+      link: /getting-started/quick-start/
+      icon: right-arrow
+    - text: Build your first module
+      link: /tutorial/first-module/
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components'
+import Terminal from '@components/Terminal.astro'
+
+<Terminal
+  title="from zero to a running API"
+  lines={[
+    { cmd: 'cp .env.example .env && make migrate seed' },
+    { out: 'goose: 24 migrations applied · River schema v8', tone: 'dim' },
+    { out: 'seeded 70 permissions, tenant "Default", admin + developer accounts', tone: 'ok' },
+    { cmd: 'go run ./cmd/app gen module --name=product --fields="name:string,price:decimal"' },
+    { out: 'wrote migrations/00025_create_products.sql', tone: 'dim' },
+    { out: 'wrote internal/modules/product/{model,repository,service,request,handler,routes}.go', tone: 'dim' },
+    { out: 'Module "product" generated.', tone: 'ok' },
+    { cmd: 'make dev' },
+    { out: 'dashboard  → http://localhost:8080/dev', tone: 'accent' },
+    { out: 'API docs   → http://localhost:8080/docs', tone: 'accent' },
+  ]}
+/>
+
+## Why this starter
+
+<CardGrid stagger>
+  <Card title="Reads like Laravel" icon="laptop">
+    Thin handlers (`h.Bind`, `h.Data`), permissions on routes (`r.With(h.can("product.create"))`),
+    services, repositories and one config file per section. `ims gen module` scaffolds the stack.
+  </Card>
+  <Card title="Multi-tenant, safe by default" icon="approve-check">
+    Tenant and branch isolation in SQL that fails closed, RBAC, impersonation, per-tenant plan
+    limits, and a test that fails any route without a permission.
+  </Card>
+  <Card title="Everything an API needs" icon="puzzle">
+    Auth with OTP and recovery · billing with plan limits · settings · feature flags with rollout ·
+    activity log · notifications · files on local/S3/R2/MinIO · import/export · backups · queue ·
+    scheduler · RFC 9457 errors · OpenAPI.
+  </Card>
+  <Card title="A dashboard you'll actually use" icon="seti:html">
+    Requests, logs, exceptions, queue, one-click commands, an inspector for health, routes, roles
+    and config, tenants, settings, flags, files, sessions and an audit log — Ctrl+K to anything.
+  </Card>
+  <Card title="Fast feedback" icon="rocket">
+    Type-safe SQL (sqlc), integration tests in a few lines (`testkit`), hot reload, and AI-agent
+    skills that know the codebase.
+  </Card>
+  <Card title="One binary in production" icon="seti:go">
+    No containers. systemd runs the API, the worker and the scheduler from the same binary;
+    migrations are a gated release step.
+  </Card>
+</CardGrid>
+
+## Where to go next
+
+<CardGrid>
+  <LinkCard title="Quick start" description="Run it locally in five minutes." href="/getting-started/quick-start/" />
+  <LinkCard title="How it works" description="The one rule every request follows." href="/getting-started/how-it-works/" />
+  <LinkCard title="Tutorial" description="Build a products module, step by step." href="/tutorial/first-module/" />
+  <LinkCard title="Design decisions" description="What we chose, and why." href="/architecture/decisions/" />
+</CardGrid>

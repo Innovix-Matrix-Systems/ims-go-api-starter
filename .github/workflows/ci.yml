@@ -79,6 +79,9 @@ jobs:
       - name: agent skills are in sync (.agents/skills = .claude/skills)
         run: diff -r .agents/skills .claude/skills
 
+      - name: generated docs reference pages are current
+        run: go run ./cmd/app gen docs --check
+
       - name: test (race)
         run: go test -race ./...
 
@@ -109,6 +112,25 @@ jobs:
       - name: build
         run: npm run build
         working-directory: web/dev
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: install
+        run: npm ci
+        working-directory: website
+
+      - name: build and check every link
+        run: npm run build
+        working-directory: website
 
       - name: generated OpenAPI types are current
         run: |

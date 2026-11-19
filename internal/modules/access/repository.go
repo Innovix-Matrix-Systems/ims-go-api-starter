@@ -35,7 +35,7 @@ type RoleRepository interface {
 }
 
 // TenantLookup resolves slim tenant references in bulk so role responses can
-// embed the owning tenant without an N+1 (see docs/developer-guide.md).
+// embed the owning tenant without an N+1 (see docs/guides/modules.md).
 type TenantLookup interface {
 	RefsByIDs(ctx context.Context, ids []int64) (map[int64]TenantRef, error)
 }

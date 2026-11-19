@@ -1,4 +1,6 @@
-# Database backups
+---
+title: Backups
+---
 
 The app creates PostgreSQL archives with `pg_dump` and stores them **locally first**; an optional
 S3-compatible destination (AWS S3, Cloudflare R2, MinIO, B2 S3) receives the same archive, which
