@@ -317,6 +317,10 @@ If you also touched the dashboard, run `make web-typecheck` and `make web-build`
 | Storage disks, mail, i18n, health, metrics | `internal/platform/{storage,mail,i18n,health,metrics}` |
 | Business modules | `internal/modules/<name>` (`backup/` is transport-free) |
 | Developer dashboard SPA | `web/dev` (embedded by `web/dev/embed.go`) |
+| Dashboard API (handlers → services) | `internal/modules/dev` (`services.go`, `inspector.go`, `commands.go`) |
+| Dashboard commands allowlist (add maintenance tasks here) | `internal/app/dev_commands.go` |
+| Dashboard form controls (Select, DatePicker, TimePicker) | `web/dev/src/components/inputs.tsx` |
+| Integration test helpers | `internal/testkit` |
 | Module + OpenAPI generators | `internal/scaffold`, `ims gen` |
 | Generated (never edit) | `internal/dbgen`, `internal/contract` |
 | SQL schema / queries | `migrations/`, `sql/queries/` |

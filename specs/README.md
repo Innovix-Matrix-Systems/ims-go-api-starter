@@ -34,6 +34,7 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 17 | [phase-17-product-ops-maturity.md](phase-17-product-ops-maturity.md) | **Done** (2026-11-19, some deferred) |
 | 18 | [phase-18-account-recovery.md](phase-18-account-recovery.md) | **Done** (2026-11-19) |
 | 19 | [phase-19-simplicity-audit-testkit.md](phase-19-simplicity-audit-testkit.md) | Done — handler helpers, config split, activity log, testkit, flag rollout, storage disks |
+| 20 | [phase-20-dev-dashboard-finish.md](phase-20-dev-dashboard-finish.md) | Done — inspector, commands, form kit, settings view, dev service layer, tests on testkit |
 
 Remediation phases 12–17 are derived from [docs/codebase-review.md](../docs/codebase-review.md)
 (the full-codebase review at commit `1f55eeb`); each spec lists the finding IDs it resolves.

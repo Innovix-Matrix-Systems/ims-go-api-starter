@@ -39,7 +39,7 @@ rollouts for feature flags, and storage disks you can swap with a `.env` change.
 - [x] **M45:** `withPlatform(state, fn)` replaces 15 copied CLI boot blocks (`queue:work` included).
 - [x] **M46:** `health:check`, `schedule:list`, `openapi:check` document why they skip
       `cfg.Validate()`.
-- [ ] **M53/M54:** dev-module service layer — deferred (see below).
+- [x] **M53/M54:** dev-module service layer — done in Phase 20.
 
 ## 3. Activity log
 
@@ -86,11 +86,11 @@ rollouts for feature flags, and storage disks you can swap with a `.env` change.
 
 ## Deferred
 
-- **M53/M54 — dev-module service layer.** `internal/modules/dev` (~4,800 lines) still calls
+- ~~**M53/M54 — dev-module service layer.**~~ Done in Phase 20. `internal/modules/dev` used to call
   repositories from handlers. It is a developer-only surface with full integration coverage, and
   the refactor is large with no behaviour change; do it when the dashboard next grows.
-- **Porting existing integration tests to testkit.** The old tests keep their hand-rolled setup;
-  new tests should use testkit. Port opportunistically when a test is touched.
+- ~~**Porting existing integration tests to testkit.**~~ Done in Phase 20 (the `internal/app`
+  suite).
 - **Recording dev-dashboard and internal (super-admin) actions in the activity log.** Dev actions
   already have their own audit table (`dev_actions`); internal role/user writes are platform-level
   and can be added with `TenantID: 0` when needed.
