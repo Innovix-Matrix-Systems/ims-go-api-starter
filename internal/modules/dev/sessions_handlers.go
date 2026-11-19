@@ -14,22 +14,22 @@ import (
 func (h *Handler) sessionStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.sessions.Stats(r.Context())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, stats)
+	h.Data(w, r, http.StatusOK, stats)
 }
 
 func (h *Handler) listSessionUsers(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	limit, err := parseLimit(query.Get("limit"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	beforeID, err := parseCursor(query.Get("cursor"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	users, err := h.sessions.Users(r.Context(), SessionUserFilter{
@@ -38,65 +38,62 @@ func (h *Handler) listSessionUsers(w http.ResponseWriter, r *http.Request) {
 		Limit:    int32(limit),
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	nextCursor := ""
 	if len(users) == limit && len(users) > 0 {
 		nextCursor = strconv.FormatInt(users[len(users)-1].UserID, 10)
 	}
-	h.responder.Cursor(w, r, http.StatusOK, users, map[string]any{"next_cursor": nextCursor}, nil)
+	h.Cursor(w, r, http.StatusOK, users, map[string]any{"next_cursor": nextCursor}, nil)
 }
 
 func (h *Handler) listUserSessions(w http.ResponseWriter, r *http.Request) {
-	userID, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	userID, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	tokens, err := h.sessions.Tokens(r.Context(), userID, currentTokenID(r))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, tokens)
+	h.Data(w, r, http.StatusOK, tokens)
 }
 
 func (h *Handler) revokeSessionToken(w http.ResponseWriter, r *http.Request) {
-	tokenID, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	tokenID, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	if err := h.sessions.RevokeToken(r.Context(), authn.UserID(r), tokenID); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"revoked": 1})
+	h.Data(w, r, http.StatusOK, map[string]any{"revoked": 1})
 }
 
 func (h *Handler) revokeUserSessions(w http.ResponseWriter, r *http.Request) {
-	userID, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	userID, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	revoked, err := h.sessions.RevokeUser(r.Context(), authn.UserID(r), userID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"revoked": revoked})
+	h.Data(w, r, http.StatusOK, map[string]any{"revoked": revoked})
 }
 
 func (h *Handler) revokeAllSessions(w http.ResponseWriter, r *http.Request) {
 	keep := currentTokenID(r)
 	revoked, err := h.sessions.RevokeAllExcept(r.Context(), authn.UserID(r), keep)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"revoked": revoked, "excluded_token_id": keep})
+	h.Data(w, r, http.StatusOK, map[string]any{"revoked": revoked, "excluded_token_id": keep})
 }
 
 type pruneSessionsRequest struct {
@@ -106,15 +103,15 @@ type pruneSessionsRequest struct {
 
 func (h *Handler) pruneSessions(w http.ResponseWriter, r *http.Request) {
 	var request pruneSessionsRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	result, err := h.sessions.Prune(r.Context(), authn.UserID(r), request.IdleDays, request.DryRun)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, result)
+	h.Data(w, r, http.StatusOK, result)
 }
 
 func currentTokenID(r *http.Request) int64 {

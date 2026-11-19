@@ -48,9 +48,7 @@ func NewHandler(deps Deps) *Handler {
 			permissions: deps.Permissions,
 			audit:       audit,
 			logger:      deps.Logger,
-			binder:      deps.Binder,
-			validator:   deps.Validator,
-			responder:   deps.Responder,
+			Kit:         deps.Kit,
 		},
 		queueAdmin:        deps.QueueAdmin,
 		queue:             deps.Queue,
@@ -94,17 +92,17 @@ type MeResponse struct {
 func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 	identity, ok := authn.IdentityFromContext(r.Context())
 	if !ok {
-		h.responder.Error(w, r, apperr.New(apperr.Unauthorized, "Authentication is required."))
+		h.Error(w, r, apperr.New(apperr.Unauthorized, "Authentication is required."))
 		return
 	}
 	permissions, err := h.permissions.ForUser(r.Context(), identity.UserID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	super, err := h.checker.IsSuperAdmin(r.Context(), identity.UserID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	names := make([]string, 0, len(permissions))
@@ -121,7 +119,7 @@ func (h *Handler) me(w http.ResponseWriter, r *http.Request) {
 		value := identity.BranchID
 		branchID = &value
 	}
-	h.responder.Data(w, r, http.StatusOK, MeResponse{
+	h.Data(w, r, http.StatusOK, MeResponse{
 		UserID:       identity.UserID,
 		Name:         identity.Name,
 		Email:        identity.Email,

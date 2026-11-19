@@ -94,6 +94,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	responder := httpx.NewResponder(cfg.App.URL, cfg.App.Env, cfg.App.Debug)
 	binder := httpx.NewBinder(cfg.HTTP.MaxRequestBodyBytes, cfg.HTTP.StrictJSONFields)
 	validator := httpx.NewValidator()
+	kit := httpx.NewKit(binder, validator, responder)
 	translator, err := i18n.Load()
 	if err != nil {
 		platformCleanup()
@@ -152,9 +153,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	// Handlers and modules
 	systemModule := system.NewModule(
 		system.NewService(cfg.App.Name, cfg.App.Env, version.Version, cfg.App.Timezone),
-		binder,
-		validator,
-		responder,
+		kit,
 	)
 
 	var deps *Dependencies
@@ -182,18 +181,18 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 		},
 		Platform:      platform,
 		System:        systemModule,
-		Auth:          auth.NewHandler(authService, userService, checker, binder, validator, responder).WithRecovery(platform.Recovery),
-		Users:         identity.NewHandler(userService, platform.Files, platform.Exchange, checker, binder, validator, responder),
-		Tenants:       tenants.NewHandler(tenantService, checker, binder, validator, responder),
-		Branches:      branches.NewHandler(branchService, checker, binder, validator, responder),
-		Activity:      activity.NewHandler(activity.NewService(queries), checker, responder),
-		Roles:         access.NewRoleHandler(roleService, checker, tenantLookup, binder, validator, responder),
-		Permissions:   access.NewPermissionHandler(permissionService, checker, binder, validator, responder),
-		Files:         files.NewHandler(platform.Files, checker, responder),
-		Notifications: notifications.NewHandler(platform.Notifications, checker, binder, validator, responder),
-		Processing:    dataprocessing.NewHandler(platform.Processing, platform.Settings, checker, binder, validator, responder),
-		Settings:      settings.NewHandler(platform.Settings, checker, binder, validator, responder),
-		Flags:         featureflags.NewHandler(platform.FeatureFlags, checker, binder, validator, responder),
+		Auth:          auth.NewHandler(authService, userService, checker, kit).WithRecovery(platform.Recovery),
+		Users:         identity.NewHandler(userService, platform.Files, platform.Exchange, checker, kit),
+		Tenants:       tenants.NewHandler(tenantService, checker, kit),
+		Branches:      branches.NewHandler(branchService, checker, kit),
+		Activity:      activity.NewHandler(activity.NewService(queries), checker, kit),
+		Roles:         access.NewRoleHandler(roleService, checker, tenantLookup, kit),
+		Permissions:   access.NewPermissionHandler(permissionService, checker, kit),
+		Files:         files.NewHandler(platform.Files, checker, kit),
+		Notifications: notifications.NewHandler(platform.Notifications, checker, kit),
+		Processing:    dataprocessing.NewHandler(platform.Processing, platform.Settings, checker, kit),
+		Settings:      settings.NewHandler(platform.Settings, checker, kit),
+		Flags:         featureflags.NewHandler(platform.FeatureFlags, checker, kit),
 		Dev: dev.NewHandler(dev.Deps{
 			Checker:       checker,
 			Permissions:   permissionService,
@@ -225,11 +224,9 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 				}
 				return deps.routes
 			}),
-			Queries:   queries,
-			Commands:  dev.NewCommandService(queries, logger, devCommands(platform, permissionService, healthRegistry)...),
-			Binder:    binder,
-			Validator: validator,
-			Responder: responder,
+			Queries:  queries,
+			Commands: dev.NewCommandService(queries, logger, devCommands(platform, permissionService, healthRegistry)...),
+			Kit:      kit,
 		}),
 		DevUI: devUI,
 		Billing: billing.NewHandler(
@@ -238,9 +235,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 			platform.BillingPayments,
 			platform.BillingApprovals,
 			checker,
-			binder,
-			validator,
-			responder,
+			kit,
 		),
 	}
 	deps.Auth.WithSignInRecorder(deps.Dev.Auditor())

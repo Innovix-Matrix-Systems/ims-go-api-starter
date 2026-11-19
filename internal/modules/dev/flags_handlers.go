@@ -39,26 +39,26 @@ type updateFlagsRequest struct {
 func (h *Handler) listFlags(w http.ResponseWriter, r *http.Request) {
 	target, err := flagTargetFromQuery(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.flags.EffectiveForTarget(r.Context(), target)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, toDevFlags(items, target))
+	h.Data(w, r, http.StatusOK, toDevFlags(items, target))
 }
 
 func (h *Handler) updateFlags(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
 	var request updateFlagsRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	target, err := flagTargetFromBody(request)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 
@@ -89,17 +89,17 @@ func (h *Handler) updateFlags(w http.ResponseWriter, r *http.Request) {
 		"rollout":     request.Rollout,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, toDevFlags(items, target))
+	h.Data(w, r, http.StatusOK, toDevFlags(items, target))
 }
 
 func (h *Handler) resetFlag(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
 	target, err := flagTargetFromQuery(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	key := chi.URLParam(r, "key")
@@ -111,10 +111,10 @@ func (h *Handler) resetFlag(w http.ResponseWriter, r *http.Request) {
 		"key":         key,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{
+	h.Data(w, r, http.StatusOK, map[string]any{
 		"key":    key,
 		"target": flagTargetLabel(target),
 		"reset":  true,
@@ -129,41 +129,41 @@ func (h *Handler) syncFlags(w http.ResponseWriter, r *http.Request) {
 		"created": created,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"created": created})
+	h.Data(w, r, http.StatusOK, map[string]any{"created": created})
 }
 
 func (h *Handler) searchTargets(w http.ResponseWriter, r *http.Request) {
 	kind, err := targetKind(r.URL.Query().Get("type"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	page, perPage, offset := httpx.PageParams(r)
 	items, total, err := h.targets.List(r.Context(), kind,
 		strings.TrimSpace(r.URL.Query().Get("search")), int32(perPage), int32(offset))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, items, meta, links)
+	h.Paginated(w, r, http.StatusOK, items, meta, links)
 }
 
 func (h *Handler) targetStats(w http.ResponseWriter, r *http.Request) {
 	kind, err := targetKind(r.URL.Query().Get("type"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	stats, err := h.targets.Stats(r.Context(), kind)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, stats)
+	h.Data(w, r, http.StatusOK, stats)
 }
 
 func targetKind(raw string) (string, error) {

@@ -60,20 +60,20 @@ type assignSettingGroupRequest struct {
 func (h *Handler) listDevSettingGroups(w http.ResponseWriter, r *http.Request) {
 	groups, err := h.settings.ListGroupsLight(r.Context(), "sort_order", "asc")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items := make([]devSettingGroup, 0, len(groups))
 	for _, group := range groups {
 		items = append(items, devGroupFromStored(group))
 	}
-	h.responder.Data(w, r, http.StatusOK, items)
+	h.Data(w, r, http.StatusOK, items)
 }
 
 func (h *Handler) createDevSettingGroup(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
 	var request settingsGroupRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	started := time.Now()
@@ -92,21 +92,20 @@ func (h *Handler) createDevSettingGroup(w http.ResponseWriter, r *http.Request) 
 		"sort_order": request.SortOrder,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusCreated, devGroupFromStored(*group))
+	h.Data(w, r, http.StatusCreated, devGroupFromStored(*group))
 }
 
 func (h *Handler) updateDevSettingGroup(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
-	groupID, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	groupID, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	var request settingsGroupRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	started := time.Now()
@@ -121,17 +120,16 @@ func (h *Handler) updateDevSettingGroup(w http.ResponseWriter, r *http.Request) 
 		"sort_order": request.SortOrder,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, devGroupFromStored(*group))
+	h.Data(w, r, http.StatusOK, devGroupFromStored(*group))
 }
 
 func (h *Handler) deleteDevSettingGroup(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
-	groupID, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	groupID, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	started := time.Now()
@@ -139,39 +137,39 @@ func (h *Handler) deleteDevSettingGroup(w http.ResponseWriter, r *http.Request) 
 	h.audit.Record(r.Context(), actorID, "settings.group.delete", formatTarget("settings_group", groupID),
 		map[string]any{"group_id": groupID}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"deleted": true})
+	h.Data(w, r, http.StatusOK, map[string]any{"deleted": true})
 }
 
 func (h *Handler) listDevSettings(w http.ResponseWriter, r *http.Request) {
 	target, err := settingsTargetFromQuery(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.settings.EffectiveForTarget(r.Context(), target)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, toDevSettings(items, target))
+	h.Data(w, r, http.StatusOK, toDevSettings(items, target))
 }
 
 func (h *Handler) setDevSetting(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
 	var request setSettingRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	if request.Value == nil {
-		h.responder.Error(w, r, apperr.Validation(map[string][]string{"value": {"The value field is required."}}))
+		h.Error(w, r, apperr.Validation(map[string][]string{"value": {"The value field is required."}}))
 		return
 	}
 	target, err := settingsTargetFromBody(request.TargetType, request.TargetID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	key := chi.URLParam(r, "key")
@@ -184,17 +182,17 @@ func (h *Handler) setDevSetting(w http.ResponseWriter, r *http.Request) {
 		"value":       request.Value,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, toDevSettings([]settings.EffectiveSetting{*effective}, target)[0])
+	h.Data(w, r, http.StatusOK, toDevSettings([]settings.EffectiveSetting{*effective}, target)[0])
 }
 
 func (h *Handler) resetDevSetting(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
 	target, err := settingsTargetFromQuery(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	key := chi.URLParam(r, "key")
@@ -206,10 +204,10 @@ func (h *Handler) resetDevSetting(w http.ResponseWriter, r *http.Request) {
 		"target_id":   target.ID,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{
+	h.Data(w, r, http.StatusOK, map[string]any{
 		"key":    key,
 		"target": settingsTargetLabel(target),
 		"reset":  true,
@@ -220,8 +218,7 @@ func (h *Handler) assignDevSettingGroup(w http.ResponseWriter, r *http.Request) 
 	actorID := authn.UserID(r)
 	key := chi.URLParam(r, "key")
 	var request assignSettingGroupRequest
-	if err := h.binder.JSON(w, r, &request); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	started := time.Now()
@@ -231,10 +228,10 @@ func (h *Handler) assignDevSettingGroup(w http.ResponseWriter, r *http.Request) 
 		"group_id": request.GroupID,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{
+	h.Data(w, r, http.StatusOK, map[string]any{
 		"key":      key,
 		"group_id": request.GroupID,
 	})
@@ -248,10 +245,10 @@ func (h *Handler) syncDevSettings(w http.ResponseWriter, r *http.Request) {
 		"created": created,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"created": created})
+	h.Data(w, r, http.StatusOK, map[string]any{"created": created})
 }
 
 func toDevSettings(items []settings.EffectiveSetting, target settings.Target) []devSetting {
@@ -376,13 +373,12 @@ type placeSettingsRequest struct {
 
 // placeSettings puts keys into a group in the given order (drag and drop).
 func (h *Handler) placeSettings(w http.ResponseWriter, r *http.Request) {
-	groupID, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	groupID, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	var request placeSettingsRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	started := time.Now()
@@ -390,10 +386,10 @@ func (h *Handler) placeSettings(w http.ResponseWriter, r *http.Request) {
 	h.audit.Record(r.Context(), authn.UserID(r), "settings.place", formatTarget("settings_group", groupID),
 		map[string]any{"group_id": groupID, "keys": request.Keys}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"group_id": groupID, "keys": request.Keys})
+	h.Data(w, r, http.StatusOK, map[string]any{"group_id": groupID, "keys": request.Keys})
 }
 
 type reorderGroupsRequest struct {
@@ -403,7 +399,7 @@ type reorderGroupsRequest struct {
 // reorderSettingGroups sets the order of settings groups.
 func (h *Handler) reorderSettingGroups(w http.ResponseWriter, r *http.Request) {
 	var request reorderGroupsRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	started := time.Now()
@@ -411,8 +407,8 @@ func (h *Handler) reorderSettingGroups(w http.ResponseWriter, r *http.Request) {
 	h.audit.Record(r.Context(), authn.UserID(r), "settings.groups.reorder", "settings_groups",
 		map[string]any{"ids": request.IDs}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"ids": request.IDs})
+	h.Data(w, r, http.StatusOK, map[string]any{"ids": request.IDs})
 }

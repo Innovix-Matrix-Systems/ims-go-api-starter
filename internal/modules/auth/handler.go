@@ -40,8 +40,8 @@ func (h *Handler) WithSignInRecorder(recorder SignInRecorder) *Handler {
 }
 
 // NewHandler creates the auth handler.
-func NewHandler(service *authn.Service, users *identity.Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, users: users, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
+func NewHandler(service *authn.Service, users *identity.Service, checker *authz.Checker, kit httpx.Kit) *Handler {
+	return &Handler{service: service, users: users, checker: checker, Kit: kit}
 }
 
 // WithRecovery enables the forgot-password and e-mail verification routes.
@@ -73,7 +73,7 @@ const sentMessage = "If that e-mail address belongs to an account, a message is 
 
 func (h *Handler) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req EmailRequest
-	if !h.bind(w, r, &req) {
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	if err := h.recovery.SendPasswordResetLink(r.Context(), req.Email); err != nil {
@@ -85,7 +85,7 @@ func (h *Handler) forgotPassword(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 	var req ResetPasswordRequest
-	if !h.bind(w, r, &req) {
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	if err := h.recovery.ResetPassword(r.Context(), req.Email, req.Token, req.Password); err != nil {
@@ -97,7 +97,7 @@ func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) resendVerification(w http.ResponseWriter, r *http.Request) {
 	var req EmailRequest
-	if !h.bind(w, r, &req) {
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	if err := h.recovery.SendVerificationLink(r.Context(), req.Email); err != nil {
@@ -109,7 +109,7 @@ func (h *Handler) resendVerification(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) verifyEmail(w http.ResponseWriter, r *http.Request) {
 	var req VerifyEmailRequest
-	if !h.bind(w, r, &req) {
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	if err := h.recovery.VerifyEmail(r.Context(), req.Token); err != nil {
@@ -117,19 +117,6 @@ func (h *Handler) verifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.Message(w, r, http.StatusOK, "Your e-mail address has been verified.")
-}
-
-// bind decodes and validates a JSON body, writing the problem on failure.
-func (h *Handler) bind(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if err := h.Binder().JSON(w, r, dst); err != nil {
-		h.Error(w, r, err)
-		return false
-	}
-	if err := h.Validator().Struct(r.Context(), dst); err != nil {
-		h.Error(w, r, err)
-		return false
-	}
-	return true
 }
 
 // LoginRequest is the login payload.

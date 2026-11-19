@@ -67,9 +67,3 @@ func ParseID(raw string) (int64, error) {
 	}
 	return id, nil
 }
-
-// Binder returns the JSON binder (for handlers that decode by hand).
-func (k Kit) Binder() *Binder { return k.binder }
-
-// Validator returns the struct validator.
-func (k Kit) Validator() *Validator { return k.validator }

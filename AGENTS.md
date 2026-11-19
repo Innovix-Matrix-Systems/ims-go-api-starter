@@ -61,8 +61,8 @@ web/dev/                      dashboard SPA (TanStack Router/Query, cmdk); embed
   src/components/ui.tsx       Card, Button, Chip, Drawer, Modal, Tabs, StatCard, Icon, ...
   src/components/inputs.tsx   Select, DatePicker, TimePicker (use these, never native <select>/date)
 internal/
-  app/        composition root: platform.go (shared deps + scheduled tasks), wiring.go (HTTP deps),
-              routes.go (middleware chain + route groups), dev_commands.go (dashboard commands)
+  app/        composition root: platform.go (shared deps), schedule.go (recurring tasks),
+              wiring.go (HTTP deps), routes.go (middleware chain + route groups), dev_commands.go (dashboard commands)
   cli/        Cobra tree; withPlatform(state, fn) boots the app for a command (platform.go)
   config/     typed config, one file per section (app, database, cache, queue, auth, billing,
               storage, backup, mail, ops, activity, env); config.go = Load + cross-section Validate
@@ -135,7 +135,8 @@ Rules of the layering (enforced by review and `route_permissions_integration_tes
 
 1. `handler → service → repository → dbgen`. Services never import `httpx`; repositories never
    import `httpx`/`authn`.
-2. Handlers embed `httpx.Kit`; each module defines `func (h *Handler) can(perm string)` returning
+2. Handlers embed `httpx.Kit` (built once in `wiring.go`, passed to every `NewHandler`, including
+   the dashboard's); each module defines `func (h *Handler) can(perm string)` returning
    `authz.Require(h.checker, perm, h.Responder)`.
 3. Permissions are declared on the route. Call `h.checker.MustCan(ctx, authn.UserID(r), perm)`
    inside a handler only when the permission depends on the payload (e.g. sending `roles`).
@@ -212,8 +213,8 @@ id in tenant-derived keys and delete the key in the service method that writes t
 driver: `memory` locally, `database` elsewhere.
 
 **Queue / Scheduler** — jobs are `queue.Definition{Kind, Queue, Validate, Handle}`; prefer
-`EnqueueTx`. Scheduled tasks are registered in `internal/app/platform.go`
-(`{ID, Spec, Description, Timeout, Overlap, Run}`); one scheduler process at a time (advisory lock).
+`EnqueueTx`. Scheduled tasks are listed in `internal/app/schedule.go`
+(`{ID, Spec, Description, Timeout, Run}`; overlap is skipped by default); one scheduler process at a time (advisory lock).
 
 **Settings & feature flags** — settings: typed catalog (`modules/settings/registry.go`), tenant →
 global → default, groups + order editable in the dashboard. Flags: catalog in

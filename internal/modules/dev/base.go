@@ -6,8 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
@@ -58,40 +56,23 @@ type Deps struct {
 	Inspector          *InspectorService
 	Queries            *dbgen.Queries
 	Commands           *CommandService
-	Binder             *httpx.Binder
-	Validator          *httpx.Validator
-	Responder          *httpx.Responder
+	Kit                httpx.Kit
 }
 
-// panelBase carries the dependencies and helpers shared by every dashboard
-// panel. Panels are plain files on Handler today; the embedded base keeps the
-// shared surface in one place as panels are added.
+// panelBase carries what every dashboard panel shares: the permission
+// checker, the audit writer and the same httpx.Kit (Bind, PathID, Data, ...)
+// that every module handler embeds.
 type panelBase struct {
 	checker     *authz.Checker
 	permissions *access.PermissionService
 	audit       *Auditor
 	logger      *slog.Logger
-	binder      *httpx.Binder
-	validator   *httpx.Validator
-	responder   *httpx.Responder
+	httpx.Kit
 }
 
 // manage is route middleware for dashboard mutations (dev.manage).
 func (h *Handler) manage(next http.Handler) http.Handler {
-	return authz.Require(h.checker, authz.PermDevManage, h.responder)(next)
-}
-
-// bind decodes and validates a JSON body, writing the 4xx on failure.
-func (h *Handler) bind(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if err := h.binder.JSON(w, r, dst); err != nil {
-		h.responder.Error(w, r, err)
-		return false
-	}
-	if err := h.validator.Struct(r.Context(), dst); err != nil {
-		h.responder.Error(w, r, err)
-		return false
-	}
-	return true
+	return authz.Require(h.checker, authz.PermDevManage, h.Responder)(next)
 }
 
 func parseLimit(raw string) (int, error) {
@@ -106,19 +87,6 @@ func parseLimit(raw string) (int, error) {
 		})
 	}
 	return value, nil
-}
-
-func pathID(r *http.Request) (int64, error) {
-	return pathParamID(r, "id")
-}
-
-func pathParamID(r *http.Request, name string) (int64, error) {
-	raw := chi.URLParam(r, name)
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 1 {
-		return 0, apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-	}
-	return id, nil
 }
 
 func parseCursor(raw string) (int64, error) {

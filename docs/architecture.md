@@ -14,6 +14,7 @@ cmd/app ──► internal/cli (Cobra tree, command registry, lazy dependency pr
               └── serve ─────► internal/app (composition root)
                                  ├── platform.go   shared: DB pools, cache, queue/schedule
                                  │                 registries, settings, billing services
+                                 ├── schedule.go   recurring tasks (one list)
                                  ├── wiring.go     HTTP deps: checkers, module services,
                                  │                 handlers
                                  ├── routes.go     middleware chain + route groups
@@ -138,7 +139,7 @@ surfaces. `model_has_roles.model_type` is the constant `user`.
   `queue:stats`, health check on `river_job`.
 - **Scheduler** (`platform/scheduler`): central registry with validated cron specs, overlap-skip,
   timeouts and structured logs. `schedule` runs the daemon; `schedule:list`/`schedule:run`
-  inspect. Tasks registered in `internal/app/platform.go`: `scheduler.heartbeat` (1 min),
+  inspect. Tasks listed in `internal/app/schedule.go`: `scheduler.heartbeat` (1 min),
   `billing.expire-subscriptions` (every 6h), `billing.send-renewal-reminders` (08:00),
   `backup.run`/`backup.clean` (when enabled), and retention — `dataprocessing.cleanup-completed`,
   `notifications.purge-expired`, `activity.prune`, `devdashboard.prune` (telemetry + dashboard

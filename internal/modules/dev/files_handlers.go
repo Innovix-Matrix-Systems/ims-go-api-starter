@@ -37,17 +37,17 @@ func (h *Handler) listFiles(w http.ResponseWriter, r *http.Request) {
 	page, perPage, offset := httpx.PageParams(r)
 	filter, err := fileFilterFromQuery(r, int32(perPage), int32(offset))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.files.List(r.Context(), filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	total, err := h.files.Count(r.Context(), filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	data := make([]FileResponse, 0, len(items))
@@ -59,34 +59,33 @@ func (h *Handler) listFiles(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
+	h.Paginated(w, r, http.StatusOK, data, meta, links)
 }
 
 func (h *Handler) fileStats(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := parseOptionalID(r.URL.Query().Get("tenant_id"), "tenant_id")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	stats, err := h.files.Stats(r.Context(), tenantID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, stats)
+	h.Data(w, r, http.StatusOK, stats)
 }
 
 func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 	// Downloading tenant documents is an action, not a view (H14): the route
 	// needs dev.manage.
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	reader, file, err := h.files.Open(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	defer reader.Close()
@@ -116,16 +115,15 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	if err := h.files.Delete(r.Context(), authn.UserID(r), id); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 func fileFilterFromQuery(r *http.Request, limit, offset int32) (FileFilter, error) {

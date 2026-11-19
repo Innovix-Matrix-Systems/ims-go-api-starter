@@ -48,8 +48,8 @@ decimal bool date datetime json`; `?` = optional.
        httpx.Kit
    }
 
-   func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-       return &Handler{service: service, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
+   func NewHandler(service *Service, checker *authz.Checker, kit httpx.Kit) *Handler {
+       return &Handler{service: service, checker: checker, Kit: kit}
    }
 
    func (h *Handler) can(permission string) func(http.Handler) http.Handler {
@@ -80,8 +80,9 @@ decimal bool date datetime json`; `?` = optional.
 8. **routes.go** — registration + permission per route:
    `r.With(h.can(PermCreate)).Post("/product", h.store)`. Mount in `internal/app/routes.go` in the
    right group (public / authenticated / tenant-resolved / tenant-exempt).
-9. **Wiring** — `internal/app/wiring.go` (HTTP) or `internal/app/platform.go` (shared with CLI,
-   jobs, scheduler). Pass `platform.Activity` via `WithActivity`.
+9. **Wiring** — `internal/app/wiring.go` (HTTP; handlers get the shared `kit`) or
+   `internal/app/platform.go` (shared with CLI, jobs, scheduler). Pass `platform.Activity` via
+   `WithActivity`. Recurring tasks go in the list in `internal/app/schedule.go`.
 10. **Permissions** — constants + catalog entries in `internal/authz/catalog.go`; add the group to
     `AdminTenantPermissions` if tenant admins should hold them; run `permission:sync`.
 11. **OpenAPI** — `go run ./cmd/app gen openapi --module=<name>` for generated regions, or

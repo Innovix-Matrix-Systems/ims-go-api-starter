@@ -122,9 +122,9 @@ code that owns them.
 enqueue via the `queue.Engine` (prefer `EnqueueTx` with your write). Jobs re-resolve tenancy from the
 envelope.
 
-**Scheduled tasks** — register `{ID, Spec, Description, Timeout, Overlap, Run}` in
-`internal/app/platform.go`; `Overlap` is `scheduler.OverlapSkip` (default) or
-`scheduler.OverlapAllow`. Tasks run in the `ims schedule` process only.
+**Scheduled tasks** — add `{ID, Spec, Description, Timeout, Run}` to the list in
+`internal/app/schedule.go` (Laravel's `Kernel::schedule`); overlapping runs are skipped unless you
+set `Overlap: scheduler.OverlapAllow`. Tasks run in the `ims schedule` process only.
 
 **Naming** — Go: `PascalCase` exported, package `snake`/single word. DB: `snake_case`, plural tables.
 JSON: `snake_case`. Migrations: `000NN_verb_noun.sql` (goose up/down). Rules listed in the
@@ -212,7 +212,7 @@ Products *product.Handler
 // NewDependencies, inside the deps literal:
 Products: product.NewHandler(
     product.NewService(product.NewRepository(queries)),
-    checker, binder, validator, responder,
+    checker, kit,
 ),
 ```
 
@@ -314,7 +314,7 @@ If you also touched the dashboard, run `make web-typecheck` and `make web-build`
 | DB registry, TxManager, migrate | `internal/platform/database` |
 | Cache stores | `internal/platform/cache` |
 | Queue engines + registry | `internal/platform/queue` |
-| Scheduler + tasks | `internal/platform/scheduler`, `internal/app/platform.go` |
+| Scheduler + tasks | `internal/platform/scheduler`, `internal/app/schedule.go` |
 | Storage disks, mail, i18n, health, metrics | `internal/platform/{storage,mail,i18n,health,metrics}` |
 | Business modules | `internal/modules/<name>` (`backup/` is transport-free) |
 | Developer dashboard SPA | `web/dev` (embedded by `web/dev/embed.go`) |

@@ -34,17 +34,17 @@ type backupStatsResponse struct {
 func (h *Handler) listBackups(w http.ResponseWriter, r *http.Request) {
 	limit, err := parseLimit(r.URL.Query().Get("limit"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	beforeID, err := parseCursor(r.URL.Query().Get("cursor"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	if status != "" && !backupStatuses[status] {
-		h.responder.Error(w, r, apperr.Validation(map[string][]string{
+		h.Error(w, r, apperr.Validation(map[string][]string{
 			"status": {"The status is invalid."},
 		}))
 		return
@@ -55,28 +55,28 @@ func (h *Handler) listBackups(w http.ResponseWriter, r *http.Request) {
 		Limit:    int32(limit),
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	nextCursor := ""
 	if len(runs) == limit && len(runs) > 0 {
 		nextCursor = strconv.FormatInt(runs[len(runs)-1].ID, 10)
 	}
-	h.responder.Cursor(w, r, http.StatusOK, runs, map[string]any{"next_cursor": nextCursor}, nil)
+	h.Cursor(w, r, http.StatusOK, runs, map[string]any{"next_cursor": nextCursor}, nil)
 }
 
 func (h *Handler) backupStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.backups.Stats(r.Context())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	monitor, err := h.backups.Monitor(r.Context())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, backupStatsResponse{
+	h.Data(w, r, http.StatusOK, backupStatsResponse{
 		TotalRuns:      stats.TotalRuns,
 		TotalSize:      stats.TotalSize,
 		SuccessfulRuns: stats.SuccessfulRuns,
@@ -88,7 +88,7 @@ func (h *Handler) backupStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) backupConfig(w http.ResponseWriter, r *http.Request) {
-	h.responder.Data(w, r, http.StatusOK, h.backups.Config(r.Context()))
+	h.Data(w, r, http.StatusOK, h.backups.Config(r.Context()))
 }
 
 func (h *Handler) createBackup(w http.ResponseWriter, r *http.Request) {
@@ -103,38 +103,36 @@ func (h *Handler) createBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit.Record(r.Context(), actorID, "backups.create", "backups", params, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusAccepted, run)
+	h.Data(w, r, http.StatusAccepted, run)
 }
 
 func (h *Handler) getBackup(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	run, err := h.backups.Get(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, run)
+	h.Data(w, r, http.StatusOK, run)
 }
 
 func (h *Handler) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	// A backup is a full copy of every tenant's data: viewing the dashboard
 	// (dev.view) is not enough to take one home (H14); the route needs
 	// dev.manage.
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	download, err := h.backups.Open(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	defer download.Reader.Close()
@@ -154,9 +152,8 @@ func (h *Handler) downloadBackup(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteBackup(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	run, getErr := h.backups.Get(r.Context(), id)
@@ -174,10 +171,10 @@ func (h *Handler) deleteBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	h.audit.Record(r.Context(), actorID, "backups.delete", formatTarget("backup", id), params, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 type cleanBackupsRequest struct {
@@ -187,11 +184,8 @@ type cleanBackupsRequest struct {
 func (h *Handler) cleanBackups(w http.ResponseWriter, r *http.Request) {
 	actorID := authn.UserID(r)
 	var request cleanBackupsRequest
-	if r.ContentLength != 0 {
-		if err := h.binder.JSON(w, r, &request); err != nil {
-			h.responder.Error(w, r, err)
-			return
-		}
+	if r.ContentLength != 0 && !h.Bind(w, r, &request) {
+		return
 	}
 	started := time.Now()
 	result, opErr := h.backups.Clean(r.Context(), request.DryRun)
@@ -202,8 +196,8 @@ func (h *Handler) cleanBackups(w http.ResponseWriter, r *http.Request) {
 		"failed":     result.Failed,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, result)
+	h.Data(w, r, http.StatusOK, result)
 }

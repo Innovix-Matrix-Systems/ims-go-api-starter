@@ -27,8 +27,8 @@ type Handler struct {
 }
 
 // NewHandler creates the file handler.
-func NewHandler(service *Service, checker *authz.Checker, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, Kit: httpx.NewKit(nil, nil, responder)}
+func NewHandler(service *Service, checker *authz.Checker, kit httpx.Kit) *Handler {
+	return &Handler{service: service, checker: checker, Kit: kit}
 }
 
 // tenantFilter resolves the data-access tenant for the caller: impersonation

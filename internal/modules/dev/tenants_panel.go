@@ -235,26 +235,25 @@ func (h *Handler) listTenants(w http.ResponseWriter, r *http.Request) {
 		Offset:       int32(offset),
 	}
 	if filter.Active != "" && filter.Active != "active" && filter.Active != "inactive" {
-		h.responder.Error(w, r, apperr.Validation(map[string][]string{"active": {"The active filter must be active or inactive."}}))
+		h.Error(w, r, apperr.Validation(map[string][]string{"active": {"The active filter must be active or inactive."}}))
 		return
 	}
 	if !tenantSubscriptionFilters[filter.Subscription] {
-		h.responder.Error(w, r, apperr.Validation(map[string][]string{"subscription": {"Unknown subscription status."}}))
+		h.Error(w, r, apperr.Validation(map[string][]string{"subscription": {"Unknown subscription status."}}))
 		return
 	}
 	rows, total, err := h.tenants.List(r.Context(), filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, rows, meta, links)
+	h.Paginated(w, r, http.StatusOK, rows, meta, links)
 }
 
 func (h *Handler) getTenant(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	detail, err := h.tenants.Detail(r.Context(), id)
@@ -262,8 +261,8 @@ func (h *Handler) getTenant(w http.ResponseWriter, r *http.Request) {
 		err = apperr.Newf(apperr.ResourceNotFound, "Tenant with ID '%d' was not found.", id)
 	}
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, detail)
+	h.Data(w, r, http.StatusOK, detail)
 }

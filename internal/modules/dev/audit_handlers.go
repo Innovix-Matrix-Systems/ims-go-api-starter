@@ -16,57 +16,56 @@ func (h *Handler) listActions(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	limit, err := parseLimit(query.Get("limit"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	filter, err := actionFilterFromQuery(query.Get)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	filter.Limit = int32(limit)
 	actions, total, err := h.audit.Search(r.Context(), filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	nextCursor := ""
 	if len(actions) == limit {
 		nextCursor = strconv.FormatInt(actions[len(actions)-1].ID, 10)
 	}
-	h.responder.Cursor(w, r, http.StatusOK, actions, map[string]any{"next_cursor": nextCursor, "total": total}, nil)
+	h.Cursor(w, r, http.StatusOK, actions, map[string]any{"next_cursor": nextCursor, "total": total}, nil)
 }
 
 func (h *Handler) getAction(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	action, err := h.audit.Get(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, action)
+	h.Data(w, r, http.StatusOK, action)
 }
 
 func (h *Handler) actionFacets(w http.ResponseWriter, r *http.Request) {
 	kinds, actors, err := h.audit.Facets(r.Context())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"actions": kinds, "actors": actors})
+	h.Data(w, r, http.StatusOK, map[string]any{"actions": kinds, "actors": actors})
 }
 
 func (h *Handler) actionStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.audit.Stats(r.Context(), h.auditRetentionDays)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, stats)
+	h.Data(w, r, http.StatusOK, stats)
 }
 
 func actionFilterFromQuery(get func(string) string) (ActionFilter, error) {

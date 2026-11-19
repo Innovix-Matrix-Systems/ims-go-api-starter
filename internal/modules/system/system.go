@@ -73,35 +73,23 @@ func (s *Service) Echo(message string) EchoResponse {
 
 // Module wires the system routes.
 type Module struct {
-	service   *Service
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
+	service *Service
+	httpx.Kit
 }
 
 // NewModule creates the system module.
-func NewModule(service *Service, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Module {
-	return &Module{
-		service:   service,
-		binder:    binder,
-		validator: validator,
-		responder: responder,
-	}
+func NewModule(service *Service, kit httpx.Kit) *Module {
+	return &Module{service: service, Kit: kit}
 }
 
 func (m *Module) info(w http.ResponseWriter, r *http.Request) {
-	m.responder.Data(w, r, http.StatusOK, m.service.Info())
+	m.Data(w, r, http.StatusOK, m.service.Info())
 }
 
 func (m *Module) echo(w http.ResponseWriter, r *http.Request) {
 	var req EchoRequest
-	if err := m.binder.JSON(w, r, &req); err != nil {
-		m.responder.Error(w, r, err)
+	if !m.Bind(w, r, &req) {
 		return
 	}
-	if err := m.validator.Struct(r.Context(), &req); err != nil {
-		m.responder.Error(w, r, err)
-		return
-	}
-	m.responder.Data(w, r, http.StatusOK, m.service.Echo(req.Message))
+	m.Data(w, r, http.StatusOK, m.service.Echo(req.Message))
 }

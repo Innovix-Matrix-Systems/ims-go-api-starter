@@ -30,8 +30,8 @@ type Handler struct {
 }
 
 // NewHandler creates the user handler.
-func NewHandler(service *Service, photo PhotoManager, exchange *ExchangeService, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, photo: photo, exchange: exchange, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
+func NewHandler(service *Service, photo PhotoManager, exchange *ExchangeService, checker *authz.Checker, kit httpx.Kit) *Handler {
+	return &Handler{service: service, photo: photo, exchange: exchange, checker: checker, Kit: kit}
 }
 
 func (h *Handler) responseFor(ctx context.Context, user User) Response {

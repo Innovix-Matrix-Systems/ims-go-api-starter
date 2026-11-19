@@ -50,7 +50,7 @@ func (h *Handler) requirePlayground(w http.ResponseWriter, r *http.Request) bool
 	if h.playgroundEnabled {
 		return true
 	}
-	h.responder.Error(w, r, apperr.New(apperr.ResourceNotFound,
+	h.Error(w, r, apperr.New(apperr.ResourceNotFound,
 		"The developer Playground is only available in local or development environments."))
 	return false
 }
@@ -63,7 +63,7 @@ func (h *Handler) playgroundInfoHandler(w http.ResponseWriter, r *http.Request) 
 	if h.queue != nil {
 		driver = h.queue.Kind()
 	}
-	h.responder.Data(w, r, http.StatusOK, playgroundInfo{
+	h.Data(w, r, http.StatusOK, playgroundInfo{
 		Enabled:     true,
 		QueueDriver: driver,
 		JobKind:     PlaygroundJobKind,
@@ -78,12 +78,12 @@ func (h *Handler) enqueuePlaygroundJobs(w http.ResponseWriter, r *http.Request) 
 	}
 	actorID := authn.UserID(r)
 	if h.queue == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "The queue engine is unavailable."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "The queue engine is unavailable."))
 		return
 	}
 
 	var request playgroundJobRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 
@@ -123,11 +123,11 @@ func (h *Handler) enqueuePlaygroundJobs(w http.ResponseWriter, r *http.Request) 
 	}
 	h.audit.Record(r.Context(), actorID, "playground.jobs", target, params, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
 	result.Driver = h.queue.Kind()
-	h.responder.Data(w, r, http.StatusAccepted, result)
+	h.Data(w, r, http.StatusAccepted, result)
 }
 
 func (h *Handler) enqueueSyntheticJobs(r *http.Request, request playgroundJobRequest) (playgroundJobResult, string, error) {

@@ -20,8 +20,8 @@ type RoleHandler struct {
 }
 
 // NewRoleHandler creates the role handler.
-func NewRoleHandler(service *RoleService, checker *authz.Checker, tenants TenantLookup, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *RoleHandler {
-	return &RoleHandler{service: service, checker: checker, tenants: tenants, Kit: httpx.NewKit(binder, validator, responder)}
+func NewRoleHandler(service *RoleService, checker *authz.Checker, tenants TenantLookup, kit httpx.Kit) *RoleHandler {
+	return &RoleHandler{service: service, checker: checker, tenants: tenants, Kit: kit}
 }
 
 // tenantSlims loads the slim tenants for a set of roles in one query and keys
@@ -206,8 +206,8 @@ type PermissionHandler struct {
 }
 
 // NewPermissionHandler creates the permission handler.
-func NewPermissionHandler(service *PermissionService, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *PermissionHandler {
-	return &PermissionHandler{service: service, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
+func NewPermissionHandler(service *PermissionService, checker *authz.Checker, kit httpx.Kit) *PermissionHandler {
+	return &PermissionHandler{service: service, checker: checker, Kit: kit}
 }
 
 func (h *PermissionHandler) index(w http.ResponseWriter, r *http.Request) {

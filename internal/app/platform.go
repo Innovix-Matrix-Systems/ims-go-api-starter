@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -139,9 +138,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	if err != nil {
 		return nil, nil, err
 	}
-	// Queues are observed through RiverEngine's JobObserver (which carries the
-	// inserted job id for deep links); no interface decorator is needed here.
-	telemetryQueue := queueEngine
 
 	mailDriver, err := mail.New(cfg.Mail, logger, cfg.IsDebug())
 	if err != nil {
@@ -154,7 +150,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	notificationsService := notifications.NewService(
 		notifications.NewRepository(txManager.Queries(), txManager),
 		store,
-		telemetryQueue,
+		queueEngine,
 		settingsService,
 		logger,
 	)
@@ -176,7 +172,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 		Repository: backup.NewRepository(txManager.Queries()),
 		Disks:      storageRegistry,
 		Pool:       dbRegistry.Primary().Pool,
-		Queue:      telemetryQueue,
+		Queue:      queueEngine,
 		DSN:        cfg.Database.Primary.DSN,
 		AppVersion: version.Version,
 		Logger:     logger,
@@ -212,12 +208,12 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	roleRepo := access.NewRoleRepository(txManager.Queries())
 	checker := authz.NewChecker(txManager.Queries(), store)
 	authenticator := authn.NewOpaqueAuthenticator(txManager.Queries(), identityRepo, cfg.Auth)
-	recovery := authn.NewRecovery(identityRepo, identityRepo, authenticator, store, mail.EngineEnqueuer{Engine: telemetryQueue}, cfg.Auth, logger)
+	recovery := authn.NewRecovery(identityRepo, identityRepo, authenticator, store, mail.EngineEnqueuer{Engine: queueEngine}, cfg.Auth, logger)
 	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard).
 		WithTx(txManager).
 		WithVerifier(recovery).
 		WithActivity(activityRecorder)
-	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, telemetryQueue, cfg, logger)
+	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, queueEngine, cfg, logger)
 	if err := exchangeService.RegisterJobs(queueRegistry); err != nil {
 		return nil, nil, err
 	}
@@ -225,188 +221,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	runner, err := scheduler.NewRunner(scheduleRegistry, logger, store, cfg.Schedule.Timezone)
 	if err != nil {
 		return nil, nil, err
-	}
-
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "scheduler.heartbeat",
-		Spec:        "* * * * *",
-		Description: "Records scheduler liveness for health checks.",
-		Overlap:     scheduler.OverlapSkip,
-		Run: func(ctx context.Context) error {
-			runner.Heartbeat(ctx)
-			return nil
-		},
-	}); err != nil {
-		return nil, nil, err
-	}
-
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "dataprocessing.cleanup-completed",
-		Spec:        "0 2 * * *",
-		Description: "Deletes completed processing jobs older than the retention window.",
-		Timeout:     30 * time.Minute,
-		Overlap:     scheduler.OverlapSkip,
-		Run:         dataprocessing.CleanupTask(processingService, settingsService, logger),
-	}); err != nil {
-		return nil, nil, err
-	}
-
-	// Retention (M30/M31): tables that otherwise grow forever.
-	if days := cfg.Activity.RetentionDays; days > 0 {
-		activityFeed := activity.NewService(txManager.Queries())
-		if err := scheduleRegistry.Register(scheduler.Task{
-			ID:          "activity.prune",
-			Spec:        "45 3 * * *",
-			Description: "Deletes activity-log entries older than ACTIVITY_RETENTION_DAYS.",
-			Timeout:     30 * time.Minute,
-			Overlap:     scheduler.OverlapSkip,
-			Run: func(ctx context.Context) error {
-				deleted, err := activityFeed.Purge(ctx, days)
-				if err != nil {
-					return err
-				}
-				logger.Info("activity log pruned", "deleted", deleted, "retention_days", days)
-				return nil
-			},
-		}); err != nil {
-			return nil, nil, err
-		}
-	}
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "notifications.purge-expired",
-		Spec:        "30 3 * * *",
-		Description: "Deletes notifications that expired more than 7 days ago.",
-		Timeout:     30 * time.Minute,
-		Overlap:     scheduler.OverlapSkip,
-		Run: func(ctx context.Context) error {
-			purged, err := txManager.Queries().PurgeExpiredNotifications(ctx)
-			if err != nil {
-				return err
-			}
-			logger.Info("expired notifications purged", "count", purged)
-			return nil
-		},
-	}); err != nil {
-		return nil, nil, err
-	}
-	if cfg.Cache.Driver == "database" {
-		if err := scheduleRegistry.Register(scheduler.Task{
-			ID:          "cache.purge-expired",
-			Spec:        "15 * * * *",
-			Description: "Deletes expired rows from the database cache table.",
-			Timeout:     10 * time.Minute,
-			Overlap:     scheduler.OverlapSkip,
-			Run: func(ctx context.Context) error {
-				purged, err := txManager.Queries().CacheDeleteExpired(ctx)
-				if err != nil {
-					return err
-				}
-				logger.Info("expired cache rows purged", "count", purged)
-				return nil
-			},
-		}); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "billing.expire-subscriptions",
-		Spec:        "0 */6 * * *",
-		Description: "Marks overdue subscriptions as expired.",
-		Timeout:     10 * time.Minute,
-		Overlap:     scheduler.OverlapSkip,
-		Run: func(ctx context.Context) error {
-			expired, err := billingSubscriptionService.ExpireOverdue(ctx)
-			if err != nil {
-				return err
-			}
-			logger.Info("subscriptions expired", "count", expired)
-			return nil
-		},
-	}); err != nil {
-		return nil, nil, err
-	}
-
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "billing.send-renewal-reminders",
-		Spec:        "0 8 * * *",
-		Description: "Logs renewal reminders for subscriptions expiring within 7/3/1 days.",
-		Timeout:     10 * time.Minute,
-		Overlap:     scheduler.OverlapSkip,
-		Run: func(ctx context.Context) error {
-			sent, err := billingSubscriptionService.SendRenewalReminders(ctx, logger, []int{7, 3, 1})
-			if err != nil {
-				return err
-			}
-			logger.Info("renewal reminders sent", "count", sent)
-			return nil
-		},
-	}); err != nil {
-		return nil, nil, err
-	}
-
-	if cfg.Backup.Enabled {
-		if err := scheduleRegistry.Register(scheduler.Task{
-			ID:          "backup.run",
-			Spec:        cfg.Backup.RunCron,
-			Description: "Creates a database backup archive and copies it to the configured destinations.",
-			Timeout:     cfg.Backup.Timeout,
-			Overlap:     scheduler.OverlapSkip,
-			Run: func(ctx context.Context) error {
-				run, err := backupService.Enqueue(ctx, backup.TriggerSchedule, 0)
-				if err != nil {
-					return err
-				}
-				logger.Info("backup queued", "run_id", run.ID, "filename", run.Filename)
-				return nil
-			},
-		}); err != nil {
-			return nil, nil, err
-		}
-		if err := scheduleRegistry.Register(scheduler.Task{
-			ID:          "backup.clean",
-			Spec:        cfg.Backup.CleanCron,
-			Description: "Applies the backup retention policy and deletes expired archives.",
-			Timeout:     30 * time.Minute,
-			Overlap:     scheduler.OverlapSkip,
-			Run: func(ctx context.Context) error {
-				result, err := backupService.Clean(ctx, false)
-				if err != nil {
-					return err
-				}
-				logger.Info("backup cleanup finished", "deleted", result.Deleted, "candidates", result.Candidates, "failed", result.Failed)
-				return nil
-			},
-		}); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	if cfg.DevDashboard.Enabled {
-		telemetryRepo := dev.NewTelemetryRepository(txManager.Queries())
-		retentionDays := cfg.DevDashboard.RetentionDays
-		if err := scheduleRegistry.Register(scheduler.Task{
-			ID:          "devdashboard.prune",
-			Spec:        "0 3 * * *",
-			Description: "Deletes dashboard telemetry and audit rows older than their retention windows.",
-			Timeout:     10 * time.Minute,
-			Overlap:     scheduler.OverlapSkip,
-			Run: func(ctx context.Context) error {
-				deleted, err := telemetryRepo.Prune(ctx, retentionDays)
-				if err != nil {
-					return err
-				}
-				logger.Info("dev dashboard telemetry pruned", "deleted", deleted, "retention_days", retentionDays)
-				audit, err := dev.NewActionRepository(txManager.Queries()).Prune(ctx, cfg.DevDashboard.AuditRetentionDays)
-				if err != nil {
-					return err
-				}
-				logger.Info("dev dashboard audit log pruned", "deleted", audit, "retention_days", cfg.DevDashboard.AuditRetentionDays)
-				return nil
-			},
-		}); err != nil {
-			return nil, nil, err
-		}
 	}
 
 	platform := &Platform{
@@ -417,7 +231,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 		Tx:               txManager,
 		Cache:            store,
 		Storage:          storageRegistry,
-		Queue:            telemetryQueue,
+		Queue:            queueEngine,
 		QueueRegistry:    queueRegistry,
 		Telemetry:        collector,
 		ScheduleRegistry: scheduleRegistry,
@@ -444,6 +258,11 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	if riverEngine, ok := queueEngine.(*queue.RiverEngine); ok {
 		riverEngine.SetObserver(collector)
 		platform.QueueAdmin = riverEngine.Admin()
+	}
+	for _, task := range platform.schedule() {
+		if err := scheduleRegistry.Register(task); err != nil {
+			return nil, nil, err
+		}
 	}
 	return platform, closeAll, nil
 }

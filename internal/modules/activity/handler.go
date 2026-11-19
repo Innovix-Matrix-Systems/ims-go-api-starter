@@ -21,8 +21,8 @@ type Handler struct {
 }
 
 // NewHandler creates the activity handler.
-func NewHandler(service *Service, checker *authz.Checker, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, Kit: httpx.NewKit(nil, nil, responder)}
+func NewHandler(service *Service, checker *authz.Checker, kit httpx.Kit) *Handler {
+	return &Handler{service: service, checker: checker, Kit: kit}
 }
 
 // RegisterRoutes mounts the tenant-resolved activity routes.

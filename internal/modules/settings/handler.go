@@ -22,8 +22,8 @@ type Handler struct {
 }
 
 // NewHandler creates the settings handler.
-func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
+func NewHandler(service *Service, checker *authz.Checker, kit httpx.Kit) *Handler {
+	return &Handler{service: service, checker: checker, Kit: kit}
 }
 
 // index returns the caller's effective settings, grouped for the UI.
@@ -205,8 +205,7 @@ func (h *Handler) groupsDestroy(w http.ResponseWriter, r *http.Request) {
 // assignGroup assigns a catalog key's global row to a settings group.
 func (h *Handler) assignGroup(w http.ResponseWriter, r *http.Request) {
 	var req AssignGroupRequest
-	if err := h.Binder().JSON(w, r, &req); err != nil {
-		h.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	effective, err := h.service.AssignKeyGroup(r.Context(), chi.URLParam(r, "key"), req.GroupID)

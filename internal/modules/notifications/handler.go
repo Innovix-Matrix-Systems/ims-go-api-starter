@@ -20,8 +20,8 @@ type Handler struct {
 }
 
 // NewHandler creates the notification handler.
-func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
+func NewHandler(service *Service, checker *authz.Checker, kit httpx.Kit) *Handler {
+	return &Handler{service: service, checker: checker, Kit: kit}
 }
 
 func (h *Handler) feed(w http.ResponseWriter, r *http.Request) {

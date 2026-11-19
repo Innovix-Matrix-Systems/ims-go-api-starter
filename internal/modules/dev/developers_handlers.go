@@ -31,20 +31,20 @@ func (h *Handler) listDevelopers(w http.ResponseWriter, r *http.Request) {
 		Offset: int32(offset),
 	}, authn.UserID(r))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, items, meta, links)
+	h.Paginated(w, r, http.StatusOK, items, meta, links)
 }
 
 func (h *Handler) developerStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.developers.Stats(r.Context())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, stats)
+	h.Data(w, r, http.StatusOK, stats)
 }
 
 type createDeveloperRequest struct {
@@ -56,7 +56,7 @@ type createDeveloperRequest struct {
 
 func (h *Handler) createDeveloper(w http.ResponseWriter, r *http.Request) {
 	var request createDeveloperRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	isActive := request.IsActive == nil || *request.IsActive
@@ -64,32 +64,31 @@ func (h *Handler) createDeveloper(w http.ResponseWriter, r *http.Request) {
 		Name: request.Name, Email: request.Email, Password: request.Password, IsActive: isActive,
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusCreated, developer)
+	h.Data(w, r, http.StatusCreated, developer)
 }
 
 func (h *Handler) ensureDeveloperRole(w http.ResponseWriter, r *http.Request) {
 	stats, err := h.developers.EnsureRole(r.Context(), authn.UserID(r))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, stats)
+	h.Data(w, r, http.StatusOK, stats)
 }
 
 func (h *Handler) removeDeveloper(w http.ResponseWriter, r *http.Request) {
-	userID, err := pathParamID(r, "user_id")
-	if err != nil {
-		h.responder.Error(w, r, err)
+	userID, ok := h.PathID(w, r, "user_id")
+	if !ok {
 		return
 	}
 	if err := h.developers.Remove(r.Context(), tenancy.From(r), authn.UserID(r), userID); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"removed": true})
+	h.Data(w, r, http.StatusOK, map[string]any{"removed": true})
 }
 
 func developerFromUser(user *identity.User, actorID int64) Developer {

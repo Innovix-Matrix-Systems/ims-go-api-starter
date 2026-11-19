@@ -25,11 +25,11 @@ func (h *Handler) simulateEvents(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	actorID := authn.UserID(r)
 	var request simulateEventsRequest
-	if !h.bind(w, r, &request) {
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	if h.collector == nil || !h.collector.Enabled() {
-		h.responder.Error(w, r, apperr.New(apperr.Conflict,
+		h.Error(w, r, apperr.New(apperr.Conflict,
 			"Telemetry capture is disabled; nothing would be recorded."))
 		return
 	}
@@ -62,7 +62,7 @@ func (h *Handler) simulateEvents(w http.ResponseWriter, r *http.Request) {
 		"exception": request.Exception,
 	}, started, nil)
 
-	h.responder.Data(w, r, http.StatusOK, map[string]any{
+	h.Data(w, r, http.StatusOK, map[string]any{
 		"request_id": requestID,
 		"logs":       request.Logs,
 		"exception":  request.Exception,

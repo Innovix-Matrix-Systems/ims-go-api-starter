@@ -31,9 +31,7 @@ func NewHandler(
 	payments *service.PaymentService,
 	approvals *service.ApprovalService,
 	checker *authz.Checker,
-	binder *httpx.Binder,
-	validator *httpx.Validator,
-	responder *httpx.Responder,
+	kit httpx.Kit,
 ) *Handler {
 	return &Handler{
 		packages:      packages,
@@ -41,7 +39,7 @@ func NewHandler(
 		payments:      payments,
 		approvals:     approvals,
 		checker:       checker,
-		Kit:           httpx.NewKit(binder, validator, responder),
+		Kit:           kit,
 	}
 }
 

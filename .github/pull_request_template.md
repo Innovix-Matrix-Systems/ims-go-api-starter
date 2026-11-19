@@ -19,7 +19,7 @@
 - [ ] 🚦 **Routes:** New/changed HTTP routes? (Yes/No — updated `api/openapi.yaml`?)
 - [ ] 📦 **Dependencies:** New Go module or npm package? (Yes/No)
 - [ ] ⚡ **Queue/Jobs:** New/changed queue definition (`backup.run`, `mail.send`, ...)? (Yes/No)
-- [ ] ⏰ **Scheduler:** New/changed tasks in `internal/app/platform.go`? (Yes/No)
+- [ ] ⏰ **Scheduler:** New/changed tasks in `internal/app/schedule.go`? (Yes/No)
 - [ ] 🔐 **Permissions:** New authz catalog entries + `permission:sync`? (Yes/No)
 - [ ] ⚙️ **Config:** New/changed env keys documented in `.env.example`? (Yes/No)
 - [ ] 🗄️ **Tenancy:** Tenant-scoped queries filter on an explicit `tenant_id`? (Yes/No/N/A)
