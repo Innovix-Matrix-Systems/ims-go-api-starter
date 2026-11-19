@@ -233,29 +233,6 @@ type BankTransfer struct {
 	Branch        string
 }
 
-// Storage holds the storage disk roots and S3 settings.
-type Storage struct {
-	PublicDir  string
-	PrivateDir string
-	S3         S3
-}
-
-// S3 holds the S3-compatible disk settings (aws-sdk-go-v2).
-type S3 struct {
-	Endpoint  string
-	Region    string
-	Bucket    string
-	AccessKey string
-	SecretKey string
-	PathStyle bool
-	PublicURL string
-}
-
-// Files holds the disk used for the file resource and attachments.
-type Files struct {
-	Disk string
-}
-
 // Processing holds the disk and path prefix for data-processing artifacts.
 type Processing struct {
 	Disk     string
@@ -343,11 +320,6 @@ type DevCapture struct {
 	Cache bool
 	Queue bool
 	Logs  bool
-}
-
-// Configured reports whether the S3 disk has the settings it needs.
-func (s S3) Configured() bool {
-	return s.Region != "" && s.Bucket != "" && s.AccessKey != "" && s.SecretKey != ""
 }
 
 // IsProduction reports whether the application runs in production.
@@ -541,21 +513,8 @@ func (c *Config) Validate() error {
 	if c.IsProduction() && c.Auth.TokenExpiration == 0 {
 		return errors.New("AUTH_TOKEN_EXPIRATION must be greater than zero in production (non-expiring tokens are not allowed)")
 	}
-	switch c.Files.Disk {
-	case "private", "public", "s3":
-	default:
-		return fmt.Errorf("FILES_DISK %q is not supported (private|public|s3)", c.Files.Disk)
-	}
-	if c.Files.Disk == "s3" && !c.Storage.S3.Configured() {
-		return errors.New("FILES_DISK=s3 requires S3_REGION, S3_BUCKET, S3_ACCESS_KEY and S3_SECRET_KEY")
-	}
-	switch c.Processing.Disk {
-	case "private", "public", "s3":
-	default:
-		return fmt.Errorf("DATA_PROCESSING_DISK %q is not supported (private|public|s3)", c.Processing.Disk)
-	}
-	if c.Processing.Disk == "s3" && !c.Storage.S3.Configured() {
-		return errors.New("DATA_PROCESSING_DISK=s3 requires S3_REGION, S3_BUCKET, S3_ACCESS_KEY and S3_SECRET_KEY")
+	if err := c.validateStorage(); err != nil {
+		return err
 	}
 	if c.Backup.Dir == "" {
 		return errors.New("BACKUP_DIR must not be empty")
@@ -977,40 +936,6 @@ func (c *Config) loadBilling() error {
 // Configured reports whether the bKash credentials are complete.
 func (b Bkash) Configured() bool {
 	return b.BaseURL != "" && b.AppKey != "" && b.AppSecret != "" && b.Username != "" && b.Password != ""
-}
-
-func (c *Config) loadStorage() error {
-	pathStyle, err := getBool("S3_PATH_STYLE", false)
-	if err != nil {
-		return err
-	}
-	publicDir := getString("STORAGE_PUBLIC_DIR", "")
-	if publicDir == "" {
-		publicDir = filepath.Join(c.App.StorageDir, "public")
-	}
-	privateDir := getString("STORAGE_PRIVATE_DIR", "")
-	if privateDir == "" {
-		privateDir = filepath.Join(c.App.StorageDir, "private")
-	}
-	c.Storage = Storage{
-		PublicDir:  publicDir,
-		PrivateDir: privateDir,
-		S3: S3{
-			Endpoint:  getString("S3_ENDPOINT", ""),
-			Region:    getString("S3_REGION", ""),
-			Bucket:    getString("S3_BUCKET", ""),
-			AccessKey: getString("S3_ACCESS_KEY", ""),
-			SecretKey: getString("S3_SECRET_KEY", ""),
-			PathStyle: pathStyle,
-			PublicURL: strings.TrimRight(getString("S3_PUBLIC_URL", ""), "/"),
-		},
-	}
-	return nil
-}
-
-func (c *Config) loadFiles() error {
-	c.Files = Files{Disk: getString("FILES_DISK", "public")}
-	return nil
 }
 
 func (c *Config) loadProcessing() error {

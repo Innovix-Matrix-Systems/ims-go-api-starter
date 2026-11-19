@@ -8,23 +8,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-// localDisk stores files under a root directory, optionally exposed through a
-// public URL prefix ({APP_URL}/storage).
+// localDisk stores files under a root directory on the server. A public local
+// disk has a base URL it is served from (the built-in one: {APP_URL}/storage).
 type localDisk struct {
 	name      string
 	root      string
 	urlPrefix string
+	public    bool
 }
 
-func newLocalDisk(name, root, appURL string) *localDisk {
-	prefix := ""
-	if appURL != "" {
-		prefix = strings.TrimRight(appURL, "/") + "/storage"
-	}
-	return &localDisk{name: name, root: root, urlPrefix: prefix}
+func newLocalDisk(name, root, baseURL string, public bool) *localDisk {
+	return &localDisk{name: name, root: root, urlPrefix: strings.TrimRight(baseURL, "/"), public: public}
 }
+
+func (d *localDisk) Public() bool { return d.public }
 
 func (d *localDisk) fullPath(path string) (string, error) {
 	clean := filepath.Clean(filepath.FromSlash("/" + strings.TrimLeft(path, "/")))
@@ -43,7 +43,7 @@ func (d *localDisk) Put(_ context.Context, path string, contents io.Reader, _ in
 	}
 	// Private-disk contents are readable by the service user only (L2).
 	dirMode, fileMode := os.FileMode(0o755), os.FileMode(0o644)
-	if d.urlPrefix == "" {
+	if !d.public {
 		dirMode, fileMode = 0o700, 0o600
 	}
 	if err := os.MkdirAll(filepath.Dir(target), dirMode); err != nil {
@@ -114,8 +114,14 @@ func (d *localDisk) Size(_ context.Context, path string) (int64, error) {
 }
 
 func (d *localDisk) URL(_ context.Context, path string) (string, error) {
-	if d.urlPrefix == "" {
+	if !d.public || d.urlPrefix == "" {
 		return "", fmt.Errorf("storage: disk %q has no public URL", d.name)
 	}
 	return d.urlPrefix + "/" + strings.TrimLeft(path, "/"), nil
+}
+
+// TemporaryURL is not available on local disks: private local files are
+// streamed through the application's authorized download route.
+func (d *localDisk) TemporaryURL(context.Context, string, time.Duration) (string, error) {
+	return "", ErrNoTemporaryURL
 }

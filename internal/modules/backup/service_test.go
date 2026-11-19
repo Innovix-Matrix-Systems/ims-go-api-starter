@@ -84,6 +84,12 @@ func (d *fakeDisk) URL(ctx context.Context, path string) (string, error) {
 	return "", nil
 }
 
+func (d *fakeDisk) TemporaryURL(context.Context, string, time.Duration) (string, error) {
+	return "", storage.ErrNoTemporaryURL
+}
+
+func (d *fakeDisk) Public() bool { return false }
+
 type fakeRegistry map[string]storage.Disk
 
 func (r fakeRegistry) Disk(name string) (storage.Disk, error) {

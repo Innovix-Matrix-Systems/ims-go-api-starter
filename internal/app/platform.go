@@ -157,7 +157,8 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		dbRegistry.Close()
 		return nil, nil, err
 	}
-	filesService := files.NewService(files.NewRepository(txManager.Queries()), storageRegistry, cfg.Files.Disk, txManager, logger)
+	filesService := files.NewService(files.NewRepository(txManager.Queries()), storageRegistry, cfg.Files.Disk, txManager, logger).
+		WithPublicDisk(cfg.Files.PublicDisk)
 	processingService := dataprocessing.NewService(dataprocessing.NewRepository(txManager.Queries())).
 		WithFiles(storageRegistry, cfg.Processing).
 		WithLogger(logger)

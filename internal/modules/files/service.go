@@ -49,19 +49,30 @@ type Service struct {
 	repo     Repository
 	disks    *storage.Registry
 	fileDisk string
-	tx       *database.TxManager
-	logger   *slog.Logger
-	storage  StorageLimiter
+	// publicDisk holds avatars when fileDisk is private (FILES_PUBLIC_DISK).
+	publicDisk string
+	tx         *database.TxManager
+	logger     *slog.Logger
+	storage    StorageLimiter
 }
 
 // avatarDisk is where profile photos live. Avatars are shown in <img> tags
 // without a bearer token, so a private FILES_DISK keeps them on the public
-// disk; library files follow FILES_DISK.
+// disk (FILES_PUBLIC_DISK); library files follow FILES_DISK.
 func (s *Service) avatarDisk() string {
-	if s.fileDisk == storage.DiskPrivate {
-		return storage.DiskPublic
+	if disk, err := s.disks.Disk(s.fileDisk); err == nil && disk.Public() {
+		return s.fileDisk
 	}
-	return s.fileDisk
+	return s.publicDisk
+}
+
+// WithPublicDisk sets the public disk used for avatars when FILES_DISK is
+// private (default "public").
+func (s *Service) WithPublicDisk(name string) *Service {
+	if name != "" {
+		s.publicDisk = name
+	}
+	return s
 }
 
 // WithStorageLimit enables the storage.mb quota check on uploads.
@@ -72,7 +83,7 @@ func (s *Service) WithStorageLimit(limiter StorageLimiter) *Service {
 
 // NewService creates the file service.
 func NewService(repo Repository, disks *storage.Registry, fileDisk string, tx *database.TxManager, logger *slog.Logger) *Service {
-	return &Service{repo: repo, disks: disks, fileDisk: fileDisk, tx: tx, logger: logger}
+	return &Service{repo: repo, disks: disks, fileDisk: fileDisk, publicDisk: storage.DiskPublic, tx: tx, logger: logger}
 }
 
 // Create stores a standalone library file. tenantID stamps the caller's
@@ -233,15 +244,15 @@ func (s *Service) Open(ctx context.Context, id int64) (io.ReadCloser, *File, err
 }
 
 // URL resolves the public URL of a stored file; failures degrade to "".
+// Files on a private disk (local or bucket) have no public URL; the handler
+// points clients at the authorized download route instead.
 func (s *Service) URL(ctx context.Context, file File) string {
-	if file.Disk == storage.DiskPrivate {
-		// Private files have no public URL; the handler points clients at
-		// the authorized download route instead.
-		return ""
-	}
 	disk, err := s.disks.Disk(file.Disk)
 	if err != nil {
 		s.logWarn(ctx, "file disk unavailable", file, err)
+		return ""
+	}
+	if !disk.Public() {
 		return ""
 	}
 	url, err := disk.URL(ctx, file.Path)

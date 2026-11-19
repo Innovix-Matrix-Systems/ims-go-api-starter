@@ -229,8 +229,15 @@ The running list (keep it in sync with `AGENTS.md`):
     `validation`; ~390 keys × en/bn); validator tags map to `validation.*` keys via go-i18n.
 14. Legacy `.xls` imports are rejected (xlsx/csv supported); per-row import errors use a
     `[{row, errors:{...}}]` shape; filter snapshots live in `data_processing_jobs`.
-15. `DATA_PROCESSING_DISK`/`FILES_DISK` use the names `private|public|s3`; file URLs are computed
-    from disk + path (no stored `url` snapshot).
+15. **Storage disks** (`config/storage.go`, `platform/storage`) work like Laravel's
+    `config/filesystems.php`: each disk has a name, a driver (`local` | `s3`) and a visibility.
+    Built-ins are `private`, `public` and `s3` (from `S3_*`); `STORAGE_DISKS=r2,minio` adds more
+    from `STORAGE_<NAME>_*`. `FILES_DISK`/`DATA_PROCESSING_DISK` name any disk, so moving uploads
+    to S3, Cloudflare R2, MinIO, Spaces or B2 is a `.env` change. Private disks (local or bucket)
+    never hand out URLs; files are read through the authorized download route, and avatars go to
+    `FILES_PUBLIC_DISK`. The S3 driver supports a key prefix (`ROOT`), presigned
+    `TemporaryURL`s, and only sends checksums when required (S3-compatible services reject the
+    SDK default). File URLs are computed from disk + path (no stored `url` snapshot).
 16. **Phase 6 — contract.** `api/openapi.yaml` is canonical and served verbatim; oapi-codegen runs
     types-only (the handwritten chi chain + `Responder` own the HTTP layer) and its output is
     diff-gated in CI. Docs are served via Scalar from a CDN (config-gated with `DOCS_ENABLED`).
