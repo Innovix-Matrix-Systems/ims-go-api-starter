@@ -113,6 +113,7 @@ func timePtr(ts pgtype.Timestamptz) *time.Time {
 	t := ts.Time
 	return &t
 }
+{{- if .HasTime}}
 
 func timestamptzPtr(value *time.Time) pgtype.Timestamptz {
 	if value == nil {
@@ -120,6 +121,7 @@ func timestamptzPtr(value *time.Time) pgtype.Timestamptz {
 	}
 	return pgtype.Timestamptz{Time: *value, Valid: true}
 }
+{{- end}}
 `
 
 const repositoryTmpl = `package {{.Pkg}}
@@ -127,6 +129,9 @@ const repositoryTmpl = `package {{.Pkg}}
 import (
 	"context"
 	"errors"
+{{- if .HasTime}}
+	"time"
+{{- end}}
 
 	"github.com/jackc/pgx/v5"
 
