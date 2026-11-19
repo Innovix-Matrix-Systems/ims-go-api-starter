@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing"
 	billingdomain "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
@@ -46,6 +46,7 @@ type Platform struct {
 	Cache            cache.Store
 	Storage          *storage.Registry
 	Queue            queue.Engine
+	Recovery         *authn.Recovery
 	QueueAdmin       queue.Admin
 	QueueRegistry    *queue.Registry
 	Telemetry        *telemetry.Collector
@@ -62,6 +63,7 @@ type Platform struct {
 	Files            *files.Service
 	Backup           *backup.Service
 	Notifications    *notifications.Service
+	Activity         *activity.Recorder
 	Exchange         *identity.ExchangeService
 	BillingPackages  *billingservice.PackageService
 	BillingSubs      *billingservice.SubscriptionService
@@ -72,87 +74,96 @@ type Platform struct {
 
 // NewPlatform constructs the platform dependencies. Pools connect lazily, so
 // this succeeds even when the database is temporarily unavailable.
-func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), error) {
+func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func(), err error) {
+	// One cleanup owner: every resource registers its closer as soon as it
+	// exists, and any error return closes them all (newest first).
+	var closers []func()
+	closeAll := func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			closers[i]()
+		}
+	}
+	defer func() {
+		if err != nil {
+			closeAll()
+		}
+	}()
+
 	lazyTracer := telemetry.NewLazyTracer()
 	dbRegistry, err := database.Open(context.Background(), cfg.Database, database.WithTracer(lazyTracer))
 	if err != nil {
 		return nil, nil, err
 	}
+	closers = append(closers, dbRegistry.Close)
 	txManager := database.NewTxManager(dbRegistry.Primary())
 
 	store, cacheCleanup, err := cachefactory.New(*cfg, txManager.Queries())
 	if err != nil {
-		dbRegistry.Close()
 		return nil, nil, err
+	}
+	closers = append(closers, cacheCleanup)
+	if !cfg.IsLocal() && (cfg.Cache.Driver == "memory" || cfg.Cache.Driver == "file") {
+		logger.Warn("per-process cache driver outside local development: permission/tenancy caches, rate limits and the scheduler heartbeat are not shared between the API, worker and scheduler processes; use CACHE_DRIVER=database or redis",
+			"driver", cfg.Cache.Driver, "env", cfg.App.Env)
 	}
 
 	// Telemetry: the collector's sink writes through the same pools it
 	// observes, so the tracer attaches lazily once the collector exists.
+	redactor := telemetry.NewRedactor(cfg.DevDashboard.RedactKeys)
 	collector := telemetry.NewCollector(telemetry.CaptureConfig{
 		Enabled:      cfg.DevDashboard.Enabled,
 		Capture:      cfg.DevDashboard.Capture,
 		SampleRate:   cfg.DevDashboard.SampleRate,
 		MaxBodyBytes: cfg.DevDashboard.MaxBodyBytes,
-	}, telemetry.NewRedactor(cfg.DevDashboard.RedactKeys), dev.NewTelemetrySink(txManager.Queries()), logger)
+	}, redactor, dev.NewTelemetrySink(txManager.Queries()), logger)
+	closers = append(closers, collector.Close)
 	lazyTracer.Attach(collector)
 	logger = slog.New(telemetry.WrapLogHandler(logger.Handler(), collector))
 	store = telemetry.WrapCache(store, collector)
 
 	queueRegistry := queue.NewRegistry()
 	scheduleRegistry := scheduler.NewRegistry()
-	settingsService := settings.NewService(settings.NewRepository(txManager.Queries()), store)
+	activityRecorder := activity.NewRecorder(txManager.Queries(), redactor, logger)
+	settingsService := settings.NewService(settings.NewRepository(txManager.Queries()), store).
+		WithActivity(activityRecorder)
 	featureFlagsService := featureflags.NewService(featureflags.NewRepository(txManager.Queries()), store)
 
 	if cfg.DevDashboard.Enabled && cfg.IsLocal() {
 		if err := dev.RegisterPlaygroundJob(queueRegistry); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
 			return nil, nil, err
 		}
 	}
 
 	queueEngine, err := newQueueEngine(cfg, dbRegistry.Primary().Pool, queueRegistry, logger)
 	if err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
-	// Queues are observed through RiverEngine's JobObserver (which carries the
-	// inserted job id for deep links); no interface decorator is needed here.
-	telemetryQueue := queueEngine
 
 	mailDriver, err := mail.New(cfg.Mail, logger, cfg.IsDebug())
 	if err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 	if err := mail.RegisterJob(queueRegistry, mailDriver); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
 	notificationsService := notifications.NewService(
 		notifications.NewRepository(txManager.Queries(), txManager),
 		store,
-		telemetryQueue,
+		queueEngine,
 		settingsService,
 		logger,
 	)
 	if err := notificationsService.RegisterJobs(queueRegistry); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
 	storageRegistry, err := storage.New(cfg, logger)
 	if err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
-	filesService := files.NewService(files.NewRepository(txManager.Queries()), storageRegistry, cfg.Files.Disk, txManager, logger)
+	filesService := files.NewService(files.NewRepository(txManager.Queries()), storageRegistry, cfg.Files.Disk, txManager, logger).
+		WithPublicDisk(cfg.Files.PublicDisk)
 	processingService := dataprocessing.NewService(dataprocessing.NewRepository(txManager.Queries())).
 		WithFiles(storageRegistry, cfg.Processing).
 		WithLogger(logger)
@@ -161,15 +172,13 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		Repository: backup.NewRepository(txManager.Queries()),
 		Disks:      storageRegistry,
 		Pool:       dbRegistry.Primary().Pool,
-		Queue:      telemetryQueue,
+		Queue:      queueEngine,
 		DSN:        cfg.Database.Primary.DSN,
 		AppVersion: version.Version,
 		Logger:     logger,
 	})
 	if cfg.Backup.Enabled {
 		if err := backup.RegisterJob(queueRegistry, backupService); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
 			return nil, nil, err
 		}
 	}
@@ -184,180 +193,53 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		Register(billingdomain.MethodNagad, billing.NagadDriver{}).
 		Register(billingdomain.MethodCash, billing.CashDriver{}).
 		Register(billingdomain.MethodBankTransfer, billing.BankTransferDriver{})
-	billingPackageService := billingservice.NewPackageService(billingPackages)
+	billingPackageService := billingservice.NewPackageService(billingPackages).WithTx(txManager)
 	billingSubscriptionService := billingservice.NewSubscriptionService(billingSubscriptions, billingPackages, billingPayments, billingApprovals, orchestrator).
-		WithNotifier(notificationsService)
+		WithNotifier(notificationsService).
+		WithCurrency(cfg.Billing.Currency).
+		WithTx(txManager).
+		WithActivity(activityRecorder)
 	billingPaymentService := billingservice.NewPaymentService(billingPayments, cfg.Billing.Currency)
 	billingApprovalService := billingservice.NewApprovalService(billingApprovals, billingPayments, billingSubscriptions, txManager)
 	billingGuard := billingservice.NewGuard(billingSubscriptions, billingPackages)
+	filesService.WithStorageLimit(billingGuard)
 
 	// Identity (shared by HTTP handlers, CLI commands and job handlers).
 	identityRepo := identity.NewRepository(txManager.Queries())
 	roleRepo := access.NewRoleRepository(txManager.Queries())
 	checker := authz.NewChecker(txManager.Queries(), store)
 	authenticator := authn.NewOpaqueAuthenticator(txManager.Queries(), identityRepo, cfg.Auth)
-	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard)
-	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, telemetryQueue, cfg, logger)
+	recovery := authn.NewRecovery(identityRepo, identityRepo, authenticator, store, mail.EngineEnqueuer{Engine: queueEngine}, cfg.Auth, logger)
+	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard).
+		WithTx(txManager).
+		WithVerifier(recovery).
+		WithActivity(activityRecorder)
+	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, queueEngine, cfg, logger)
 	if err := exchangeService.RegisterJobs(queueRegistry); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
 	runner, err := scheduler.NewRunner(scheduleRegistry, logger, store, cfg.Schedule.Timezone)
 	if err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
-	}
-
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "scheduler.heartbeat",
-		Spec:        "* * * * *",
-		Description: "Records scheduler liveness for health checks.",
-		Overlap:     scheduler.OverlapSkip,
-		Run: func(ctx context.Context) error {
-			runner.Heartbeat(ctx)
-			return nil
-		},
-	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
-		return nil, nil, err
-	}
-
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "dataprocessing.cleanup-completed",
-		Spec:        "0 2 * * *",
-		Description: "Deletes completed processing jobs older than the retention window.",
-		Timeout:     30 * time.Minute,
-		Overlap:     scheduler.OverlapSkip,
-		Run:         dataprocessing.CleanupTask(processingService, settingsService, logger),
-	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
-		return nil, nil, err
-	}
-
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "billing.expire-subscriptions",
-		Spec:        "0 */6 * * *",
-		Description: "Marks overdue subscriptions as expired.",
-		Timeout:     10 * time.Minute,
-		Overlap:     scheduler.OverlapSkip,
-		Run: func(ctx context.Context) error {
-			expired, err := billingSubscriptionService.ExpireOverdue(ctx)
-			if err != nil {
-				return err
-			}
-			logger.Info("subscriptions expired", "count", expired)
-			return nil
-		},
-	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
-		return nil, nil, err
-	}
-
-	if err := scheduleRegistry.Register(scheduler.Task{
-		ID:          "billing.send-renewal-reminders",
-		Spec:        "0 8 * * *",
-		Description: "Logs renewal reminders for subscriptions expiring within 7/3/1 days.",
-		Timeout:     10 * time.Minute,
-		Overlap:     scheduler.OverlapSkip,
-		Run: func(ctx context.Context) error {
-			sent, err := billingSubscriptionService.SendRenewalReminders(ctx, logger, []int{7, 3, 1})
-			if err != nil {
-				return err
-			}
-			logger.Info("renewal reminders sent", "count", sent)
-			return nil
-		},
-	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
-		return nil, nil, err
-	}
-
-	if cfg.Backup.Enabled {
-		if err := scheduleRegistry.Register(scheduler.Task{
-			ID:          "backup.run",
-			Spec:        cfg.Backup.RunCron,
-			Description: "Creates a database backup archive and copies it to the configured destinations.",
-			Timeout:     cfg.Backup.Timeout,
-			Overlap:     scheduler.OverlapSkip,
-			Run: func(ctx context.Context) error {
-				run, err := backupService.Enqueue(ctx, backup.TriggerSchedule, 0)
-				if err != nil {
-					return err
-				}
-				logger.Info("backup queued", "run_id", run.ID, "filename", run.Filename)
-				return nil
-			},
-		}); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
-			return nil, nil, err
-		}
-		if err := scheduleRegistry.Register(scheduler.Task{
-			ID:          "backup.clean",
-			Spec:        cfg.Backup.CleanCron,
-			Description: "Applies the backup retention policy and deletes expired archives.",
-			Timeout:     30 * time.Minute,
-			Overlap:     scheduler.OverlapSkip,
-			Run: func(ctx context.Context) error {
-				result, err := backupService.Clean(ctx, false)
-				if err != nil {
-					return err
-				}
-				logger.Info("backup cleanup finished", "deleted", result.Deleted, "candidates", result.Candidates, "failed", result.Failed)
-				return nil
-			},
-		}); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
-			return nil, nil, err
-		}
-	}
-
-	if cfg.DevDashboard.Enabled {
-		telemetryRepo := dev.NewTelemetryRepository(txManager.Queries())
-		retentionDays := cfg.DevDashboard.RetentionDays
-		if err := scheduleRegistry.Register(scheduler.Task{
-			ID:          "devdashboard.prune",
-			Spec:        "0 3 * * *",
-			Description: "Deletes developer dashboard telemetry older than the retention window.",
-			Timeout:     10 * time.Minute,
-			Overlap:     scheduler.OverlapSkip,
-			Run: func(ctx context.Context) error {
-				deleted, err := telemetryRepo.Prune(ctx, retentionDays)
-				if err != nil {
-					return err
-				}
-				logger.Info("dev dashboard telemetry pruned", "deleted", deleted, "retention_days", retentionDays)
-				return nil
-			},
-		}); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
-			return nil, nil, err
-		}
 	}
 
 	platform := &Platform{
+		Activity:         activityRecorder,
 		Config:           cfg,
 		Logger:           logger,
 		DB:               dbRegistry,
 		Tx:               txManager,
 		Cache:            store,
 		Storage:          storageRegistry,
-		Queue:            telemetryQueue,
+		Queue:            queueEngine,
 		QueueRegistry:    queueRegistry,
 		Telemetry:        collector,
 		ScheduleRegistry: scheduleRegistry,
 		ScheduleRunner:   runner,
 		Checker:          checker,
 		Authenticator:    authenticator,
+		Recovery:         recovery,
 		IdentityRepo:     identityRepo,
 		Identity:         identityService,
 		Exchange:         exchangeService,
@@ -378,12 +260,12 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		riverEngine.SetObserver(collector)
 		platform.QueueAdmin = riverEngine.Admin()
 	}
-	cleanup := func() {
-		collector.Close()
-		cacheCleanup()
-		dbRegistry.Close()
+	for _, task := range platform.schedule() {
+		if err := scheduleRegistry.Register(task); err != nil {
+			return nil, nil, err
+		}
 	}
-	return platform, cleanup, nil
+	return platform, closeAll, nil
 }
 
 // NewQueueEngine selects the configured queue engine.

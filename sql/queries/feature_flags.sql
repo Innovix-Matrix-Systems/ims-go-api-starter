@@ -24,17 +24,17 @@ ON CONFLICT (key) WHERE target_type IS NULL DO NOTHING
 RETURNING *;
 
 -- name: UpsertGlobalFeatureFlag :one
-INSERT INTO feature_flags (key, target_type, target_id, value, created_by, updated_by)
-VALUES (@key, NULL, NULL, @value, @actor_id, @actor_id)
+INSERT INTO feature_flags (key, target_type, target_id, value, rollout, created_by, updated_by)
+VALUES (@key, NULL, NULL, @value, sqlc.narg('rollout')::smallint, @actor_id, @actor_id)
 ON CONFLICT (key) WHERE target_type IS NULL DO UPDATE
-SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
+SET value = EXCLUDED.value, rollout = EXCLUDED.rollout, updated_by = EXCLUDED.updated_by, updated_at = now()
 RETURNING *;
 
 -- name: UpsertTargetFeatureFlag :one
-INSERT INTO feature_flags (key, target_type, target_id, value, created_by, updated_by)
-VALUES (@key, @target_type, @target_id, @value, @actor_id, @actor_id)
+INSERT INTO feature_flags (key, target_type, target_id, value, rollout, created_by, updated_by)
+VALUES (@key, @target_type, @target_id, @value, sqlc.narg('rollout')::smallint, @actor_id, @actor_id)
 ON CONFLICT (target_type, target_id, key) WHERE target_type IS NOT NULL DO UPDATE
-SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
+SET value = EXCLUDED.value, rollout = EXCLUDED.rollout, updated_by = EXCLUDED.updated_by, updated_at = now()
 RETURNING *;
 
 -- name: DeleteFeatureFlag :execrows

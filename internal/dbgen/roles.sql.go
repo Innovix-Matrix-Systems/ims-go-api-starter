@@ -148,6 +148,23 @@ func (q *Queries) DeleteRole(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteTenantRole = `-- name: DeleteTenantRole :execrows
+DELETE FROM roles WHERE id = $1 AND tenant_id = $2::bigint AND is_system = false
+`
+
+type DeleteTenantRoleParams struct {
+	ID       int64 `json:"id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+func (q *Queries) DeleteTenantRole(ctx context.Context, arg DeleteTenantRoleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTenantRole, arg.ID, arg.TenantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRole = `-- name: GetRole :one
 SELECT id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden FROM roles
 WHERE id = $1
@@ -483,6 +500,49 @@ func (q *Queries) UpdateRole(ctx context.Context, arg UpdateRoleParams) (Role, e
 	return i, err
 }
 
+const updateTenantRole = `-- name: UpdateTenantRole :one
+UPDATE roles
+SET name        = $1,
+    description = $2,
+    updated_by  = $3,
+    updated_at  = now()
+WHERE id = $4 AND tenant_id = $5::bigint AND is_system = false
+RETURNING id, tenant_id, name, guard_name, is_system, description, created_by, updated_by, created_at, updated_at, hidden
+`
+
+type UpdateTenantRoleParams struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	UpdatedBy   *int64  `json:"updated_by"`
+	ID          int64   `json:"id"`
+	TenantID    int64   `json:"tenant_id"`
+}
+
+func (q *Queries) UpdateTenantRole(ctx context.Context, arg UpdateTenantRoleParams) (Role, error) {
+	row := q.db.QueryRow(ctx, updateTenantRole,
+		arg.Name,
+		arg.Description,
+		arg.UpdatedBy,
+		arg.ID,
+		arg.TenantID,
+	)
+	var i Role
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.Name,
+		&i.GuardName,
+		&i.IsSystem,
+		&i.Description,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Hidden,
+	)
+	return i, err
+}
+
 const userRoleRefs = `-- name: UserRoleRefs :many
 SELECT r.id, r.name, r.is_system FROM roles r
 JOIN model_has_roles mr ON mr.role_id = r.id
@@ -512,6 +572,52 @@ func (q *Queries) UserRoleRefs(ctx context.Context, arg UserRoleRefsParams) ([]U
 	for rows.Next() {
 		var i UserRoleRefsRow
 		if err := rows.Scan(&i.ID, &i.Name, &i.IsSystem); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const userRoleRefsForUsers = `-- name: UserRoleRefsForUsers :many
+SELECT mr.model_id AS user_id, r.id, r.name, r.is_system FROM roles r
+JOIN model_has_roles mr ON mr.role_id = r.id
+WHERE mr.model_type = $1 AND mr.model_id = ANY($2::bigint[])
+  AND r.hidden = false
+ORDER BY mr.model_id, r.id
+`
+
+type UserRoleRefsForUsersParams struct {
+	ModelType string  `json:"model_type"`
+	UserIds   []int64 `json:"user_ids"`
+}
+
+type UserRoleRefsForUsersRow struct {
+	UserID   int64  `json:"user_id"`
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	IsSystem bool   `json:"is_system"`
+}
+
+// Role refs for a whole page of users in one query (no N+1).
+func (q *Queries) UserRoleRefsForUsers(ctx context.Context, arg UserRoleRefsForUsersParams) ([]UserRoleRefsForUsersRow, error) {
+	rows, err := q.db.Query(ctx, userRoleRefsForUsers, arg.ModelType, arg.UserIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserRoleRefsForUsersRow{}
+	for rows.Next() {
+		var i UserRoleRefsForUsersRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.ID,
+			&i.Name,
+			&i.IsSystem,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -2,13 +2,9 @@ package tenants
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
@@ -56,24 +52,17 @@ func NewResponse(tenant Tenant) Response {
 
 // Handler serves tenant endpoints (tenant-exempt group).
 type Handler struct {
-	service   *Service
-	checker   *authz.Checker
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
+	service *Service
+	checker *authz.Checker
+	httpx.Kit
 }
 
 // NewHandler creates the tenant handler.
-func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, binder: binder, validator: validator, responder: responder}
+func NewHandler(service *Service, checker *authz.Checker, kit httpx.Kit) *Handler {
+	return &Handler{service: service, checker: checker, Kit: kit}
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermTenantViewAll); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	page, perPage, offset := httpx.PageParams(r)
 	items, total, err := h.service.List(r.Context(), ListFilter{
 		Search: r.URL.Query().Get("search"),
@@ -81,7 +70,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		Offset: int32(offset),
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	data := make([]Response, 0, len(items))
@@ -89,48 +78,32 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		data = append(data, NewResponse(item))
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
+	h.Paginated(w, r, http.StatusOK, data, meta, links)
 }
 
 func (h *Handler) show(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermTenantView); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	id, err := tenantPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	tenant, err := h.service.Get(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*tenant))
+	h.Data(w, r, http.StatusOK, NewResponse(*tenant))
 }
 
 func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermTenantCreate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	isActive := true
 	if req.IsActive != nil {
 		isActive = *req.IsActive
 	}
-	tenant, err := h.service.Create(r.Context(), identity.UserID, CreateInput{
+	tenant, err := h.service.Create(r.Context(), authn.UserID(r), CreateInput{
 		Name:     strings.TrimSpace(req.Name),
 		Slug:     req.Slug,
 		Domain:   req.Domain,
@@ -139,42 +112,31 @@ func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
 		IsActive: isActive,
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusCreated, NewResponse(*tenant))
+	h.Data(w, r, http.StatusCreated, NewResponse(*tenant))
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermTenantUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	id, err := tenantPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	current, err := h.service.Get(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	isActive := current.IsActive
 	if req.IsActive != nil {
 		isActive = *req.IsActive
 	}
-	tenant, err := h.service.Update(r.Context(), identity.UserID, id, UpdateInput{
+	tenant, err := h.service.Update(r.Context(), authn.UserID(r), id, UpdateInput{
 		Name:     strings.TrimSpace(req.Name),
 		Slug:     req.Slug,
 		Domain:   req.Domain,
@@ -183,35 +145,25 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 		IsActive: isActive,
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*tenant))
+	h.Data(w, r, http.StatusOK, NewResponse(*tenant))
 }
 
 func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermTenantDelete); err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	id, err := tenantPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	if err := h.service.Delete(r.Context(), authn.UserID(r), id); err != nil {
+		h.Error(w, r, err)
 		return
 	}
-	if err := h.service.Delete(r.Context(), identity.UserID, id); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
-func tenantPathID(r *http.Request) (int64, error) {
-	raw := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 1 {
-		return 0, apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-	}
-	return id, nil
+// can is route middleware requiring a permission (Laravel's can:...).
+func (h *Handler) can(permission string) func(http.Handler) http.Handler {
+	return authz.Require(h.checker, permission, h.Responder)
 }

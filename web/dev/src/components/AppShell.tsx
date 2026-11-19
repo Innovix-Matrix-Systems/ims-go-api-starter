@@ -34,13 +34,15 @@ const navigation: NavGroup[] = [
     items: [
       { to: '/queue', label: 'Queue', icon: 'queue' },
       { to: '/backups', label: 'Backups', icon: 'backup' },
-      { to: '/actions', label: 'Commands', icon: 'actions' },
-      { to: '/system', label: 'System', icon: 'system' },
+      { to: '/commands', label: 'Commands', icon: 'terminal' },
+      { to: '/inspector', label: 'Inspector', icon: 'inspector' },
+      { to: '/actions', label: 'Audit log', icon: 'actions' },
     ],
   },
   {
     section: 'Management',
     items: [
+      { to: '/tenants', label: 'Tenants', icon: 'tenants' },
       { to: '/sessions', label: 'Sessions', icon: 'sessions' },
       { to: '/settings', label: 'Settings', icon: 'settings' },
       { to: '/flags', label: 'Feature Flags', icon: 'flags' },

@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"context"
@@ -11,41 +11,23 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/app"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	billingdomain "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 // TestTenantIsolationMatrix is the end-to-end tenancy
 // isolation matrix: an admin user of one tenant must not be able to read,
 // update or delete another tenant's resources (404), and lists must be scoped.
 func TestTenantIsolationMatrix(t *testing.T) {
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-
-	dbtest.Clean(t, pool,
-		"payment_approval_requests", "payments", "subscriptions",
-		"package_features", "packages",
-		"personal_access_tokens", "role_has_permissions", "model_has_roles",
-		"users", "roles", "permissions", "branches", "tenants",
-	)
+	kit := testkit.New(t)
+	cfg := kit.Config
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
+	deps, pool := kit.Deps, kit.Pool
 
 	ctx := context.Background()
 	if err := seeder.Run(ctx, cfg, deps.Tx.Queries(), deps.Tx, deps.Checker, logger); err != nil {
@@ -264,7 +246,7 @@ func createRoleViaAPI(t *testing.T, router http.Handler, token, name string) int
 	return body.Data.ID
 }
 
-func roleIDForTenant(t *testing.T, ctx context.Context, deps *Dependencies, name string, tenantID int64) int64 {
+func roleIDForTenant(t *testing.T, ctx context.Context, deps *app.Dependencies, name string, tenantID int64) int64 {
 	t.Helper()
 	role, err := deps.Tx.Queries().GetRoleByName(ctx, dbgen.GetRoleByNameParams{Name: name, TenantID: &tenantID})
 	if err != nil {

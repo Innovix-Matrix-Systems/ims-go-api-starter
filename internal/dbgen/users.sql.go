@@ -152,10 +152,17 @@ func (q *Queries) EmailExists(ctx context.Context, arg EmailExistsParams) (bool,
 const getUser = `-- name: GetUser :one
 SELECT id, tenant_id, branch_id, active_branch_id, first_name, last_name, user_name, name, email, email_verified_at, phone, phone_verified_at, password, is_active, last_login_at, last_active_device, remember_token, created_by, updated_by, created_at, updated_at, deleted_at FROM users
 WHERE id = $1 AND deleted_at IS NULL
+  AND ($2::boolean OR tenant_id = $3::bigint)
 `
 
-func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
-	row := q.db.QueryRow(ctx, getUser, id)
+type GetUserParams struct {
+	ID         int64 `json:"id"`
+	AllTenants bool  `json:"all_tenants"`
+	TenantID   int64 `json:"tenant_id"`
+}
+
+func (q *Queries) GetUser(ctx context.Context, arg GetUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, getUser, arg.ID, arg.AllTenants, arg.TenantID)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -422,6 +429,20 @@ func (q *Queries) ListUsersForExport(ctx context.Context, arg ListUsersForExport
 	return items, nil
 }
 
+const markUserEmailVerified = `-- name: MarkUserEmailVerified :execrows
+UPDATE users
+SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
+WHERE id = $1 AND deleted_at IS NULL
+`
+
+func (q *Queries) MarkUserEmailVerified(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, markUserEmailVerified, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const phoneExists = `-- name: PhoneExists :one
 SELECT EXISTS (
     SELECT 1 FROM users
@@ -447,15 +468,23 @@ const softDeleteUser = `-- name: SoftDeleteUser :execrows
 UPDATE users
 SET deleted_at = now(), updated_by = $1, updated_at = now()
 WHERE id = $2 AND deleted_at IS NULL
+  AND ($3::boolean OR tenant_id = $4::bigint)
 `
 
 type SoftDeleteUserParams struct {
-	UpdatedBy *int64 `json:"updated_by"`
-	ID        int64  `json:"id"`
+	UpdatedBy  *int64 `json:"updated_by"`
+	ID         int64  `json:"id"`
+	AllTenants bool   `json:"all_tenants"`
+	TenantID   int64  `json:"tenant_id"`
 }
 
 func (q *Queries) SoftDeleteUser(ctx context.Context, arg SoftDeleteUserParams) (int64, error) {
-	result, err := q.db.Exec(ctx, softDeleteUser, arg.UpdatedBy, arg.ID)
+	result, err := q.db.Exec(ctx, softDeleteUser,
+		arg.UpdatedBy,
+		arg.ID,
+		arg.AllTenants,
+		arg.TenantID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -511,18 +540,26 @@ SET first_name  = $1,
     updated_by  = $7,
     updated_at  = now()
 WHERE id = $8 AND deleted_at IS NULL
+  AND ($9::boolean OR tenant_id = $10::bigint)
+  -- Optional optimistic lock: when the client sends the updated_at it last
+  -- saw, a concurrent change makes this match nothing (409 in the service).
+  AND ($11::timestamptz IS NULL
+       OR updated_at = $11::timestamptz)
 RETURNING id, tenant_id, branch_id, active_branch_id, first_name, last_name, user_name, name, email, email_verified_at, phone, phone_verified_at, password, is_active, last_login_at, last_active_device, remember_token, created_by, updated_by, created_at, updated_at, deleted_at
 `
 
 type UpdateUserParams struct {
-	FirstName *string `json:"first_name"`
-	LastName  *string `json:"last_name"`
-	Name      string  `json:"name"`
-	Phone     *string `json:"phone"`
-	IsActive  int16   `json:"is_active"`
-	BranchID  *int64  `json:"branch_id"`
-	UpdatedBy *int64  `json:"updated_by"`
-	ID        int64   `json:"id"`
+	FirstName         *string            `json:"first_name"`
+	LastName          *string            `json:"last_name"`
+	Name              string             `json:"name"`
+	Phone             *string            `json:"phone"`
+	IsActive          int16              `json:"is_active"`
+	BranchID          *int64             `json:"branch_id"`
+	UpdatedBy         *int64             `json:"updated_by"`
+	ID                int64              `json:"id"`
+	AllTenants        bool               `json:"all_tenants"`
+	TenantID          int64              `json:"tenant_id"`
+	ExpectedUpdatedAt pgtype.Timestamptz `json:"expected_updated_at"`
 }
 
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, error) {
@@ -535,6 +572,9 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		arg.BranchID,
 		arg.UpdatedBy,
 		arg.ID,
+		arg.AllTenants,
+		arg.TenantID,
+		arg.ExpectedUpdatedAt,
 	)
 	var i User
 	err := row.Scan(
@@ -568,16 +608,25 @@ const updateUserPassword = `-- name: UpdateUserPassword :execrows
 UPDATE users
 SET password = $1, updated_by = $2, updated_at = now()
 WHERE id = $3 AND deleted_at IS NULL
+  AND ($4::boolean OR tenant_id = $5::bigint)
 `
 
 type UpdateUserPasswordParams struct {
-	Password  string `json:"password"`
-	UpdatedBy *int64 `json:"updated_by"`
-	ID        int64  `json:"id"`
+	Password   string `json:"password"`
+	UpdatedBy  *int64 `json:"updated_by"`
+	ID         int64  `json:"id"`
+	AllTenants bool   `json:"all_tenants"`
+	TenantID   int64  `json:"tenant_id"`
 }
 
 func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateUserPassword, arg.Password, arg.UpdatedBy, arg.ID)
+	result, err := q.db.Exec(ctx, updateUserPassword,
+		arg.Password,
+		arg.UpdatedBy,
+		arg.ID,
+		arg.AllTenants,
+		arg.TenantID,
+	)
 	if err != nil {
 		return 0, err
 	}

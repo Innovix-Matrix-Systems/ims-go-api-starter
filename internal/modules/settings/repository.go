@@ -19,6 +19,7 @@ type Setting struct {
 	TargetType *string
 	TargetID   *int64
 	GroupID    *int64
+	SortOrder  *int32 // hand-picked position in the group; nil = catalog order
 	Value      []byte
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
@@ -77,6 +78,8 @@ type Repository interface {
 	CountGroups(ctx context.Context, filter GroupListFilter) (int64, error)
 	ListGroupsLight(ctx context.Context, orderBy, orderDir string) ([]StoredGroup, error)
 	SetSettingGroup(ctx context.Context, key string, groupID *int64) (*Setting, error)
+	PlaceSetting(ctx context.Context, key string, groupID *int64, sortOrder int32) (bool, error)
+	SetGroupSortOrder(ctx context.Context, id int64, sortOrder int32) (bool, error)
 	TenantExists(ctx context.Context, tenantID int64) (bool, error)
 }
 
@@ -326,6 +329,22 @@ func (r *repository) SetSettingGroup(ctx context.Context, key string, groupID *i
 	return &setting, nil
 }
 
+func (r *repository) PlaceSetting(ctx context.Context, key string, groupID *int64, sortOrder int32) (bool, error) {
+	affected, err := r.queries.PlaceSetting(ctx, dbgen.PlaceSettingParams{Key: key, GroupID: groupID, SortOrder: &sortOrder})
+	if err != nil {
+		return false, database.MapError("settings.place", err)
+	}
+	return affected > 0, nil
+}
+
+func (r *repository) SetGroupSortOrder(ctx context.Context, id int64, sortOrder int32) (bool, error) {
+	affected, err := r.queries.SetSettingsGroupSortOrder(ctx, dbgen.SetSettingsGroupSortOrderParams{ID: id, SortOrder: sortOrder})
+	if err != nil {
+		return false, database.MapError("settings.group_order", err)
+	}
+	return affected > 0, nil
+}
+
 func (r *repository) TenantExists(ctx context.Context, tenantID int64) (bool, error) {
 	_, err := r.queries.GetTenant(ctx, tenantID)
 	if err != nil {
@@ -344,6 +363,7 @@ func mapSetting(row dbgen.Setting) Setting {
 		TargetType: row.TargetType,
 		TargetID:   row.TargetID,
 		GroupID:    row.GroupID,
+		SortOrder:  row.SortOrder,
 		Value:      row.Value,
 		CreatedAt:  row.CreatedAt.Time,
 		UpdatedAt:  row.UpdatedAt.Time,

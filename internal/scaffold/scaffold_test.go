@@ -79,19 +79,34 @@ func TestGenerateProducesExpectedFiles(t *testing.T) {
 		"sql/queries/products.sql":               "-- name: GetProduct :one",
 		"internal/modules/product/model.go":      "type Product struct",
 		"internal/modules/product/repository.go": "func NewRepository(queries *dbgen.Queries) Repository",
-		"internal/modules/product/service.go":    "PermView",
-		"internal/modules/product/handler.go":    "func (h *Handler) index",
-		"internal/modules/product/routes.go":     "func (h *Handler) RegisterRoutes",
+		"internal/modules/product/service.go":    "func NewService(repo Repository) *Service",
+		"internal/modules/product/handler.go":    "PermView",
+		"internal/modules/product/routes.go":     "r.With(h.can(PermView)).Get(",
 	}
 	for path, needle := range checks {
 		if !strings.Contains(byPath[path], needle) {
 			t.Errorf("%s missing %q", path, needle)
 		}
 	}
+	// Permission checks belong to the HTTP edge: the generated service is
+	// callable from CLI/jobs and must not depend on authn.
+	if strings.Contains(byPath["internal/modules/product/service.go"], "/internal/authn") {
+		t.Error("generated service imports authn")
+	}
 }
 
 func TestGenerateRejectsBadName(t *testing.T) {
 	if _, err := Generate(Options{Name: "", Fields: []Field{{Name: "x", Type: "string"}}}); err == nil {
 		t.Error("expected error for empty name")
+	}
+	for _, opts := range []Options{
+		{Name: "../evil"},
+		{Name: "product", Table: "products; DROP TABLE users"},
+		{Name: "product", Package: "Product"},
+	} {
+		opts.Fields = []Field{{Name: "x", Type: "string"}}
+		if _, err := Generate(opts); err == nil {
+			t.Errorf("Generate(%+v) accepted an unsafe identifier", opts)
+		}
 	}
 }

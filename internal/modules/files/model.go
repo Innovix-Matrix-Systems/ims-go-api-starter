@@ -76,6 +76,7 @@ type File struct {
 	OwnerType  *string
 	OwnerID    *int64
 	Collection *string
+	TenantID   *int64
 	CreatedBy  *int64
 	UpdatedBy  *int64
 	CreatedAt  time.Time
@@ -100,6 +101,7 @@ func mapFile(row dbgen.File) File {
 		OwnerType:  row.OwnerType,
 		OwnerID:    row.OwnerID,
 		Collection: row.Collection,
+		TenantID:   row.TenantID,
 		CreatedBy:  row.CreatedBy,
 		UpdatedBy:  row.UpdatedBy,
 		CreatedAt:  row.CreatedAt.Time,

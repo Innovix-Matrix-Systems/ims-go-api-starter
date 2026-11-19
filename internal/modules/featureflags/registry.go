@@ -3,12 +3,15 @@
 // separate from settings so flag reads never load settings.
 package featureflags
 
-// Flag is one boolean feature-flag definition.
+// Flag is one boolean feature-flag definition. A stored value can enable a
+// flag for everyone or for a percentage (rollout) of users; set RolloutBy to
+// RolloutByTenant to roll out whole tenants instead of single users.
 type Flag struct {
 	Key         string
 	Description string
 	Default     bool
 	Group       string
+	RolloutBy   string // RolloutByUser (default) or RolloutByTenant
 }
 
 // Catalog is the application feature-flag catalog; `feature-flags:sync` upserts

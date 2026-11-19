@@ -31,6 +31,7 @@ func RegisterPlaygroundJob(registry *queue.Registry) error {
 		Queue:       queue.QueueDefault,
 		MaxRetries:  0,
 		Timeout:     30 * time.Second,
+		SystemJob:   true,
 		Validate:    validatePlaygroundJob,
 		Handle:      handlePlaygroundJob,
 	})

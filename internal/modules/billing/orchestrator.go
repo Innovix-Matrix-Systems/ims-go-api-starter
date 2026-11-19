@@ -7,6 +7,7 @@ import (
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/service"
 )
 
 // Orchestrator selects drivers, creates payment rows and invokes gateways.
@@ -25,6 +26,14 @@ func NewOrchestrator(payments domain.PaymentRepository, currency string) *Orches
 		currency: currency,
 		now:      time.Now,
 	}
+}
+
+// WithPayments returns a copy that writes payment rows through payments
+// (e.g. a transaction-bound repository); drivers are shared.
+func (o *Orchestrator) WithPayments(payments domain.PaymentRepository) service.Gateway {
+	clone := *o
+	clone.payments = payments
+	return &clone
 }
 
 // Register adds a driver for a payment method.
@@ -58,6 +67,10 @@ func (o *Orchestrator) Charge(ctx context.Context, tenantID int64, subscriptionI
 		return nil, err
 	}
 
+	invoice, err := domain.GenerateInvoiceNumber(o.now())
+	if err != nil {
+		return nil, err
+	}
 	payment, err := o.payments.Create(ctx, domain.PaymentInput{
 		TenantID:       tenantID,
 		SubscriptionID: subscriptionID,
@@ -65,7 +78,7 @@ func (o *Orchestrator) Charge(ctx context.Context, tenantID int64, subscriptionI
 		Status:         domain.PaymentPending,
 		Amount:         amount,
 		Currency:       o.currency,
-		InvoiceNumber:  domain.GenerateInvoiceNumber(o.now()),
+		InvoiceNumber:  invoice,
 		CreatedBy:      actorID,
 	})
 	if err != nil {

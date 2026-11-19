@@ -24,6 +24,9 @@ func (d *Dependencies) Router() http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(httpx.RequestID)
+	if !d.Config.IsLocal() {
+		r.Use(httpx.PublicOrigin(d.Config.App.URL))
+	}
 	r.Use(httpx.RealIP(d.Config.HTTP.TrustedProxies))
 	if d.Config.Security.HeadersEnabled {
 		r.Use(httpx.SecurityHeaders)
@@ -43,7 +46,8 @@ func (d *Dependencies) Router() http.Handler {
 		r.Use(d.Metrics.Middleware)
 	}
 	r.Use(httpx.Timeout(d.Config.HTTP.RequestTimeout, d.Responder))
-	r.Use(ratelimit.Middleware(d.Limiter, ratelimit.KeyByIP, d.Responder))
+	// Health probes and metrics scrapes never spend the per-IP budget.
+	r.Use(ratelimit.Middleware(d.Limiter, ratelimit.KeyByIP, d.Responder, "/up", "/api/health", "/metrics"))
 	r.Use(d.I18n.Middleware(d.Config.App.SupportedLocales, d.Config.App.FallbackLocale))
 
 	r.Get("/up", d.up)
@@ -55,7 +59,7 @@ func (d *Dependencies) Router() http.Handler {
 		r.Get("/docs/openapi.yaml", docs.Spec)
 	}
 	if d.Config.Ops.MetricsEnabled && d.Metrics != nil {
-		r.Handle("/metrics", d.Metrics.Handler())
+		r.Handle("/metrics", httpx.ProtectOps(d.Config.Ops.MetricsToken, d.Metrics.Handler()))
 	}
 
 	// Developer dashboard: one gate for the SPA, its JSON API and the telemetry
@@ -82,11 +86,16 @@ func (d *Dependencies) Router() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(authn.Authenticate(d.Authenticator, d.Responder))
 
+			// Session routes act only on the caller's own token: no tenant
+			// resolution, so tenantless accounts (super-admin, developer)
+			// can sign out too.
+			d.Auth.RegisterRoutes(r)
+
 			r.Group(func(r chi.Router) {
 				r.Use(tenancy.Resolve(d.TenancyOpts))
-				d.Auth.RegisterRoutes(r)
 				d.Users.RegisterRoutesResolve(r)
 				d.Branches.RegisterRoutes(r)
+				d.Activity.RegisterRoutes(r)
 				d.Roles.RegisterRoutesResolve(r)
 				d.Billing.RegisterRoutesResolve(r)
 				d.Notifications.RegisterRoutesResolve(r)
@@ -97,15 +106,26 @@ func (d *Dependencies) Router() http.Handler {
 
 			r.Group(func(r chi.Router) {
 				r.Use(tenancy.Exempt())
-				d.Tenants.RegisterRoutes(r)
-				d.Permissions.RegisterRoutes(r)
-				d.Users.RegisterRoutesExempt(r)
-				d.Roles.RegisterRoutesExempt(r)
-				d.Billing.RegisterRoutesExempt(r)
+
+				// Shared exempt surfaces: files are creator-scoped (plus the
+				// system-only file.view.all / file.delete permissions) and
+				// permission metadata carries no tenant data.
 				d.Files.RegisterRoutes(r)
-				d.Notifications.RegisterRoutesExempt(r)
-				d.Settings.RegisterInternalRoutes(r)
-				d.Flags.RegisterInternalRoutes(r)
+				d.Permissions.RegisterRoutes(r)
+
+				// System-only exempt families: tenant-bound identities are
+				// rejected before their handlers run, so a granted system
+				// permission alone can never reach cross-tenant endpoints.
+				r.Group(func(r chi.Router) {
+					r.Use(tenancy.InternalOnly(d.Responder))
+					d.Tenants.RegisterRoutes(r)
+					d.Users.RegisterRoutesExempt(r)
+					d.Roles.RegisterRoutesExempt(r)
+					d.Billing.RegisterRoutesExempt(r)
+					d.Notifications.RegisterRoutesExempt(r)
+					d.Settings.RegisterInternalRoutes(r)
+					d.Flags.RegisterInternalRoutes(r)
+				})
 			})
 		})
 	})
@@ -117,6 +137,7 @@ func (d *Dependencies) Router() http.Handler {
 		d.Responder.Error(w, r, apperr.New(apperr.MethodNotAllowed, "The HTTP method is not supported for this resource."))
 	})
 
+	d.routes = r
 	return r
 }
 

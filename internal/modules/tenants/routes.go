@@ -1,12 +1,16 @@
 package tenants
 
-import "github.com/go-chi/chi/v5"
+import (
+	"github.com/go-chi/chi/v5"
+
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
+)
 
 // RegisterRoutes mounts tenant management routes.
 func (h *Handler) RegisterRoutes(r chi.Router) {
-	r.Get("/tenant", h.index)
-	r.Get("/tenant/{id}", h.show)
-	r.Post("/tenant", h.store)
-	r.Patch("/tenant/{id}", h.update)
-	r.Delete("/tenant/{id}", h.destroy)
+	r.With(h.can(authz.PermTenantViewAll)).Get("/tenant", h.index)
+	r.With(h.can(authz.PermTenantView)).Get("/tenant/{id}", h.show)
+	r.With(h.can(authz.PermTenantCreate)).Post("/tenant", h.store)
+	r.With(h.can(authz.PermTenantUpdate)).Patch("/tenant/{id}", h.update)
+	r.With(h.can(authz.PermTenantDelete)).Delete("/tenant/{id}", h.destroy)
 }

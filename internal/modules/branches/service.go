@@ -2,17 +2,13 @@ package branches
 
 import (
 	"context"
-	"net/http"
-	"strconv"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
+	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/cache"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
@@ -23,22 +19,52 @@ type UserChecker interface {
 
 // LimitChecker enforces billing plan limits for tenant resources.
 type LimitChecker interface {
-	RequireWithinLimitByName(ctx context.Context, tenantID int64, feature string, current int64) error
+	// QuotaFor reads the plan limit (before any lock) and returns a check
+	// that only compares numbers.
+	QuotaFor(ctx context.Context, tenantID int64, feature string) (func(current int64) error, error)
 }
 
 // Service implements branch business rules.
 type Service struct {
-	repo    Repository
-	users   UserChecker
-	cache   cache.Store
-	checker *authz.Checker
-	cfg     config.Tenancy
-	limits  LimitChecker
+	repo     Repository
+	users    UserChecker
+	cache    cache.Store
+	cfg      config.Tenancy
+	limits   LimitChecker
+	tx       *database.TxManager
+	activity *activity.Recorder
+}
+
+// WithActivity records branch changes in the activity log.
+func (s *Service) WithActivity(recorder *activity.Recorder) *Service {
+	s.activity = recorder
+	return s
+}
+
+func (input CreateParams) changes() map[string]any {
+	changes := map[string]any{"name": input.Name}
+	for key, value := range map[string]*string{
+		"address": input.Address, "description": input.Description, "phone": input.Phone, "email": input.Email,
+	} {
+		if value != nil {
+			changes[key] = *value
+		}
+	}
+	if input.ManagerID != nil {
+		changes["manager_id"] = *input.ManagerID
+	}
+	return changes
 }
 
 // NewService creates the branch service.
-func NewService(repo Repository, users UserChecker, store cache.Store, checker *authz.Checker, cfg config.Tenancy, limits LimitChecker) *Service {
-	return &Service{repo: repo, users: users, cache: store, checker: checker, cfg: cfg, limits: limits}
+func NewService(repo Repository, users UserChecker, store cache.Store, cfg config.Tenancy, limits LimitChecker) *Service {
+	return &Service{repo: repo, users: users, cache: store, cfg: cfg, limits: limits}
+}
+
+// WithTx enables lock-protected quota checks on create (branches.max).
+func (s *Service) WithTx(tx *database.TxManager) *Service {
+	s.tx = tx
+	return s
 }
 
 // List returns branches for the effective tenant with pagination.
@@ -93,32 +119,70 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 	if tenantID == 0 {
 		return nil, apperr.New(apperr.TenantContextNotResolved, "A tenant context is required.")
 	}
-	if s.limits != nil {
-		count, err := s.repo.Count(ctx, ListFilter{TenantID: tenantID})
-		if err != nil {
-			return nil, err
-		}
-		if err := s.limits.RequireWithinLimitByName(ctx, tenantID, "branches.max", count); err != nil {
-			return nil, err
-		}
-	}
 	if err := s.validateManager(ctx, tenantID, input.ManagerID); err != nil {
 		return nil, err
 	}
-	branch, err := s.repo.Create(ctx, CreateInput{
-		TenantID:    tenantID,
-		Name:        input.Name,
-		Address:     input.Address,
-		Description: input.Description,
-		Phone:       input.Phone,
-		Email:       input.Email,
-		ManagerID:   input.ManagerID,
-		ActorID:     &actorID,
+	var branch *Branch
+	err := s.withBranchQuota(ctx, tenantID, func(repo Repository) error {
+		created, err := repo.Create(ctx, CreateInput{
+			TenantID:    tenantID,
+			Name:        input.Name,
+			Address:     input.Address,
+			Description: input.Description,
+			Phone:       input.Phone,
+			Email:       input.Email,
+			ManagerID:   input.ManagerID,
+			ActorID:     &actorID,
+		})
+		branch = created
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "branch.created",
+		Subject: "branch", SubjectID: branch.ID, Changes: input.changes(),
+	})
 	return branch, nil
+}
+
+// withBranchQuota runs create under the tenant's branches.max limit; with a
+// TxManager the count and insert share a per-tenant advisory lock.
+func (s *Service) withBranchQuota(ctx context.Context, tenantID int64, create func(repo Repository) error) error {
+	// The plan limit is read before the lock; inside it only the count runs,
+	// on the locked transaction.
+	var allow func(current int64) error // nil: no limit to enforce
+	if s.limits != nil {
+		quota, err := s.limits.QuotaFor(ctx, tenantID, "branches.max")
+		if err != nil {
+			return err
+		}
+		allow = quota
+	}
+	check := func(repo Repository) error {
+		if allow == nil {
+			return nil
+		}
+		count, err := repo.Count(ctx, ListFilter{TenantID: tenantID})
+		if err != nil {
+			return err
+		}
+		return allow(count)
+	}
+	if s.tx == nil {
+		if err := check(s.repo); err != nil {
+			return err
+		}
+		return create(s.repo)
+	}
+	return s.tx.WithTenantLock(ctx, "branches.max", tenantID, func(q *dbgen.Queries) error {
+		repo := NewRepository(q)
+		if err := check(repo); err != nil {
+			return err
+		}
+		return create(repo)
+	})
 }
 
 // Update modifies a branch inside the effective tenant.
@@ -145,6 +209,10 @@ func (s *Service) Update(ctx context.Context, scope tenancy.Scope, actorID, id i
 		return nil, err
 	}
 	tenancy.InvalidateBranchCheck(ctx, s.cache, tenantID, id)
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "branch.updated",
+		Subject: "branch", SubjectID: id, Changes: input.changes(),
+	})
 	return branch, nil
 }
 
@@ -161,6 +229,9 @@ func (s *Service) Delete(ctx context.Context, scope tenancy.Scope, actorID, id i
 		return err
 	}
 	tenancy.InvalidateBranchCheck(ctx, s.cache, tenantID, id)
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "branch.deleted", Subject: "branch", SubjectID: id,
+	})
 	return nil
 }
 
@@ -198,150 +269,4 @@ func (s *Service) validateManager(ctx context.Context, tenantID int64, managerID
 		})
 	}
 	return nil
-}
-
-// Handler serves branch HTTP endpoints.
-type Handler struct {
-	service   *Service
-	checker   *authz.Checker
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
-}
-
-// NewHandler creates the branch handler.
-func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, binder: binder, validator: validator, responder: responder}
-}
-
-func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermBranchViewAll); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-
-	page, perPage, offset := httpx.PageParams(r)
-	orderBy, orderDir := httpx.OrderParams(r, "id", "name", "created_at")
-	filter := ListFilter{
-		Search:   r.URL.Query().Get("search"),
-		OrderBy:  orderBy,
-		OrderDir: orderDir,
-		Limit:    int32(perPage),
-		Offset:   int32(offset),
-	}
-
-	items, total, err := h.service.List(r.Context(), scope, filter)
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	data := make([]Response, 0, len(items))
-	for _, item := range items {
-		data = append(data, NewResponse(item))
-	}
-	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
-}
-
-func (h *Handler) show(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermBranchView); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	branch, err := h.service.Get(r.Context(), scope, id)
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*branch))
-}
-
-func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermBranchCreate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	branch, err := h.service.Create(r.Context(), scope, identity.UserID, req.toInput())
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.Data(w, r, http.StatusCreated, NewResponse(*branch))
-}
-
-func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermBranchUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	branch, err := h.service.Update(r.Context(), scope, identity.UserID, id, req.toInput())
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*branch))
-}
-
-func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermBranchDelete); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	if err := h.service.Delete(r.Context(), scope, identity.UserID, id); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.NoContent(w)
-}
-
-func pathID(r *http.Request) (int64, error) {
-	raw := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 1 {
-		return 0, apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-	}
-	return id, nil
 }

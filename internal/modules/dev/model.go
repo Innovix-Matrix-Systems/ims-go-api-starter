@@ -17,6 +17,10 @@ type Action struct {
 	Status       string          `json:"status"`
 	ErrorMessage *string         `json:"error_message"`
 	DurationMS   int32           `json:"duration_ms"`
+	IP           *string         `json:"ip"`
+	UserAgent    *string         `json:"user_agent"`
+	ActorEmail   *string         `json:"actor_email"`
+	ActorName    *string         `json:"actor_name"`
 	CreatedAt    time.Time       `json:"created_at"`
 }
 
@@ -34,6 +38,8 @@ func mapAction(row dbgen.DevAction) Action {
 		Status:       row.Status,
 		ErrorMessage: row.ErrorMessage,
 		DurationMS:   row.DurationMs,
+		IP:           row.Ip,
+		UserAgent:    row.UserAgent,
 		CreatedAt:    row.CreatedAt.Time,
 	}
 }

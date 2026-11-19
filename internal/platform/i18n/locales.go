@@ -22,7 +22,8 @@ var catalogFS embed.FS
 
 // Translator resolves message IDs against the embedded catalogs.
 type Translator struct {
-	bundle *goi18n.Bundle
+	bundle     *goi18n.Bundle
+	localizers sync.Map // locale -> *goi18n.Localizer (one per locale, M26)
 }
 
 // Load builds the translator from the embedded en/bn catalogs.
@@ -44,7 +45,11 @@ func (t *Translator) Localizer(locale Locale) *goi18n.Localizer {
 	if lang == "" {
 		lang = "en"
 	}
-	return goi18n.NewLocalizer(t.bundle, lang)
+	if cached, ok := t.localizers.Load(lang); ok {
+		return cached.(*goi18n.Localizer)
+	}
+	localizer, _ := t.localizers.LoadOrStore(lang, goi18n.NewLocalizer(t.bundle, lang))
+	return localizer.(*goi18n.Localizer)
 }
 
 // Middleware resolves the request locale and stores its localizer (and the

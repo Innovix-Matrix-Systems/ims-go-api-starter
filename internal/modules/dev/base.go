@@ -6,11 +6,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
+	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
@@ -53,36 +51,28 @@ type Deps struct {
 	Collector     *telemetry.Collector
 	Logger        *slog.Logger
 	RetentionDays int
-	Binder        *httpx.Binder
-	Validator     *httpx.Validator
-	Responder     *httpx.Responder
+	// AuditRetentionDays is how long audit rows are kept (shown in the UI).
+	AuditRetentionDays int
+	Inspector          *InspectorService
+	Queries            *dbgen.Queries
+	Commands           *CommandService
+	Kit                httpx.Kit
 }
 
-// panelBase carries the dependencies and helpers shared by every dashboard
-// panel. Panels are plain files on Handler today; the embedded base keeps the
-// shared surface in one place as panels are added.
+// panelBase carries what every dashboard panel shares: the permission
+// checker, the audit writer and the same httpx.Kit (Bind, PathID, Data, ...)
+// that every module handler embeds.
 type panelBase struct {
 	checker     *authz.Checker
 	permissions *access.PermissionService
-	actions     ActionRepository
+	audit       *Auditor
 	logger      *slog.Logger
-	binder      *httpx.Binder
-	validator   *httpx.Validator
-	responder   *httpx.Responder
+	httpx.Kit
 }
 
-// requireManage resolves the caller and enforces dev.manage for mutations.
-func (h *Handler) requireManage(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	identity, ok := authn.IdentityFromContext(r.Context())
-	if !ok {
-		h.responder.Error(w, r, apperr.New(apperr.Unauthorized, "Authentication is required."))
-		return 0, false
-	}
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermDevManage); err != nil {
-		h.responder.Error(w, r, err)
-		return 0, false
-	}
-	return identity.UserID, true
+// manage is route middleware for dashboard mutations (dev.manage).
+func (h *Handler) manage(next http.Handler) http.Handler {
+	return authz.Require(h.checker, authz.PermDevManage, h.Responder)(next)
 }
 
 func parseLimit(raw string) (int, error) {
@@ -97,19 +87,6 @@ func parseLimit(raw string) (int, error) {
 		})
 	}
 	return value, nil
-}
-
-func pathID(r *http.Request) (int64, error) {
-	return pathParamID(r, "id")
-}
-
-func pathParamID(r *http.Request, name string) (int64, error) {
-	raw := chi.URLParam(r, name)
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 1 {
-		return 0, apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-	}
-	return id, nil
 }
 
 func parseCursor(raw string) (int64, error) {

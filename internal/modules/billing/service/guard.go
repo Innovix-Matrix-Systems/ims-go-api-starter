@@ -97,21 +97,27 @@ func (g *Guard) Limit(ctx context.Context, tenantID int64, feature domain.Featur
 	if err != nil {
 		return 0, err
 	}
+	return plan.limit(feature), nil
+}
+
+// limit resolves a feature's limit from an already-loaded plan (nil = no
+// subscription = blocked).
+func (plan *planContext) limit(feature domain.Feature) int64 {
 	if plan == nil {
-		return 0, nil
+		return 0
 	}
 	if value, ok := plan.subscription.Overrides[string(feature)]; ok {
 		if number, ok := overrideNumber(value); ok {
-			return number, nil
+			return number
 		}
 		if enabled, isBool := value.(bool); isBool && enabled {
-			return -1, nil
+			return -1
 		}
 	}
 	if definition, ok := plan.features[string(feature)]; ok {
-		return definition.LimitValue, nil
+		return definition.LimitValue
 	}
-	return 0, nil
+	return 0
 }
 
 // WithinLimit reports whether current usage is below the feature limit.
@@ -128,37 +134,75 @@ func (g *Guard) WithinLimit(ctx context.Context, tenantID int64, feature domain.
 
 // RequireWithinLimit returns a 402 error when the plan limit is exhausted.
 func (g *Guard) RequireWithinLimit(ctx context.Context, tenantID int64, feature domain.Feature, current int64) error {
-	plan, err := g.planFor(ctx, tenantID)
+	check, err := g.quota(ctx, tenantID, feature)
 	if err != nil {
 		return err
 	}
-	if plan == nil {
-		return apperr.New(apperr.SubscriptionRequired, "An active subscription is required.").
-			WithMeta(map[string]any{"feature_key": string(feature)})
-	}
-
-	limit, err := g.Limit(ctx, tenantID, feature)
-	if err != nil {
-		return err
-	}
-	if limit == -1 || current < limit {
-		return nil
-	}
-	return apperr.New(apperr.UsageLimitExceeded, "The plan limit for this feature has been reached.").
-		WithMeta(map[string]any{
-			"feature_key": string(feature),
-			"limit":       limit,
-			"current":     current,
-		})
+	return check(current)
 }
 
-// RequireWithinLimitByName adapts string feature names for resource services.
-func (g *Guard) RequireWithinLimitByName(ctx context.Context, tenantID int64, feature string, current int64) error {
+// QuotaFor reads the tenant's plan once and returns a check that only
+// compares numbers. Resource services call it before taking their
+// per-tenant lock, so nothing inside the lock needs a second connection
+// (which deadlocks once concurrent creates hold the whole pool).
+func (g *Guard) QuotaFor(ctx context.Context, tenantID int64, feature string) (func(current int64) error, error) {
 	typed := domain.Feature(feature)
 	if !typed.IsKnown() {
-		return apperr.Newf(apperr.InvalidInput, "Unknown feature %q.", feature)
+		return nil, apperr.Newf(apperr.InvalidInput, "Unknown feature %q.", feature)
 	}
-	return g.RequireWithinLimit(ctx, tenantID, typed, current)
+	return g.quota(ctx, tenantID, typed)
+}
+
+func (g *Guard) quota(ctx context.Context, tenantID int64, feature domain.Feature) (func(current int64) error, error) {
+	plan, err := g.planFor(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if plan == nil {
+		return nil, apperr.New(apperr.SubscriptionRequired, "An active subscription is required.").
+			WithMeta(map[string]any{"feature_key": string(feature)})
+	}
+	limit := plan.limit(feature)
+	return func(current int64) error {
+		if limit == -1 || current < limit {
+			return nil
+		}
+		return apperr.New(apperr.UsageLimitExceeded, "The plan limit for this feature has been reached.").
+			WithMeta(map[string]any{
+				"feature_key": string(feature),
+				"limit":       limit,
+				"current":     current,
+			})
+	}, nil
+}
+
+// RequireStorage enforces storage.mb (megabytes) for an upload of addBytes on
+// top of usedBytes. It only applies when the tenant's plan (or an override)
+// defines storage.mb; -1 means unlimited.
+func (g *Guard) RequireStorage(ctx context.Context, tenantID, usedBytes, addBytes int64) error {
+	plan, err := g.planFor(ctx, tenantID)
+	if err != nil || plan == nil {
+		return err
+	}
+	key := string(domain.FeatureStorageMB)
+	_, overridden := plan.subscription.Overrides[key]
+	if _, defined := plan.features[key]; !defined && !overridden {
+		return nil
+	}
+	limit, err := g.Limit(ctx, tenantID, domain.FeatureStorageMB)
+	if err != nil || limit == -1 {
+		return err
+	}
+	const mb = 1 << 20
+	if usedBytes+addBytes <= limit*mb {
+		return nil
+	}
+	return apperr.New(apperr.UsageLimitExceeded, "The storage limit of your plan has been reached.").
+		WithMeta(map[string]any{
+			"feature_key": key,
+			"limit":       limit,
+			"current":     (usedBytes + mb - 1) / mb,
+		})
 }
 
 func overrideAllows(value any) bool {

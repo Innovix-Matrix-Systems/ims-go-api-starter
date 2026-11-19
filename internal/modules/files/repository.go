@@ -25,26 +25,41 @@ type CreateInput struct {
 	OwnerType  *string
 	OwnerID    *int64
 	Collection *string
+	TenantID   *int64
 	CreatedBy  *int64
 }
 
-// ListFilter carries file list filters.
+// ListFilter carries file list filters. AllTenants is true only for
+// tenantless (system) callers; tenant-bound callers are scoped to TenantID.
 type ListFilter struct {
-	Type     string
-	Attached *bool
-	Limit    int32
-	Offset   int32
+	AllTenants bool
+	TenantID   int64
+	Type       string
+	Attached   *bool
+	Limit      int32
+	Offset     int32
 }
 
 // Repository is the persistence contract for files.
 type Repository interface {
 	Create(ctx context.Context, input CreateInput) (*File, error)
 	Get(ctx context.Context, id int64) (*File, error)
+	GetInTenant(ctx context.Context, id int64, allTenants bool, tenantID int64) (*File, error)
 	GetByOwner(ctx context.Context, ownerType string, ownerID int64, collection string) (*File, error)
 	List(ctx context.Context, filter ListFilter) ([]File, error)
 	Count(ctx context.Context, filter ListFilter) (int64, error)
-	Delete(ctx context.Context, id int64) error
+	Delete(ctx context.Context, id int64, allTenants bool, tenantID int64) error
 	ListProfileFiles(ctx context.Context, userIDs []int64) ([]File, error)
+	// UsedBytes is the total size of a tenant's files (storage quota).
+	UsedBytes(ctx context.Context, tenantID int64) (int64, error)
+}
+
+func (r *repository) UsedBytes(ctx context.Context, tenantID int64) (int64, error) {
+	used, err := r.queries.SumFileBytesForTenant(ctx, tenantID)
+	if err != nil {
+		return 0, database.MapError("files.used_bytes", err)
+	}
+	return used, nil
 }
 
 type repository struct {
@@ -69,6 +84,7 @@ func (r *repository) Create(ctx context.Context, input CreateInput) (*File, erro
 		OwnerType:  input.OwnerType,
 		OwnerID:    input.OwnerID,
 		Collection: input.Collection,
+		TenantID:   input.TenantID,
 		CreatedBy:  input.CreatedBy,
 		UpdatedBy:  input.CreatedBy,
 	})
@@ -86,6 +102,22 @@ func (r *repository) Get(ctx context.Context, id int64) (*File, error) {
 			return nil, apperr.Newf(apperr.ResourceNotFound, "File with ID '%d' was not found.", id)
 		}
 		return nil, database.MapError("files.get", err)
+	}
+	file := mapFile(row)
+	return &file, nil
+}
+
+func (r *repository) GetInTenant(ctx context.Context, id int64, allTenants bool, tenantID int64) (*File, error) {
+	row, err := r.queries.GetFileInTenant(ctx, dbgen.GetFileInTenantParams{
+		ID:         id,
+		AllTenants: allTenants,
+		TenantID:   &tenantID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.Newf(apperr.ResourceNotFound, "File with ID '%d' was not found.", id)
+		}
+		return nil, database.MapError("files.get_in_tenant", err)
 	}
 	file := mapFile(row)
 	return &file, nil
@@ -109,6 +141,8 @@ func (r *repository) GetByOwner(ctx context.Context, ownerType string, ownerID i
 
 func (r *repository) List(ctx context.Context, filter ListFilter) ([]File, error) {
 	rows, err := r.queries.ListFiles(ctx, dbgen.ListFilesParams{
+		AllTenants: filter.AllTenants,
+		TenantID:   &filter.TenantID,
 		Type:       optionalString(filter.Type),
 		Attached:   filter.Attached,
 		PageLimit:  filter.Limit,
@@ -126,8 +160,10 @@ func (r *repository) List(ctx context.Context, filter ListFilter) ([]File, error
 
 func (r *repository) Count(ctx context.Context, filter ListFilter) (int64, error) {
 	total, err := r.queries.CountFiles(ctx, dbgen.CountFilesParams{
-		Type:     optionalString(filter.Type),
-		Attached: filter.Attached,
+		AllTenants: filter.AllTenants,
+		TenantID:   &filter.TenantID,
+		Type:       optionalString(filter.Type),
+		Attached:   filter.Attached,
 	})
 	if err != nil {
 		return 0, database.MapError("files.count", err)
@@ -135,8 +171,12 @@ func (r *repository) Count(ctx context.Context, filter ListFilter) (int64, error
 	return total, nil
 }
 
-func (r *repository) Delete(ctx context.Context, id int64) error {
-	affected, err := r.queries.DeleteFile(ctx, id)
+func (r *repository) Delete(ctx context.Context, id int64, allTenants bool, tenantID int64) error {
+	affected, err := r.queries.DeleteFileInTenant(ctx, dbgen.DeleteFileInTenantParams{
+		ID:         id,
+		AllTenants: allTenants,
+		TenantID:   &tenantID,
+	})
 	if err != nil {
 		return database.MapError("files.delete", err)
 	}

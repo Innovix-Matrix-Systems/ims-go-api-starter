@@ -49,6 +49,26 @@ func (f Feature) IsLimit() bool {
 	}
 }
 
+// featureDescriptions explain each feature in admin screens.
+var featureDescriptions = map[Feature]string{
+	FeatureUsersMax:           "Maximum user accounts per tenant",
+	FeatureBranchesMax:        "Maximum branch count per tenant",
+	FeaturePatientsManage:     "Create and manage patient records",
+	FeatureAppointmentsManage: "Schedule and manage appointments",
+	FeatureInvoicesManage:     "Create and manage invoices",
+	FeatureReportsBasic:       "Basic reports (daily/monthly summaries)",
+	FeatureReportsAdvanced:    "Advanced analytics and custom reports",
+	FeatureReportsExport:      "Export reports to PDF/Excel",
+	FeatureSMSNotifications:   "Send SMS notifications",
+	FeatureAPIAccess:          "REST API access for integrations",
+	FeatureAuditLog:           "Full audit log access",
+	FeatureCustomBranding:     "Custom logo and branding per branch",
+	FeatureStorageMB:          "File storage in MB",
+}
+
+// Description explains the feature ("" when unknown).
+func (f Feature) Description() string { return featureDescriptions[f] }
+
 // IsKnown reports whether the feature exists in the catalog.
 func (f Feature) IsKnown() bool {
 	for _, known := range Features {

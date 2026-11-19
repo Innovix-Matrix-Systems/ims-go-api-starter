@@ -24,8 +24,14 @@ sudoedit /etc/ims/ims-go-api/.env       # DATABASE_DSN, APP_URL, APP_TIMEZONE, .
 sudo deploy/scripts/release.sh --source /srv/src/ims-go-api-starter
 ```
 
-`install.sh` creates the `ims` user, the directory layout, installs and enables the three units,
-and copies `.env.example` to `/etc/ims/ims-go-api/.env` for review.
+`install.sh` creates the `ims` user, the directory layout (release tree owned by root — the service
+can run the binary but never rewrite it; state under `/var/lib/ims/ims-go-api`), installs and
+enables the three units, and seeds `/etc/ims/ims-go-api/.env` from `deploy/.env.production`
+(`APP_ENV=production`, state paths under `/var/lib`, no default secrets). Fill in every
+`MUST SET` value; the app refuses to boot with unsafe production settings.
+
+Build with the **latest Go 1.26 patch** (CI does): older patches carry standard-library CVEs that
+`govulncheck` reports.
 
 ## Upgrade
 
@@ -38,7 +44,10 @@ sudo deploy/scripts/release.sh --repo git@github.com:your-org/ims-go-api-starter
 ```
 
 The script: builds a static binary → runs `ims migrate` (gated) → atomically switches `current` →
-restarts units → health-checks `/up` → prunes old releases (keep `--keep`, default 5).
+restarts units → health-checks `/api/health?fresh=1` (readiness: database, migrations, cache,
+queue) → prunes old releases (keep `--keep`, default 5). **If the health check fails, the previous
+release is restored and restarted automatically**; migrations stay applied, so keep them
+backward compatible (add columns before using them, drop them a release later).
 
 Useful flags: `--dry-run` (print the plan, validate prerequisites), `--skip-migrate`,
 `--no-restart`, `--health-url`, `--keep`.
@@ -51,7 +60,8 @@ Useful flags: `--dry-run` (print the plan, validate prerequisites), `--skip-migr
 | `ims-go-api-scheduler` | `ims schedule` |
 | `ims-go-api-worker` | `ims queue:work --queues=critical,default,heavy` |
 
-Exactly **one** scheduler must run per deployment. The queue worker may be scaled (add more
+Exactly **one** scheduler must run per deployment — enforced: a second `ims schedule` exits
+because another process holds the scheduler's Postgres advisory lock. The queue worker may be scaled (add more
 `ims-go-api-worker@.service` instances or run `ims queue:work` elsewhere).
 
 ```bash

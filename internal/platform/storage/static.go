@@ -21,6 +21,9 @@ func StaticHandler(publicDir string) http.Handler {
 		}
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// User uploads must never run as a page on the app origin (H17): a
+		// sandboxed, script-less CSP neutralises HTML/SVG opened directly.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox")
 		fileServer.ServeHTTP(w, r)
 	})
 }

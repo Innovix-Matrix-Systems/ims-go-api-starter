@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -64,9 +65,10 @@ func CursorURL(r *http.Request, cursor *string) *string {
 	}
 	query := r.URL.Query()
 	query.Set("cursor", *cursor)
+	scheme, host := linkOrigin(r)
 	u := url.URL{
-		Scheme:   requestScheme(r),
-		Host:     r.Host,
+		Scheme:   scheme,
+		Host:     host,
 		Path:     r.URL.Path,
 		RawQuery: query.Encode(),
 	}
@@ -203,8 +205,7 @@ func pageElements(r *http.Request, page, lastPage int, links PaginationLinks) []
 }
 
 func baseURL(r *http.Request) string {
-	scheme := requestScheme(r)
-	host := r.Host
+	scheme, host := linkOrigin(r)
 	if host == "" {
 		return r.URL.Path
 	}
@@ -214,13 +215,40 @@ func baseURL(r *http.Request) string {
 func pageURL(r *http.Request, page int) string {
 	query := r.URL.Query()
 	query.Set("page", strconv.Itoa(page))
+	scheme, host := linkOrigin(r)
 	u := url.URL{
-		Scheme:   requestScheme(r),
-		Host:     r.Host,
+		Scheme:   scheme,
+		Host:     host,
 		Path:     r.URL.Path,
 		RawQuery: query.Encode(),
 	}
 	return u.String()
+}
+
+type publicOriginKey struct{}
+
+// PublicOrigin makes pagination/cursor links use the configured APP_URL
+// origin instead of echoing the client-supplied Host header (M28). An empty
+// or unparsable appURL keeps the request's own host.
+func PublicOrigin(appURL string) func(http.Handler) http.Handler {
+	parsed, err := url.Parse(strings.TrimSpace(appURL))
+	valid := err == nil && parsed.Scheme != "" && parsed.Host != ""
+	return func(next http.Handler) http.Handler {
+		if !valid {
+			return next
+		}
+		origin := [2]string{parsed.Scheme, parsed.Host}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), publicOriginKey{}, origin)))
+		})
+	}
+}
+
+func linkOrigin(r *http.Request) (scheme, host string) {
+	if origin, ok := r.Context().Value(publicOriginKey{}).([2]string); ok {
+		return origin[0], origin[1]
+	}
+	return requestScheme(r), r.Host
 }
 
 func requestScheme(r *http.Request) string {
@@ -242,4 +270,14 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// AbsoluteURL builds an absolute URL for path on this API (APP_URL origin in
+// deployed environments, the request host locally).
+func AbsoluteURL(r *http.Request, path string) string {
+	scheme, host := linkOrigin(r)
+	if host == "" {
+		return path
+	}
+	return scheme + "://" + host + path
 }

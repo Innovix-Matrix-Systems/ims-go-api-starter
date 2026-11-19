@@ -222,7 +222,7 @@ func timestamp(value time.Time) pgtype.Timestamptz {
 type TelemetryRepository interface {
 	ListRequests(ctx context.Context, filter RequestFilter) ([]TelemetryRequestSummary, error)
 	GetRequestDetail(ctx context.Context, id int64) (*TelemetryRequestDetail, error)
-	ListLogs(ctx context.Context, beforeID int64, limit int32, level, requestID string) ([]TelemetryLog, error)
+	ListLogs(ctx context.Context, beforeID int64, limit int32, level, requestID, search string) ([]TelemetryLog, error)
 	GetLog(ctx context.Context, id int64) (*TelemetryLog, error)
 	ListExceptions(ctx context.Context, beforeID int64, limit int32, requestID string) ([]TelemetryException, error)
 	GetException(ctx context.Context, id int64) (*TelemetryException, error)
@@ -314,11 +314,12 @@ func (r *telemetryRepository) GetRequestDetail(ctx context.Context, id int64) (*
 	return detail, nil
 }
 
-func (r *telemetryRepository) ListLogs(ctx context.Context, beforeID int64, limit int32, level, requestID string) ([]TelemetryLog, error) {
+func (r *telemetryRepository) ListLogs(ctx context.Context, beforeID int64, limit int32, level, requestID, search string) ([]TelemetryLog, error) {
 	rows, err := r.queries.ListDevLogs(ctx, dbgen.ListDevLogsParams{
 		BeforeID:  beforeID,
 		Level:     level,
 		RequestID: requestID,
+		Search:    search,
 		RowLimit:  limit,
 	})
 	if err != nil {

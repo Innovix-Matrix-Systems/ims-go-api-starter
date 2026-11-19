@@ -16,91 +16,69 @@ import (
 
 // Handler serves the feature-flag REST surface.
 type Handler struct {
-	service   *Service
-	checker   *authz.Checker
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
+	service *Service
+	checker *authz.Checker
+	httpx.Kit
 }
 
 // NewHandler creates the feature-flag handler.
-func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, binder: binder, validator: validator, responder: responder}
+func NewHandler(service *Service, checker *authz.Checker, kit httpx.Kit) *Handler {
+	return &Handler{service: service, checker: checker, Kit: kit}
 }
 
 // index returns the caller's effective flags.
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	values, err := h.service.Effective(r.Context(), scope, identity.UserID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, values)
+	h.Data(w, r, http.StatusOK, values)
 }
 
 // internalIndex returns every catalog flag's effective value for a target.
 func (h *Handler) internalIndex(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermFeatureFlagInternalUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	target, err := targetFromQuery(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.service.EffectiveForTarget(r.Context(), target)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, toFlagItems(items))
+	h.Data(w, r, http.StatusOK, toFlagItems(items))
 }
 
 // internalUpdate applies a batch of flag values to the target named in the body.
 func (h *Handler) internalUpdate(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermFeatureFlagInternalUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req UpdateFlagsRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	items, err := h.service.SetBatch(r.Context(), identity.UserID, targetFromRequest(req.TargetType, req.TargetID), req.Flags)
+	items, err := h.service.SetBatch(r.Context(), authn.UserID(r), targetFromRequest(req.TargetType, req.TargetID), req.Flags, req.Rollout)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, toFlagItems(items))
+	h.Data(w, r, http.StatusOK, toFlagItems(items))
 }
 
 // internalDelete clears a single override at the target named in the query.
 func (h *Handler) internalDelete(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermFeatureFlagInternalUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	target, err := targetFromQuery(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if err := h.service.Delete(r.Context(), target, chi.URLParam(r, "key")); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 func targetFromRequest(targetType string, targetID *int64) Target {
@@ -158,4 +136,9 @@ func targetFromQuery(r *http.Request) (Target, error) {
 		})
 	}
 	return Target{Type: targetType, ID: id}, nil
+}
+
+// can is route middleware requiring a permission (Laravel's can:...).
+func (h *Handler) can(permission string) func(http.Handler) http.Handler {
+	return authz.Require(h.checker, permission, h.Responder)
 }

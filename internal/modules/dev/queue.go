@@ -12,6 +12,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/queue"
 )
 
@@ -19,7 +20,7 @@ func (h *Handler) requireQueueAdmin(w http.ResponseWriter, r *http.Request) bool
 	if h.queueAdmin != nil {
 		return true
 	}
-	h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable,
+	h.Error(w, r, apperr.New(apperr.ServiceUnavailable,
 		"Queue administration is unavailable (QUEUE_DRIVER=sync)."))
 	return false
 }
@@ -27,13 +28,13 @@ func (h *Handler) requireQueueAdmin(w http.ResponseWriter, r *http.Request) bool
 func (h *Handler) respondQueueError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, rivertype.ErrNotFound):
-		h.responder.Error(w, r, apperr.New(apperr.ResourceNotFound, "The requested job was not found."))
+		h.Error(w, r, apperr.New(apperr.ResourceNotFound, "The requested job was not found."))
 	case errors.Is(err, rivertype.ErrJobRunning):
-		h.responder.Error(w, r, apperr.New(apperr.Conflict, "Running jobs cannot be deleted."))
+		h.Error(w, r, apperr.New(apperr.Conflict, "Running jobs cannot be deleted."))
 	case errors.Is(err, queue.ErrInvalidCursor):
-		h.responder.Error(w, r, apperr.Validation(map[string][]string{"cursor": {"The cursor is invalid or expired."}}))
+		h.Error(w, r, apperr.Validation(map[string][]string{"cursor": {"The cursor is invalid or expired."}}))
 	default:
-		h.responder.Error(w, r, apperr.Wrap(apperr.InternalServerError, "queue admin", err))
+		h.Error(w, r, apperr.Wrap(apperr.InternalServerError, "queue admin", err))
 	}
 }
 
@@ -46,53 +47,47 @@ func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request) {
 		h.respondQueueError(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, queues)
+	h.Data(w, r, http.StatusOK, queues)
 }
 
 func (h *Handler) pauseQueue(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	if !h.requireQueueAdmin(w, r) {
 		return
 	}
 	name := strings.TrimSpace(chi.URLParam(r, "name"))
 	if name == "" {
-		h.responder.Error(w, r, apperr.New(apperr.InvalidInput, "The queue name is required."))
+		h.Error(w, r, apperr.New(apperr.InvalidInput, "The queue name is required."))
 		return
 	}
 	started := time.Now()
 	err := h.queueAdmin.PauseQueue(r.Context(), name)
-	h.recordAction(r.Context(), actorID, "queue.pause", name, map[string]any{"queue": name}, started, err)
+	h.audit.Record(r.Context(), actorID, "queue.pause", name, map[string]any{"queue": name}, started, err)
 	if err != nil {
 		h.respondQueueError(w, r, err)
 		return
 	}
-	h.responder.Message(w, r, http.StatusOK, "Queue paused.")
+	h.Message(w, r, http.StatusOK, "Queue paused.")
 }
 
 func (h *Handler) resumeQueue(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	if !h.requireQueueAdmin(w, r) {
 		return
 	}
 	name := strings.TrimSpace(chi.URLParam(r, "name"))
 	if name == "" {
-		h.responder.Error(w, r, apperr.New(apperr.InvalidInput, "The queue name is required."))
+		h.Error(w, r, apperr.New(apperr.InvalidInput, "The queue name is required."))
 		return
 	}
 	started := time.Now()
 	err := h.queueAdmin.ResumeQueue(r.Context(), name)
-	h.recordAction(r.Context(), actorID, "queue.resume", name, map[string]any{"queue": name}, started, err)
+	h.audit.Record(r.Context(), actorID, "queue.resume", name, map[string]any{"queue": name}, started, err)
 	if err != nil {
 		h.respondQueueError(w, r, err)
 		return
 	}
-	h.responder.Message(w, r, http.StatusOK, "Queue resumed.")
+	h.Message(w, r, http.StatusOK, "Queue resumed.")
 }
 
 func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
@@ -102,12 +97,12 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	limit, err := parseLimit(query.Get("limit"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	state := strings.ToLower(strings.TrimSpace(query.Get("state")))
 	if state != "" && !validAdminState(state) {
-		h.responder.Error(w, r, apperr.Validation(map[string][]string{
+		h.Error(w, r, apperr.Validation(map[string][]string{
 			"state": {"The selected state is invalid."},
 		}))
 		return
@@ -124,16 +119,15 @@ func (h *Handler) listJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := map[string]any{"next_cursor": result.NextCursor}
-	h.responder.Cursor(w, r, http.StatusOK, result.Jobs, meta, nil)
+	h.Cursor(w, r, http.StatusOK, result.Jobs, meta, nil)
 }
 
 func (h *Handler) getJob(w http.ResponseWriter, r *http.Request) {
 	if !h.requireQueueAdmin(w, r) {
 		return
 	}
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	job, err := h.queueAdmin.GetJob(r.Context(), id)
@@ -141,7 +135,7 @@ func (h *Handler) getJob(w http.ResponseWriter, r *http.Request) {
 		h.respondQueueError(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, job)
+	h.Data(w, r, http.StatusOK, job)
 }
 
 func (h *Handler) retryJob(w http.ResponseWriter, r *http.Request) {
@@ -157,57 +151,22 @@ func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) mutateJob(w http.ResponseWriter, r *http.Request, action string, op func(ctx context.Context, id int64) (*queue.AdminJob, error)) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	if !h.requireQueueAdmin(w, r) {
 		return
 	}
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	started := time.Now()
 	job, err := op(r.Context(), id)
-	h.recordAction(r.Context(), actorID, action, "job:"+strconv.FormatInt(id, 10), map[string]any{"job_id": id}, started, err)
+	h.audit.Record(r.Context(), actorID, action, "job:"+strconv.FormatInt(id, 10), map[string]any{"job_id": id}, started, err)
 	if err != nil {
 		h.respondQueueError(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, job)
-}
-
-func (h *Handler) listActions(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	limit, err := parseLimit(query.Get("limit"))
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	beforeID := int64(0)
-	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
-		value, parseErr := strconv.ParseInt(raw, 10, 64)
-		if parseErr != nil || value < 0 {
-			h.responder.Error(w, r, apperr.Validation(map[string][]string{
-				"cursor": {"The cursor is invalid."},
-			}))
-			return
-		}
-		beforeID = value
-	}
-	actions, err := h.actions.List(r.Context(), beforeID, int32(limit))
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	nextCursor := ""
-	if len(actions) == limit && len(actions) > 0 {
-		nextCursor = strconv.FormatInt(actions[len(actions)-1].ID, 10)
-	}
-	meta := map[string]any{"next_cursor": nextCursor}
-	h.responder.Cursor(w, r, http.StatusOK, actions, meta, nil)
+	h.Data(w, r, http.StatusOK, job)
 }
 
 func validAdminState(state string) bool {

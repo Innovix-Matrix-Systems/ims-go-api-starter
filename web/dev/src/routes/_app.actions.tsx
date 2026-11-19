@@ -1,97 +1,222 @@
-import { useInfiniteQuery } from '@tanstack/react-query'
-import { createFileRoute } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
-import type { ColumnDef } from '@tanstack/react-table'
+import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
-import type { CursorPage, DevAction } from '../api/types'
-import { DataTable } from '../components/DataTable'
+import type { CursorPage, DevAction, DevActionFacets, DevActionStats } from '../api/types'
+import { DatePicker, Select } from '../components/inputs'
 import {
   Button,
+  Card,
   Chip,
+  CopyButton,
   Drawer,
   EmptyState,
   ErrorBox,
+  Icon,
   JsonView,
   LoadingBlock,
   PageHeader,
   RefreshToggle,
+  StatCard,
+  type Tone,
 } from '../components/ui'
-import { formatDuration, relativeTime } from '../format'
+import { formatDateTime, formatDuration, relativeTime } from '../format'
+
+interface AuditSearch {
+  q?: string
+  action?: string
+  who?: number
+  status?: 'ok' | 'error'
+  from?: string
+  to?: string
+}
 
 export const Route = createFileRoute('/_app/actions')({
-  component: ActionsPage,
+  validateSearch: (search: Record<string, unknown>): AuditSearch => ({
+    q: typeof search.q === 'string' && search.q ? search.q : undefined,
+    action: typeof search.action === 'string' && search.action ? search.action : undefined,
+    who: typeof search.who === 'number' ? search.who : undefined,
+    status: search.status === 'ok' || search.status === 'error' ? search.status : undefined,
+    from: typeof search.from === 'string' && search.from ? search.from : undefined,
+    to: typeof search.to === 'string' && search.to ? search.to : undefined,
+  }),
+  component: AuditPage,
 })
 
-function ActionsPage() {
-  const [live, setLive] = useState(false)
-  const [selected, setSelected] = useState<DevAction | null>(null)
+// ── labels ────────────────────────────────────────────────────────────────
 
+const labels: Record<string, [string, string]> = {
+  'auth.login': ['Signed in', 'sign-in'],
+  'auth.logout': ['Signed out', 'sign-in'],
+  'command.run': ['Command run', 'command'],
+  'backups.create': ['Backup started', 'backup'],
+  'backups.clean': ['Backups cleaned', 'backup'],
+  'backups.delete': ['Backup deleted', 'backup'],
+  'developers.create': ['Developer added', 'access'],
+  'developers.role.ensure': ['Developer role created', 'access'],
+  'developers.unassign': ['Developer removed', 'access'],
+  'files.delete': ['File deleted', 'files'],
+  'flags.set': ['Feature flags changed', 'flags'],
+  'flags.reset': ['Feature flag reset', 'flags'],
+  'flags.sync': ['Feature flags synced', 'flags'],
+  'playground.jobs': ['Playground jobs queued', 'queue'],
+  'queue.job.cancel': ['Job cancelled', 'queue'],
+  'queue.job.delete': ['Job deleted', 'queue'],
+  'queue.job.retry': ['Failed job retried', 'queue'],
+  'queue.pause': ['Queue paused', 'queue'],
+  'queue.resume': ['Queue resumed', 'queue'],
+  'sessions.logout_all': ['Everyone signed out', 'sessions'],
+  'sessions.prune': ['Idle sessions pruned', 'sessions'],
+  'sessions.token.revoke': ['Session revoked', 'sessions'],
+  'sessions.user.revoke': ['User signed out', 'sessions'],
+  'settings.set': ['Setting changed', 'settings'],
+  'settings.reset': ['Setting reset', 'settings'],
+  'settings.sync': ['Settings synced', 'settings'],
+  'settings.place': ['Settings rearranged', 'settings'],
+  'settings.groups.reorder': ['Groups reordered', 'settings'],
+  'settings.group.create': ['Settings group created', 'settings'],
+  'settings.group.update': ['Settings group updated', 'settings'],
+  'settings.group.delete': ['Settings group deleted', 'settings'],
+  'settings.group.assign': ['Setting moved', 'settings'],
+  'telemetry.prune': ['Telemetry pruned', 'telescope'],
+  'dev.simulate-events': ['Sample events generated', 'telescope'],
+}
+
+function actionLabel(action: string, status?: string): string {
+  if (action === 'auth.login' && status && status !== 'ok') return 'Sign-in failed'
+  const known = labels[action]?.[0]
+  if (known) return known
+  const text = action.replace(/[._-]+/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+const actionTag = (action: string) => labels[action]?.[1] ?? action.split('.')[0]
+
+/** "Edge 157 on Windows" from a user agent. */
+function shortBrowser(agent?: string | null): string {
+  if (!agent) return '—'
+  const browser =
+    /Edg\/(\d+)/.exec(agent)?.[0].replace('Edg/', 'Edge ') ??
+    /OPR\/(\d+)/.exec(agent)?.[0].replace('OPR/', 'Opera ') ??
+    /Firefox\/(\d+)/.exec(agent)?.[0].replace('/', ' ') ??
+    /Chrome\/(\d+)/.exec(agent)?.[0].replace('/', ' ') ??
+    (/Version\/(\d+).*Safari/.test(agent) ? `Safari ${/Version\/(\d+)/.exec(agent)?.[1]}` : null) ??
+    (/curl\/[\d.]+/.exec(agent)?.[0] ?? agent.split(' ')[0])
+  const os = /Windows/.test(agent)
+    ? 'Windows'
+    : /Mac OS X/.test(agent)
+      ? 'macOS'
+      : /Android/.test(agent)
+        ? 'Android'
+        : /iPhone|iPad/.test(agent)
+          ? 'iOS'
+          : /Linux/.test(agent)
+            ? 'Linux'
+            : ''
+  return os ? `${browser} on ${os}` : browser
+}
+
+function who(action: DevAction): string {
+  if (action.actor_email) return action.actor_email
+  if (action.action === 'auth.login' && action.target) return action.target
+  return action.actor_user_id ? `user #${action.actor_user_id}` : 'unknown'
+}
+
+function shownTarget(action: DevAction): string {
+  if (!action.target || action.action === 'auth.login') return ''
+  return action.target.replace(':', ' ')
+}
+
+const statusTone = (status: string): Tone => (status === 'ok' ? 'green' : 'red')
+
+// ── page ──────────────────────────────────────────────────────────────────
+
+function AuditPage() {
+  const search = Route.useSearch()
+  const navigate = useNavigate({ from: '/actions' })
+  const [live, setLive] = useState(false)
+  const [text, setText] = useState(search.q ?? '')
+  const deferredText = useDeferredValue(text.trim())
+  const [openIndex, setOpenIndex] = useState<number | null>(null)
+
+  const setFilter = (patch: Partial<AuditSearch>) => {
+    setOpenIndex(null)
+    void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true })
+  }
+  useEffect(() => {
+    if ((search.q ?? '') !== deferredText) setFilter({ q: deferredText || undefined })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deferredText])
+  useEffect(() => setText(search.q ?? ''), [search.q])
+
+  const filters = { ...search, q: deferredText || undefined }
   const query = useInfiniteQuery({
-    queryKey: ['actions'],
+    queryKey: ['actions', filters],
     queryFn: ({ pageParam, signal }) =>
-      api<CursorPage<DevAction>>('/dev/api/actions', {
-        query: { limit: 25, cursor: pageParam || undefined },
+      api<CursorPage<DevAction> & { meta: { next_cursor?: string; total?: number } }>('/dev/api/actions', {
+        query: {
+          limit: 50,
+          cursor: pageParam || undefined,
+          search: filters.q,
+          action: filters.action,
+          actor_id: filters.who,
+          status: filters.status,
+          from: filters.from,
+          to: filters.to,
+        },
         signal,
         unwrap: false,
       }),
     initialPageParam: '',
     getNextPageParam: (lastPage) => lastPage.meta?.next_cursor || undefined,
     refetchInterval: live ? 5000 : false,
+    placeholderData: keepPreviousData,
+  })
+  const stats = useQuery({
+    queryKey: ['actions', 'stats'],
+    queryFn: ({ signal }) => api<DevActionStats>('/dev/api/actions/stats', { signal }),
+    refetchInterval: live ? 5000 : false,
+  })
+  const facets = useQuery({
+    queryKey: ['actions', 'facets'],
+    queryFn: ({ signal }) => api<DevActionFacets>('/dev/api/actions/facets', { signal }),
+    staleTime: 30_000,
   })
 
   const rows = useMemo(() => query.data?.pages.flatMap((page) => page.data) ?? [], [query.data])
+  const total = query.data?.pages[0]?.meta?.total ?? rows.length
+  const filtered = Boolean(filters.q || filters.action || filters.who || filters.status || filters.from || filters.to)
+  const selected = openIndex !== null ? rows[openIndex] ?? null : null
 
-  const columns = useMemo<ColumnDef<DevAction, any>[]>(
-    () => [
-      {
-        id: 'time',
-        header: 'Time',
-        accessorFn: (row) => row.created_at,
-        cell: ({ row }) => <span className="small dim nowrap">{relativeTime(row.original.created_at)}</span>,
-      },
-      {
-        id: 'action',
-        header: 'Action',
-        accessorFn: (row) => row.action,
-        cell: ({ row }) => <span className="mono small">{row.original.action}</span>,
-      },
-      {
-        id: 'target',
-        header: 'Target',
-        accessorFn: (row) => row.target ?? '',
-        cell: ({ row }) => <span className="small muted truncate" style={{ maxWidth: 260 }}>{row.original.target ?? '—'}</span>,
-      },
-      {
-        id: 'status',
-        header: 'Status',
-        accessorFn: (row) => row.status,
-        cell: ({ row }) => <Chip tone={row.original.status === 'ok' ? 'green' : 'red'}>{row.original.status}</Chip>,
-      },
-      {
-        id: 'duration',
-        header: 'Duration',
-        accessorFn: (row) => row.duration_ms ?? 0,
-        cell: ({ row }) => <span className="num small">{formatDuration(row.original.duration_ms)}</span>,
-      },
-      {
-        id: 'actor',
-        header: 'Actor',
-        accessorFn: (row) => row.actor_user_id,
-        cell: ({ row }) => <span className="small muted">user {row.original.actor_user_id}</span>,
-      },
-    ],
-    [],
-  )
+  const exportCSV = () => {
+    const header = ['when', 'who', 'action', 'result', 'target', 'ip', 'browser', 'duration_ms', 'details']
+    const escape = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
+    const lines = rows.map((row) =>
+      [row.created_at, who(row), row.action, row.status, row.target, row.ip, row.user_agent, row.duration_ms, JSON.stringify(row.params)]
+        .map(escape)
+        .join(','),
+    )
+    const blob = new Blob([[header.join(','), ...lines].join('\n')], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `audit-log-${new Date().toISOString().slice(0, 10)}.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <>
       <PageHeader
         eyebrow="Operations"
-        title="Commands"
-        subtitle="Audited developer actions: queue mutations, cache clears, syncs and telemetry pruning."
+        title="Audit log"
+        subtitle="Every sign-in and every action taken in this dashboard: who, what, from where."
         actions={
           <>
             <RefreshToggle enabled={live} onChange={setLive} />
+            <Button icon="download" onClick={exportCSV} disabled={rows.length === 0}>
+              Export CSV
+            </Button>
             <Button icon="refresh" onClick={() => void query.refetch()} disabled={query.isFetching}>
               Refresh
             </Button>
@@ -99,57 +224,310 @@ function ActionsPage() {
         }
       />
 
-      {query.isLoading ? (
-        <LoadingBlock label="Loading audit log…" />
-      ) : query.isError ? (
-        <ErrorBox message={query.error instanceof Error ? query.error.message : 'Unable to load actions.'} />
-      ) : (
-        <>
-          <DataTable
-            data={rows}
-            columns={columns}
-            onRowClick={setSelected}
-            empty={<EmptyState title="No audited actions yet" description="Every mutating dashboard action lands here with its result." icon="actions" />}
-          />
-          <div className="flex mt-16">
-            {query.hasNextPage ? (
-              <Button icon="chevron" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage}>
-                {query.isFetchingNextPage ? 'Loading…' : 'Load more'}
-              </Button>
-            ) : (
-              <span className="small dim">{rows.length} actions loaded</span>
-            )}
+      <div className="grid cols-3">
+        <StatCard label="Last 24 h" value={stats.data?.last_day ?? 0} hint="recorded actions" />
+        <div className="stat-card">
+          <div className="stat-label">Failed sign-ins (24 h)</div>
+          <div className={`stat-value ${(stats.data?.failed_sign_ins ?? 0) > 0 ? 'red' : ''}`}>{stats.data?.failed_sign_ins ?? 0}</div>
+          <div className="stat-hint">
+            wrong password or unknown account ·{' '}
+            <button type="button" className="link-btn" onClick={() => setFilter({ action: 'auth.login', status: 'error' })}>
+              show them
+            </button>
           </div>
-        </>
-      )}
+        </div>
+        <StatCard
+          label="Retention"
+          value={stats.data ? `${stats.data.retention_days} days` : '—'}
+          hint="older rows are pruned daily"
+        />
+      </div>
 
-      <Drawer
-        open={selected !== null}
-        onClose={() => setSelected(null)}
-        title={selected?.action ?? 'Action'}
-        subtitle={selected ? relativeTime(selected.created_at) : undefined}
-      >
-        {selected ? (
-          <div className="stack">
-            <div className="flex">
-              <Chip tone={selected.status === 'ok' ? 'green' : 'red'}>{selected.status}</Chip>
-              <span className="small dim">actor user {selected.actor_user_id}</span>
-              <span className="spacer" />
-              <span className="small dim">{formatDuration(selected.duration_ms)}</span>
-            </div>
-            {selected.error_message ? <ErrorBox message={selected.error_message} /> : null}
-            <div>
-              <div className="card-sub mb-8">Target</div>
-              <div className="mono small">{selected.target ?? '—'}</div>
-            </div>
-            <div>
-              <div className="card-sub mb-8">Params</div>
-              <JsonView value={selected.params} label="Params" />
-            </div>
+      <Card className="mt-16" tight>
+        <div className="audit-filters">
+          <label className="field audit-search">
+            <span className="field-label">Search</span>
+            <span className="inspector-search">
+              <Icon name="search" />
+              <input
+                className="input"
+                placeholder="Email, target, IP or details"
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+              />
+            </span>
+          </label>
+          <label className="field">
+            <span className="field-label">Action</span>
+            <Select
+              value={filters.action ?? ''}
+              onChange={(value) => setFilter({ action: value || undefined })}
+              options={[
+                { value: '', label: 'Any action' },
+                ...(facets.data?.actions ?? []).map((kind) => ({
+                  value: kind.action,
+                  label: actionLabel(kind.action),
+                  text: `${actionLabel(kind.action)} ${kind.action}`,
+                  hint: String(kind.total),
+                })),
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">Who</span>
+            <Select
+              value={filters.who ? String(filters.who) : ''}
+              onChange={(value) => setFilter({ who: value ? Number(value) : undefined })}
+              options={[
+                { value: '', label: 'Anyone' },
+                ...(facets.data?.actors ?? [])
+                  .filter((actor) => actor.user_id > 0)
+                  .map((actor) => ({
+                    value: String(actor.user_id),
+                    label: actor.email ?? `user #${actor.user_id}`,
+                    hint: String(actor.total),
+                  })),
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">Result</span>
+            <Select
+              value={filters.status ?? ''}
+              onChange={(value) => setFilter({ status: (value || undefined) as AuditSearch['status'] })}
+              options={[
+                { value: '', label: 'Any result' },
+                { value: 'ok', label: 'Succeeded' },
+                { value: 'error', label: 'Failed' },
+              ]}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">From</span>
+            <DatePicker
+              value={filters.from ?? ''}
+              max={filters.to}
+              placeholder="Not set"
+              onChange={(value) => setFilter({ from: value || undefined })}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">To</span>
+            <DatePicker
+              value={filters.to ?? ''}
+              min={filters.from}
+              placeholder="Not set"
+              onChange={(value) => setFilter({ to: value || undefined })}
+            />
+          </label>
+          <div className="audit-count">
+            {filtered ? (
+              <button
+                type="button"
+                className="link-btn"
+                onClick={() => {
+                  setText('')
+                  void navigate({ search: {}, replace: true })
+                }}
+              >
+                Clear filters
+              </button>
+            ) : null}
+            <span className="small dim">{total} matching</span>
           </div>
+        </div>
+      </Card>
+
+      <Card className="mt-16" tight>
+        {query.isLoading ? (
+          <LoadingBlock label="Loading audit log…" />
+        ) : query.isError ? (
+          <ErrorBox message={query.error instanceof Error ? query.error.message : 'Unable to load the audit log.'} />
+        ) : rows.length === 0 ? (
+          <EmptyState
+            title={filtered ? 'Nothing matches' : 'No actions recorded yet'}
+            description={
+              filtered
+                ? 'Try a wider date range or clear a filter.'
+                : 'Sign-ins and every change made in this dashboard appear here with who did it and from where.'
+            }
+            icon="actions"
+          />
+        ) : (
+          <div className="table-wrap flat">
+            <table className="table audit-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 120 }}>When</th>
+                  <th>Who</th>
+                  <th>Action</th>
+                  <th>Target</th>
+                  <th style={{ width: 130 }}>IP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, index) => (
+                  <tr
+                    key={row.id}
+                    className={`clickable ${openIndex === index ? 'selected' : ''}`}
+                    onClick={() => setOpenIndex(index)}
+                  >
+                    <td className="small dim nowrap" title={formatDateTime(row.created_at)}>
+                      {relativeTime(row.created_at)}
+                    </td>
+                    <td className="small">{who(row)}</td>
+                    <td>
+                      <span className="audit-action">
+                        <span className={`status-dot ${statusTone(row.status)}`} />
+                        <b>{actionLabel(row.action, row.status)}</b>
+                        <span className="tag">{actionTag(row.action)}</span>
+                      </span>
+                    </td>
+                    <td className="mono small dim truncate" style={{ maxWidth: 320 }}>
+                      {shownTarget(row)}
+                    </td>
+                    <td className="mono small dim">{row.ip ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      <div className="flex mt-16">
+        {query.hasNextPage ? (
+          <Button icon="chevron" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage}>
+            {query.isFetchingNextPage ? 'Loading…' : 'Load more'}
+          </Button>
+        ) : rows.length > 0 ? (
+          <span className="small dim">
+            Showing all {rows.length} of {total}
+          </span>
         ) : null}
-      </Drawer>
+      </div>
+
+      <AuditDrawer
+        action={selected}
+        hasPrev={openIndex !== null && openIndex > 0}
+        hasNext={openIndex !== null && openIndex < rows.length - 1}
+        onPrev={() => setOpenIndex((index) => (index !== null && index > 0 ? index - 1 : index))}
+        onNext={() => setOpenIndex((index) => (index !== null && index < rows.length - 1 ? index + 1 : index))}
+        onClose={() => setOpenIndex(null)}
+        onFilter={setFilter}
+      />
     </>
   )
 }
 
+function AuditDrawer({
+  action,
+  hasPrev,
+  hasNext,
+  onPrev,
+  onNext,
+  onClose,
+  onFilter,
+}: {
+  action: DevAction | null
+  hasPrev: boolean
+  hasNext: boolean
+  onPrev: () => void
+  onNext: () => void
+  onClose: () => void
+  onFilter: (patch: Partial<AuditSearch>) => void
+}) {
+  useEffect(() => {
+    if (!action) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.target instanceof HTMLInputElement) return
+      if (event.key === 'ArrowUp' || event.key === 'k') onPrev()
+      if (event.key === 'ArrowDown' || event.key === 'j') onNext()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [action, onPrev, onNext])
+
+  if (!action) return null
+  const label = actionLabel(action.action, action.status)
+  return (
+    <Drawer
+      open
+      title={
+        <span className="audit-action">
+          <span className={`status-dot ${statusTone(action.status)}`} />
+          {label}
+        </span>
+      }
+      subtitle={`${formatDateTime(action.created_at)} · ${relativeTime(action.created_at)}`}
+      onClose={onClose}
+      actions={
+        <span className="flex" style={{ gap: 2 }}>
+          <button type="button" className="icon-btn flip" title="Newer (↑)" disabled={!hasPrev} onClick={onPrev}>
+            <Icon name="chevron" />
+          </button>
+          <button type="button" className="icon-btn" title="Older (↓)" disabled={!hasNext} onClick={onNext}>
+            <Icon name="chevron" />
+          </button>
+        </span>
+      }
+    >
+      <div className="stack">
+        <dl className="kv audit-kv">
+          <dt>Result</dt>
+          <dd>
+            <Chip tone={statusTone(action.status)}>{action.status === 'ok' ? 'ok' : 'failed'}</Chip>
+          </dd>
+          <dt>Who</dt>
+          <dd>
+            {who(action)}
+            {action.actor_user_id ? <span className="dim"> (user #{action.actor_user_id})</span> : null}
+          </dd>
+          <dt>IP</dt>
+          <dd>{action.ip ?? '—'}</dd>
+          <dt>Browser</dt>
+          <dd>
+            <div>{shortBrowser(action.user_agent)}</div>
+            {action.user_agent ? <div className="small dim">{action.user_agent}</div> : null}
+          </dd>
+          <dt>Action key</dt>
+          <dd>{action.action}</dd>
+          {action.target ? (
+            <>
+              <dt>Target</dt>
+              <dd>{action.target}</dd>
+            </>
+          ) : null}
+          <dt>Duration</dt>
+          <dd>{formatDuration(action.duration_ms)}</dd>
+        </dl>
+        {action.error_message ? <ErrorBox message={action.error_message} /> : null}
+        <div>
+          <div className="flex" style={{ marginBottom: 6 }}>
+            <span className="section-label" style={{ margin: 0 }}>
+              Details
+            </span>
+            <span className="spacer" />
+            <CopyButton value={JSON.stringify(action.params, null, 2)} />
+          </div>
+          <JsonView value={action.params} />
+          <div className="small dim mt-8">Values of keys that look like secrets are never stored.</div>
+        </div>
+        <div className="audit-quick">
+          {action.actor_user_id ? (
+            <Button size="sm" icon="developers" onClick={() => onFilter({ who: action.actor_user_id })}>
+              Everything by this person
+            </Button>
+          ) : null}
+          <Button size="sm" icon="actions" onClick={() => onFilter({ action: action.action })}>
+            Only “{actionLabel(action.action)}”
+          </Button>
+          {action.ip ? (
+            <Button size="sm" icon="search" onClick={() => onFilter({ q: action.ip ?? undefined })}>
+              From this IP
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </Drawer>
+  )
+}

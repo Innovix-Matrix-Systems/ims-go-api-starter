@@ -33,8 +33,15 @@ var allowedFileExtensions = map[string]bool{
 	"docx": true, "doc": true, "mp4": true, "mov": true, "mkv": true,
 }
 
+// SVG is deliberately not accepted: it can carry script (H17).
 var allowedImageExtensions = map[string]bool{
-	"jpg": true, "jpeg": true, "png": true, "bmp": true, "gif": true, "svg": true, "webp": true,
+	"jpg": true, "jpeg": true, "png": true, "bmp": true, "gif": true, "webp": true,
+}
+
+// StorageLimiter enforces the tenant's storage.mb plan limit (implemented by
+// the billing guard).
+type StorageLimiter interface {
+	RequireStorage(ctx context.Context, tenantID, usedBytes, addBytes int64) error
 }
 
 // Service implements the file resource and attachment rules.
@@ -42,18 +49,57 @@ type Service struct {
 	repo     Repository
 	disks    *storage.Registry
 	fileDisk string
-	tx       *database.TxManager
-	logger   *slog.Logger
+	// publicDisk holds avatars when fileDisk is private (FILES_PUBLIC_DISK).
+	publicDisk string
+	tx         *database.TxManager
+	logger     *slog.Logger
+	storage    StorageLimiter
+}
+
+// avatarDisk is where profile photos live. Avatars are shown in <img> tags
+// without a bearer token, so a private FILES_DISK keeps them on the public
+// disk (FILES_PUBLIC_DISK); library files follow FILES_DISK.
+func (s *Service) avatarDisk() string {
+	if disk, err := s.disks.Disk(s.fileDisk); err == nil && disk.Public() {
+		return s.fileDisk
+	}
+	return s.publicDisk
+}
+
+// WithPublicDisk sets the public disk used for avatars when FILES_DISK is
+// private (default "public").
+func (s *Service) WithPublicDisk(name string) *Service {
+	if name != "" {
+		s.publicDisk = name
+	}
+	return s
+}
+
+// WithStorageLimit enables the storage.mb quota check on uploads.
+func (s *Service) WithStorageLimit(limiter StorageLimiter) *Service {
+	s.storage = limiter
+	return s
 }
 
 // NewService creates the file service.
 func NewService(repo Repository, disks *storage.Registry, fileDisk string, tx *database.TxManager, logger *slog.Logger) *Service {
-	return &Service{repo: repo, disks: disks, fileDisk: fileDisk, tx: tx, logger: logger}
+	return &Service{repo: repo, disks: disks, fileDisk: fileDisk, publicDisk: storage.DiskPublic, tx: tx, logger: logger}
 }
 
-// Create stores a standalone library file.
-func (s *Service) Create(ctx context.Context, actorID int64, header *multipart.FileHeader) (*File, error) {
-	uploaded, err := s.storeOnDisk(ctx, header, allowedFileExtensions, MaxFileSize, false)
+// Create stores a standalone library file. tenantID stamps the caller's
+// tenant (0 for tenantless platform accounts — the row stays global and is
+// only visible to holders of the system-only file.view.all permission).
+func (s *Service) Create(ctx context.Context, actorID int64, tenantID int64, header *multipart.FileHeader) (*File, error) {
+	if s.storage != nil && tenantID != 0 {
+		used, err := s.repo.UsedBytes(ctx, tenantID)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.storage.RequireStorage(ctx, tenantID, used, header.Size); err != nil {
+			return nil, err
+		}
+	}
+	uploaded, err := s.storeOnDisk(ctx, s.fileDisk, header, allowedFileExtensions, MaxFileSize, false)
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +112,7 @@ func (s *Service) Create(ctx context.Context, actorID int64, header *multipart.F
 		MimeType:  uploaded.mime,
 		Size:      uploaded.size,
 		Type:      uploaded.fileType,
+		TenantID:  tenantIDPtr(tenantID),
 		CreatedBy: actorIDPtr(actorID),
 	})
 	if err != nil {
@@ -77,12 +124,14 @@ func (s *Service) Create(ctx context.Context, actorID int64, header *multipart.F
 
 // UpdateAvatar replaces the user's profile file (single-file collection):
 // the new file is stored first, old rows are swapped in one transaction, and
-// the superseded disk files are removed afterwards.
-func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, header *multipart.FileHeader) error {
+// the superseded disk files are removed afterwards. tenantID stamps the
+// target user's tenant (0 keeps the row global).
+func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, tenantID int64, header *multipart.FileHeader) error {
 	if userID < 1 {
 		return apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
 	}
-	uploaded, err := s.storeOnDisk(ctx, header, allowedImageExtensions, MaxAvatarSize, true)
+	avatarDisk := s.avatarDisk()
+	uploaded, err := s.storeOnDisk(ctx, avatarDisk, header, allowedImageExtensions, MaxAvatarSize, true)
 	if err != nil {
 		return err
 	}
@@ -106,7 +155,7 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, heade
 			Uuid:       uuidParam(uploaded.uuid),
 			Name:       uploaded.name,
 			FileName:   uploaded.fileName,
-			Disk:       s.fileDisk,
+			Disk:       avatarDisk,
 			Path:       uploaded.path,
 			MimeType:   uploaded.mime,
 			Size:       uploaded.size,
@@ -114,6 +163,7 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, heade
 			OwnerType:  &ownerType,
 			OwnerID:    &userID,
 			Collection: &collection,
+			TenantID:   tenantIDPtr(tenantID),
 			CreatedBy:  actor,
 			UpdatedBy:  actor,
 		}); err != nil {
@@ -126,7 +176,7 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, heade
 		return nil
 	})
 	if err != nil {
-		s.removeFromDisk(ctx, s.fileDisk, uploaded.path)
+		s.removeFromDisk(ctx, avatarDisk, uploaded.path)
 		return err
 	}
 
@@ -136,12 +186,13 @@ func (s *Service) UpdateAvatar(ctx context.Context, actorID, userID int64, heade
 	return nil
 }
 
-// Get loads a file by ID.
-func (s *Service) Get(ctx context.Context, id int64) (*File, error) {
-	return s.repo.Get(ctx, id)
+// Get loads a file by ID within the caller's tenant scope (allTenants is only
+// true for tenantless system callers).
+func (s *Service) Get(ctx context.Context, id int64, allTenants bool, tenantID int64) (*File, error) {
+	return s.repo.GetInTenant(ctx, id, allTenants, tenantID)
 }
 
-// List returns files with pagination and filters.
+// List returns files with pagination and filters (tenant-scoped by the filter).
 func (s *Service) List(ctx context.Context, filter ListFilter) ([]File, int64, error) {
 	items, err := s.repo.List(ctx, filter)
 	if err != nil {
@@ -155,13 +206,15 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]File, int64, e
 }
 
 // Delete removes a file row and its disk file (attached files included; the
-// owner simply loses the attachment).
-func (s *Service) Delete(ctx context.Context, id int64) error {
-	file, err := s.repo.Get(ctx, id)
+// owner simply loses the attachment). The delete is tenant-scoped: tenantless
+// callers (allTenants) may delete any file; tenant-bound callers only their
+// own tenant's.
+func (s *Service) Delete(ctx context.Context, id int64, allTenants bool, tenantID int64) error {
+	file, err := s.repo.GetInTenant(ctx, id, allTenants, tenantID)
 	if err != nil {
 		return err
 	}
-	if err := s.repo.Delete(ctx, id); err != nil {
+	if err := s.repo.Delete(ctx, id, allTenants, tenantID); err != nil {
 		return err
 	}
 	s.removeFromDisk(ctx, file.Disk, file.Path)
@@ -191,10 +244,15 @@ func (s *Service) Open(ctx context.Context, id int64) (io.ReadCloser, *File, err
 }
 
 // URL resolves the public URL of a stored file; failures degrade to "".
+// Files on a private disk (local or bucket) have no public URL; the handler
+// points clients at the authorized download route instead.
 func (s *Service) URL(ctx context.Context, file File) string {
 	disk, err := s.disks.Disk(file.Disk)
 	if err != nil {
 		s.logWarn(ctx, "file disk unavailable", file, err)
+		return ""
+	}
+	if !disk.Public() {
 		return ""
 	}
 	url, err := disk.URL(ctx, file.Path)
@@ -248,7 +306,7 @@ type upload struct {
 
 // storeOnDisk validates the upload, writes it to its disk and returns the
 // metadata needed for the file row.
-func (s *Service) storeOnDisk(ctx context.Context, header *multipart.FileHeader, allowed map[string]bool, maxSize int64, requireImage bool) (*upload, error) {
+func (s *Service) storeOnDisk(ctx context.Context, diskName string, header *multipart.FileHeader, allowed map[string]bool, maxSize int64, requireImage bool) (*upload, error) {
 	if header == nil || header.Filename == "" {
 		return nil, apperr.Validation(map[string][]string{"file": {"The file field is required."}})
 	}
@@ -278,7 +336,7 @@ func (s *Service) storeOnDisk(ctx context.Context, header *multipart.FileHeader,
 		return nil, apperr.Wrap(apperr.InternalServerError, "The uploaded file could not be inspected.", err)
 	}
 	detected := mime.String()
-	if requireImage && !strings.HasPrefix(detected, "image/") {
+	if requireImage && (!strings.HasPrefix(detected, "image/") || strings.Contains(detected, "svg")) {
 		return nil, apperr.Validation(map[string][]string{"file": {"The file field must be an image."}})
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
@@ -287,7 +345,7 @@ func (s *Service) storeOnDisk(ctx context.Context, header *multipart.FileHeader,
 
 	id := uuid.New()
 	path := "files/" + id.String() + "/" + fileName
-	disk, err := s.disks.Disk(s.fileDisk)
+	disk, err := s.disks.Disk(diskName)
 	if err != nil {
 		return nil, apperr.Wrap(apperr.ServiceUnavailable, "The file storage is not available.", err)
 	}
@@ -361,4 +419,13 @@ func actorIDPtr(actorID int64) *int64 {
 		return nil
 	}
 	return &actorID
+}
+
+// tenantIDPtr maps the caller's effective tenant to the column (0 → NULL:
+// the row is a global file owned by a tenantless platform account).
+func tenantIDPtr(tenantID int64) *int64 {
+	if tenantID < 1 {
+		return nil
+	}
+	return &tenantID
 }

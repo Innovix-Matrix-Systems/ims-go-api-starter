@@ -8,7 +8,24 @@ import (
 	"strings"
 )
 
-const trustedProxyKey contextKey = "trusted_proxy"
+const (
+	trustedProxyKey contextKey = "trusted_proxy"
+	clientIPKey     contextKey = "client_ip"
+	userAgentKey    contextKey = "user_agent"
+)
+
+// UserAgent returns the caller's User-Agent header ("" outside a request).
+func UserAgent(ctx context.Context) string {
+	agent, _ := ctx.Value(userAgentKey).(string)
+	return agent
+}
+
+// ClientIP returns the caller's IP address resolved by RealIP ("" outside an
+// HTTP request).
+func ClientIP(ctx context.Context) string {
+	ip, _ := ctx.Value(clientIPKey).(string)
+	return ip
+}
 
 // trustedProxy reports whether RealIP determined the immediate peer is a
 // trusted proxy (and therefore forwarded headers may be honoured).
@@ -28,19 +45,25 @@ func RealIP(trusted []string) func(http.Handler) http.Handler {
 	prefixes := parseTrustedProxies(trusted)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if len(prefixes) == 0 {
-				next.ServeHTTP(w, r)
-				return
+			if len(prefixes) > 0 && isTrusted(peerAddr(r.RemoteAddr), prefixes) {
+				r = r.Clone(context.WithValue(r.Context(), trustedProxyKey, true))
+				if client := resolveClientIP(r, prefixes); client.IsValid() {
+					r.RemoteAddr = net.JoinHostPort(client.String(), "0")
+				}
 			}
-			peer := peerAddr(r.RemoteAddr)
-			if !isTrusted(peer, prefixes) {
-				next.ServeHTTP(w, r)
-				return
+			// Services (e.g. the activity log) read the client IP from the
+			// context because they never see the *http.Request.
+			ctx := r.Context()
+			if client := peerAddr(r.RemoteAddr); client.IsValid() {
+				ctx = context.WithValue(ctx, clientIPKey, client.String())
 			}
-			r = r.Clone(context.WithValue(r.Context(), trustedProxyKey, true))
-			if client := resolveClientIP(r, prefixes); client.IsValid() {
-				r.RemoteAddr = net.JoinHostPort(client.String(), "0")
+			if agent := r.UserAgent(); agent != "" {
+				if len(agent) > 512 {
+					agent = agent[:512]
+				}
+				ctx = context.WithValue(ctx, userAgentKey, agent)
 			}
+			r = r.WithContext(ctx)
 			next.ServeHTTP(w, r)
 		})
 	}

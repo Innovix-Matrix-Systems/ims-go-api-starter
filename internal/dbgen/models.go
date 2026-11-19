@@ -8,6 +8,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ActivityLog struct {
+	ID          int64              `json:"id"`
+	TenantID    *int64             `json:"tenant_id"`
+	ActorID     *int64             `json:"actor_id"`
+	Action      string             `json:"action"`
+	SubjectType string             `json:"subject_type"`
+	SubjectID   *int64             `json:"subject_id"`
+	Changes     []byte             `json:"changes"`
+	Ip          *string            `json:"ip"`
+	RequestID   *string            `json:"request_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type BackupRun struct {
 	ID             int64              `json:"id"`
 	Uuid           pgtype.UUID        `json:"uuid"`
@@ -89,6 +102,8 @@ type DevAction struct {
 	ErrorMessage *string            `json:"error_message"`
 	DurationMs   int32              `json:"duration_ms"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Ip           *string            `json:"ip"`
+	UserAgent    *string            `json:"user_agent"`
 }
 
 type DevCacheEvent struct {
@@ -173,6 +188,7 @@ type FeatureFlag struct {
 	UpdatedBy  *int64             `json:"updated_by"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	Rollout    *int16             `json:"rollout"`
 }
 
 type File struct {
@@ -192,6 +208,7 @@ type File struct {
 	UpdatedBy  *int64             `json:"updated_by"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	TenantID   *int64             `json:"tenant_id"`
 }
 
 type ModelHasRole struct {
@@ -361,6 +378,7 @@ type Setting struct {
 	TargetType *string            `json:"target_type"`
 	TargetID   *int64             `json:"target_id"`
 	GroupID    *int64             `json:"group_id"`
+	SortOrder  *int32             `json:"sort_order"`
 }
 
 type SettingsGroup struct {

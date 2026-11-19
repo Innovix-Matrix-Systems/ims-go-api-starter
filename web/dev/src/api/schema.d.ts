@@ -205,6 +205,83 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/forgot-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a password reset link
+         * @description Always answers 200 with the same message, whether or not the e-mail belongs to an account (no account enumeration). At most one mail per address per minute.
+         */
+        post: operations["authForgotPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set a new password with a reset token
+         * @description The token works once. Every session of the account is signed out.
+         */
+        post: operations["authResetPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/email/verification-notification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send (again) the e-mail verification link
+         * @description Same answer for every address (no enumeration); at most one mail per address per minute.
+         */
+        post: operations["authResendVerification"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/email/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify an e-mail address with the token from the verification link */
+        post: operations["authVerifyEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/logout": {
         parameters: {
             query?: never;
@@ -848,6 +925,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/activity": {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional super-admin impersonation tenant id. Omit both acting headers for a
+                 *     read-only global view; set them before a write on a tenant-resolved route.
+                 *     Sent only when impersonating — there is no default.
+                 */
+                "X-Acting-Tenant"?: components["parameters"]["ActingTenant"];
+                /**
+                 * @description Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+                 *     only when impersonating — there is no default.
+                 */
+                "X-Acting-Branch"?: components["parameters"]["ActingBranch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tenant's activity log, newest first
+         * @description Who did what in the resolved tenant (user, role, branch, setting and
+         *     subscription changes). Platform accounts without an acting tenant see
+         *     every tenant. Requires `activity.view`. Secrets in `changes` are redacted.
+         */
+        get: operations["listActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/branch": {
         parameters: {
             query?: never;
@@ -1352,7 +1463,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Payment gateway callback (public) */
+        /**
+         * Payment gateway callback (public)
+         * @description The query string is only a hint: the payment outcome is always confirmed with the gateway. A payment fails only when the gateway reports it failed/cancelled; a gateway outage answers 503 and changes nothing. Manual methods (cash, bank_transfer) do not accept callbacks.
+         */
         get: operations["billingCallback"];
         put?: never;
         post?: never;
@@ -1441,7 +1555,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Subscribe the resolved tenant to a package */
+        /**
+         * Subscribe the resolved tenant to a package
+         * @description Idempotent per tenant + package + payment method: while a checkout is still pending, calling again returns that same subscription and payment instead of charging twice.
+         */
         post: operations["billingSubscribe"];
         delete?: never;
         options?: never;
@@ -1528,8 +1645,43 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Set per-tenant feature overrides */
+        /**
+         * Set per-tenant feature overrides
+         * @description Merges the given feature overrides into the subscription. Values are booleans (switch a feature) or numbers (a limit); `null` removes the override so the feature falls back to the plan. Keys must be catalog features.
+         */
         post: operations["setSubscriptionOverrides"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/billing/internal/tenants/{tenant_id}/subscription": {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional super-admin impersonation tenant id. Omit both acting headers for a
+                 *     read-only global view; set them before a write on a tenant-resolved route.
+                 *     Sent only when impersonating — there is no default.
+                 */
+                "X-Acting-Tenant"?: components["parameters"]["ActingTenant"];
+                /**
+                 * @description Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+                 *     only when impersonating — there is no default.
+                 */
+                "X-Acting-Branch"?: components["parameters"]["ActingBranch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Assign a plan to a tenant (system)
+         * @description Ends the tenant's current subscription and starts an active one on the package, in one transaction. With `payment_method` (cash or bank transfer) a completed payment is recorded for `amount`, which defaults to the package price; without it the plan is assigned free of charge. Hidden (inactive) packages can be assigned. Overrides start empty on the new subscription.
+         */
+        post: operations["assignTenantPlan"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1947,6 +2099,28 @@ export interface paths {
         post?: never;
         /** Delete a file */
         delete: operations["deleteFile"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/files/{id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Download a file (authorized; the only way to read private-disk files)
+         * @description Streams the file as an attachment. Same access rule as GET /files/{id}. When FILES_DISK=private, the file `url` points here.
+         */
+        get: operations["downloadFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2428,6 +2602,216 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dev/api/settings/groups/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reorder settings groups (dev.manage) */
+        put: operations["devReorderSettingGroups"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/settings/groups/{id}/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put settings into a group in the given order (dev.manage)
+         * @description Moves each key into the group and stores its position (drag and drop). Keys need their global row (settings:sync).
+         */
+        put: operations["devPlaceSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tenants with subscription, usage and override counts */
+        get: operations["devListTenants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/tenants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One tenant with plan features, usage against limits and subscription history */
+        get: operations["devGetTenant"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/inspector/routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Every registered route with its handler, middleware and permissions */
+        get: operations["devInspectorRoutes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/inspector/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Platform roles and the permission catalog compared with the database */
+        get: operations["devInspectorAccess"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/inspector/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Effective configuration by section, secrets masked */
+        get: operations["devInspectorConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/inspector/packages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Go modules and dashboard npm packages */
+        get: operations["devInspectorPackages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/commands": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Allowlisted maintenance commands with their last run */
+        get: operations["devListCommands"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/commands/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Command run history, newest first */
+        get: operations["devListCommandRuns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/commands/runs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One command run with its output */
+        get: operations["devGetCommandRun"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/commands/{name}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run an allowlisted command (dev.manage)
+         * @description Quick commands answer 200 with the finished run; background commands answer 202 with a running record to poll.
+         */
+        post: operations["devRunCommand"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dev/api/actions": {
         parameters: {
             query?: never;
@@ -2435,8 +2819,62 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Developer action audit log */
+        /**
+         * Developer action audit log
+         * @description Every dashboard sign-in and action, newest first. `meta.total` counts all matches.
+         */
         get: operations["devListActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/actions/facets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Actions and people that appear in the audit log (filter menus) */
+        get: operations["devActionFacets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/actions/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Audit log header numbers */
+        get: operations["devActionStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/actions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One audit row */
+        get: operations["devGetAction"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3523,7 +3961,13 @@ export interface components {
             is_active?: boolean | null;
             /** Format: int64 */
             branch_id?: number | null;
+            /** @description Changing roles also requires `user.role.assign`; you cannot change your own roles. */
             roles?: number[];
+            /**
+             * Format: date-time
+             * @description Update only, optional. The `updated_at` you last read; if the user changed since, the update answers 409 instead of overwriting.
+             */
+            updated_at?: string | null;
         };
         /**
          * @example {
@@ -3635,6 +4079,41 @@ export interface components {
         };
         BranchEnvelope: {
             data: components["schemas"]["Branch"];
+        };
+        ActivityEntry: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            tenant_id: number | null;
+            actor: {
+                /** Format: int64 */
+                id: number;
+                name: string;
+            } | null;
+            /** @example user.created */
+            action: string;
+            /** @example user */
+            subject_type: string;
+            /** Format: int64 */
+            subject_id: number | null;
+            changes: {
+                [key: string]: unknown;
+            };
+            ip: string | null;
+            request_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        ActivityFeedEnvelope: {
+            data: components["schemas"]["ActivityEntry"][];
+            links: {
+                next: string | null;
+            };
+            meta: {
+                path: string;
+                per_page: number;
+                next_cursor: string | null;
+            };
         };
         BranchPageEnvelope: {
             data: components["schemas"]["Branch"][];
@@ -3913,6 +4392,30 @@ export interface components {
             data: {
                 subscription: components["schemas"]["Subscription"];
                 payment: components["schemas"]["Payment"];
+            };
+        };
+        /**
+         * @example {
+         *       "package_id": 2,
+         *       "payment_method": "cash",
+         *       "amount": 1500
+         *     }
+         */
+        AssignPlanRequest: {
+            /** Format: int64 */
+            package_id: number;
+            /** @enum {string} */
+            payment_method?: "cash" | "bank_transfer";
+            /**
+             * Format: int64
+             * @description Defaults to the package price. Requires payment_method.
+             */
+            amount?: number;
+        };
+        AssignPlanEnvelope: {
+            data: {
+                subscription: components["schemas"]["Subscription"];
+                payment: components["schemas"]["Payment"] | null;
             };
         };
         Payment: {
@@ -4229,7 +4732,10 @@ export interface components {
         };
         FeatureFlagItem: {
             key: string;
+            /** @description Effective value. With a rollout it is decided for a user target; otherwise it means "on for `rollout`%". */
             value: boolean;
+            /** @description Percentage of users (or tenants) the winning value is enabled for; null means everyone. */
+            rollout: number | null;
             default: boolean;
             /** @enum {string} */
             source: "user" | "tenant" | "global" | "default";
@@ -4244,13 +4750,23 @@ export interface components {
         FeatureFlagListEnvelope: {
             data: components["schemas"]["FeatureFlagItem"][];
         };
+        /** @description Send `flags`, `rollout` or both. */
         FeatureFlagUpdateRequest: {
             /** @enum {string} */
             target_type?: "global" | "tenant" | "user";
             /** Format: int64 */
             target_id?: number;
-            flags: {
+            flags?: {
                 [key: string]: boolean | null;
+            };
+            /**
+             * @description Flag key to percentage (0-100). Enables the flag for that share of users; 100 means everyone.
+             * @example {
+             *       "feature.audit": 60
+             *     }
+             */
+            rollout?: {
+                [key: string]: number;
             };
         };
         SettingsGroup: {
@@ -4306,6 +4822,195 @@ export interface components {
             status: "ok" | "error";
             error_message?: string | null;
             duration_ms?: number;
+            ip?: string | null;
+            user_agent?: string | null;
+            actor_email?: string | null;
+            actor_name?: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        DevActionFacets: {
+            actions: {
+                action: string;
+                /** Format: int64 */
+                total: number;
+            }[];
+            actors: {
+                /** Format: int64 */
+                user_id: number;
+                email: string | null;
+                /** Format: int64 */
+                total: number;
+            }[];
+        };
+        DevActionStats: {
+            /**
+             * Format: int64
+             * @description Actions in the last 24 hours.
+             */
+            last_day: number;
+            /**
+             * Format: int64
+             * @description Failed dashboard sign-ins in the last 24 hours.
+             */
+            failed_sign_ins: number;
+            retention_days: number;
+        };
+        DevTenant: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            code: string;
+            domain: string | null;
+            email: string | null;
+            phone: string | null;
+            is_active: boolean;
+            subscription_status: string | null;
+            package_name: string | null;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** Format: int64 */
+            users: number;
+            /** Format: int64 */
+            branches: number;
+            /**
+             * Format: int64
+             * @description Tenant setting and feature-flag overrides.
+             */
+            overrides: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        DevTenantDetail: components["schemas"]["DevTenant"] & {
+            /** Format: int64 */
+            storage_bytes: number;
+            features: {
+                key: string;
+                description: string;
+                is_limit: boolean;
+                enabled: boolean;
+                /**
+                 * Format: int64
+                 * @description null = unlimited.
+                 */
+                limit: number | null;
+                /** Format: int64 */
+                used: number | null;
+                overridden: boolean;
+            }[];
+            subscriptions: {
+                /** Format: int64 */
+                id: number;
+                status: string;
+                package_name: string;
+                /** Format: date-time */
+                starts_at: string | null;
+                /** Format: date-time */
+                expires_at: string | null;
+                /** Format: date-time */
+                trial_ends_at: string | null;
+                /** Format: date-time */
+                cancelled_at: string | null;
+                /** Format: date-time */
+                created_at: string;
+            }[];
+        };
+        DevRouteReport: {
+            /** @description Middleware every route runs, in order. */
+            global: string[];
+            routes: {
+                method: string;
+                path: string;
+                handler: string;
+                permissions: string[];
+                middleware: string[];
+            }[];
+        };
+        DevAccessReport: {
+            roles: {
+                /** Format: int64 */
+                id: number;
+                name: string;
+                guard: string;
+                is_system: boolean;
+                /** Format: int64 */
+                permissions: number;
+                /** Format: int64 */
+                users: number;
+            }[];
+            /** Format: int64 */
+            tenant_roles: number;
+            permissions: {
+                name: string;
+                group: string;
+                description: string;
+                is_system: boolean;
+                declared: boolean;
+                stored: boolean;
+            }[];
+            declared_not_stored: string[];
+            stored_not_declared: string[];
+            developer_permissions: string[];
+            admin_permissions: string[];
+        };
+        DevConfigSection: {
+            name: string;
+            entries: {
+                key: string;
+                value: string;
+                masked: boolean;
+            }[];
+        };
+        DevPackagesReport: {
+            go_version: string;
+            module: string;
+            packages: {
+                name: string;
+                version: string;
+                /** @enum {string} */
+                kind: "require" | "indirect" | "dependency" | "devDependency";
+                /** @enum {string} */
+                runtime: "go" | "npm";
+            }[];
+        };
+        DevCommand: {
+            name: string;
+            label: string;
+            description: string;
+            group: string;
+            /** @description The command changes data; ask before running. */
+            confirm: boolean;
+            /** @description Runs in the background; poll the run. */
+            background: boolean;
+            options: {
+                name: string;
+                label: string;
+                /** @enum {string} */
+                type: "bool" | "number" | "text" | "select";
+                default: string;
+                choices?: string[];
+                description?: string;
+            }[];
+            /** Format: int64 */
+            runs: number;
+            last_status: string | null;
+            /** Format: date-time */
+            last_run_at: string | null;
+        };
+        DevCommandRun: {
+            /** Format: int64 */
+            id: number;
+            command: string;
+            /** Format: int64 */
+            actor_user_id: number;
+            /** @enum {string} */
+            status: "running" | "ok" | "error";
+            options: {
+                [key: string]: string;
+            };
+            output: string;
+            error: string | null;
+            duration_ms: number;
             /** Format: date-time */
             created_at: string;
         };
@@ -4314,6 +5019,8 @@ export interface components {
             links?: Record<string, never> | null;
             meta?: {
                 next_cursor?: string;
+                /** Format: int64 */
+                total?: number;
             };
         };
         DevQueue: {
@@ -4807,6 +5514,8 @@ export interface components {
             key: string;
             /** @description Effective value after resolution. */
             value: boolean;
+            /** @description Rollout percentage of the winning value; null means everyone. */
+            rollout: number | null;
             /** @description Code-defined default. */
             default: boolean;
             /** @enum {string} */
@@ -4819,6 +5528,7 @@ export interface components {
         DevFlagListEnvelope: {
             data: components["schemas"]["DevFlag"][];
         };
+        /** @description Send `flags`, `rollout` or both. */
         DevFlagUpdateRequest: {
             /**
              * @default global
@@ -4828,8 +5538,12 @@ export interface components {
             /** Format: int64 */
             target_id?: number | null;
             /** @description Flag key to value; null clears the override at this target. */
-            flags: {
+            flags?: {
                 [key: string]: boolean | null;
+            };
+            /** @description Flag key to rollout percentage (enables the flag for that share). */
+            rollout?: {
+                [key: string]: number;
             };
         };
         DevFlagResetEnvelope: {
@@ -5170,8 +5884,6 @@ export interface components {
          *     only when impersonating — there is no default.
          */
         ActingBranch: number;
-        /** @description Public tenant resolution code. */
-        TenantCode: string;
     };
     requestBodies: never;
     headers: never;
@@ -5500,6 +6212,192 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded; see `retry_after`. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    authForgotPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageEnvelope"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded; see `retry_after`. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    authResetPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    token: string;
+                    password: string;
+                    password_confirmation: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Password changed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageEnvelope"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded; see `retry_after`. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    authResendVerification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Accepted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageEnvelope"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded; see `retry_after`. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    authVerifyEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    token: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Verified. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessageEnvelope"];
                 };
             };
             /** @description Validation failed; `errors` carries field messages. */
@@ -6569,6 +7467,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Conflicting state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description Validation failed; `errors` carries field messages. */
             422: {
                 headers: {
@@ -7423,6 +8330,83 @@ export interface operations {
             /** @description A dependency or gateway is unavailable. */
             503: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listActivity: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `meta.next_cursor`. */
+                cursor?: string;
+                per_page?: number;
+                /** @example user */
+                subject_type?: string;
+                subject_id?: number;
+                actor_id?: number;
+            };
+            header?: {
+                /**
+                 * @description Optional super-admin impersonation tenant id. Omit both acting headers for a
+                 *     read-only global view; set them before a write on a tenant-resolved route.
+                 *     Sent only when impersonating — there is no default.
+                 */
+                "X-Acting-Tenant"?: components["parameters"]["ActingTenant"];
+                /**
+                 * @description Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+                 *     only when impersonating — there is no default.
+                 */
+                "X-Acting-Branch"?: components["parameters"]["ActingBranch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of activity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityFeedEnvelope"];
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded; see `retry_after`. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -9229,6 +10213,15 @@ export interface operations {
                     "application/json": components["schemas"]["MessageEnvelope"];
                 };
             };
+            /** @description Malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             /** @description Resource not found. */
             404: {
                 headers: {
@@ -9567,9 +10560,18 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "overrides": {
+                 *         "users.max": 10,
+                 *         "reports.export": true,
+                 *         "branches.max": null
+                 *       }
+                 *     }
+                 */
                 "application/json": {
                     overrides: {
-                        [key: string]: unknown;
+                        [key: string]: (boolean | number) | null;
                     };
                 };
             };
@@ -9582,6 +10584,89 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SubscriptionEnvelope"];
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    assignTenantPlan: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional super-admin impersonation tenant id. Omit both acting headers for a
+                 *     read-only global view; set them before a write on a tenant-resolved route.
+                 *     Sent only when impersonating — there is no default.
+                 */
+                "X-Acting-Tenant"?: components["parameters"]["ActingTenant"];
+                /**
+                 * @description Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+                 *     only when impersonating — there is no default.
+                 */
+                "X-Acting-Branch"?: components["parameters"]["ActingBranch"];
+            };
+            path: {
+                tenant_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description The new subscription and the recorded payment (null when free of charge). */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignPlanEnvelope"];
+                };
+            };
+            /** @description Malformed request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             /** @description Missing, invalid or expired bearer token. */
@@ -10781,6 +11866,55 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    downloadFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["PathID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file contents. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
             };
             /** @description Missing, invalid or expired bearer token. */
             401: {
@@ -12183,9 +13317,710 @@ export interface operations {
             };
         };
     };
+    devReorderSettingGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Group ids in the new order. */
+                    ids: number[];
+                };
+            };
+        };
+        responses: {
+            /** @description Saved order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            ids?: number[];
+                        };
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devPlaceSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Setting keys in their new order. */
+                    keys: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Saved placement. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            /** Format: int64 */
+                            group_id?: number;
+                            keys?: string[];
+                        };
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devListTenants: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Name, code, email, phone or domain. */
+                search?: string;
+                active?: "active" | "inactive";
+                subscription?: "none" | "trial" | "active" | "pending" | "past_due" | "cancelled" | "expired";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated tenants. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevTenant"][];
+                        meta: components["schemas"]["PaginationMeta"];
+                        links: components["schemas"]["PaginationLinks"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devGetTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tenant detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevTenantDetail"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devInspectorRoutes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Route table (like `php artisan route:list`). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevRouteReport"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devInspectorAccess: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Roles, permissions and catalog drift. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevAccessReport"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devInspectorConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Configuration sections. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevConfigSection"][];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devInspectorPackages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Dependencies. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevPackagesReport"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devListCommands: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Commands. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevCommand"][];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devListCommandRuns: {
+        parameters: {
+            query?: {
+                /** @description Only runs of this command. */
+                command?: string;
+                limit?: number;
+                /** @description Last seen run id (exclusive). */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Cursor-paginated runs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevCommandRun"][];
+                        links?: Record<string, never> | null;
+                        meta?: {
+                            next_cursor?: string;
+                        };
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devGetCommandRun: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevCommandRun"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devRunCommand: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @example permission:sync */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    options?: {
+                        [key: string]: string;
+                    };
+                };
+            };
+        };
+        responses: {
+            /** @description Finished run. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevCommandRun"];
+                    };
+                };
+            };
+            /** @description Background run started. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevCommandRun"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     devListActions: {
         parameters: {
             query?: {
+                /** @description Actor e-mail, target, IP prefix or details text. */
+                search?: string;
+                /** @example command.run */
+                action?: string;
+                actor_id?: number;
+                status?: "ok" | "error";
+                /** @description YYYY-MM-DD or RFC 3339 (inclusive). */
+                from?: string;
+                /** @description YYYY-MM-DD (whole day included) or RFC 3339. */
+                to?: string;
                 limit?: number;
                 /** @description Last seen action id (exclusive). */
                 cursor?: string;
@@ -12203,6 +14038,155 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DevActionListEnvelope"];
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devActionFacets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Facets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevActionFacets"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devActionStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stats. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevActionStats"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devGetAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The audit row. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevAction"];
+                    };
                 };
             };
             /** @description Missing, invalid or expired bearer token. */
@@ -12920,6 +14904,8 @@ export interface operations {
         parameters: {
             query?: {
                 level?: string;
+                /** @description Text in the message or attributes, or a request id prefix. */
+                search?: string;
                 request_id?: string;
                 limit?: number;
                 cursor?: string;

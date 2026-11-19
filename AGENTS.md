@@ -1,88 +1,96 @@
 # AGENTS.md — Working Guide for This Repository
 
 Instructions for AI coding agents (and humans) working on the IMS Go API Starter. Read this before
-writing code. Architecture detail lives in [`docs/architecture.md`](docs/architecture.md); the
-developer guide is [`docs/developer-guide.md`](docs/developer-guide.md) and per-phase notes live in
-[`specs/`](specs/README.md).
+writing code. Architecture detail lives in [`docs/architecture.md`](docs/architecture.md) and the
+developer guide is [`docs/developer-guide.md`](docs/developer-guide.md). Task recipes live in
+**skills**: `.agents/skills/` (canonical) and the identical copy in `.claude/skills/`
+(`make skills-sync` copies, `make gen-check` fails on drift).
+
+| Skill | Use when |
+|---|---|
+| `add-module` | adding a feature/CRUD module or an endpoint to one |
+| `db-change` | migrations, sqlc queries, `internal/dbgen` regeneration |
+| `dev-dashboard` | dashboard panels, `/dev/api` endpoints, dashboard commands |
+| `verify-changes` | finishing any task: the gates to run before reporting done |
 
 ## What this repo is
 
-- **Go monolith**: feature-first modules, explicit dependency injection, typed
-  request validation, RFC 9457 problem+json errors, `{data}` envelopes, multi-tenant + branch
-  isolation, RBAC, billing with feature limits, cache drivers, River queue, cron scheduler, Cobra
-  CLI — all in **one binary** (`cmd/app`), deployed with systemd (no containers).
-- **Implemented phases:** 0 (kernel), 1 (database), 2 (auth/tenancy/RBAC), 3 (platform), 4
-  (billing), 5 (notifications, i18n, files, import/export, mail), 6 (contract/observability),
-  7 (deploy/generators), 10 (OpenAPI spec generator), 11 (settings/groups/feature flags),
-  9 core (developer dashboard: hidden Developer access, queue admin, telemetry capture, `/dev`
-  SPA with Telescope/queue/logs/commands/system screens). Next: 8, then 9 management panels
-  (sessions/settings/flags/files/developers).
+- **Go monolith** with Laravel ergonomics: feature-first modules, explicit dependency injection,
+  typed request validation, RFC 9457 problem+json errors, `{data}` envelopes, multi-tenant +
+  branch isolation, RBAC, billing with feature limits, settings + feature flags (with percentage
+  rollout), activity log, cache drivers, swappable storage disks (local/S3/R2/MinIO), River
+  queue, cron scheduler, Cobra CLI — all in **one binary** (`cmd/app`), deployed with systemd
+  (no containers).
+- **Developer dashboard** (`/dev`, React SPA embedded via `go:embed`): Telescope-style requests,
+  logs, exceptions, queue, backups, commands, inspector (system health, routes, roles, config,
+  packages), audit log, tenants, sessions, settings, feature flags, files, developers, playground;
+  Ctrl+K command palette.
+- **Known gaps** (do not assume they exist): `tenants.is_active` is not enforced at request time,
+  the dashboard has no frontend test suite, golangci-lint is still v1.
 
 ## Golden commands
 
 ```bash
 make help                  # list every task (dev, build, test, lint, generate, db, ...)
-make dev                   # API + SPA hot reload (air + Vite HMR; UI at localhost:5173/dev/)
+make dev                   # SPA dev server on :8080 (HMR, /dev) + API on :8081 (air hot reload)
 make dev-api               # API only, hot reload via air
-make build                 # bin/ims (static-ish, CGO-free)
-make run                   # run the API once (loads .env if present; defaults otherwise)
+make build                 # bin/ims (CGO-free)
 make check                 # format-check + vet + lint + unit tests
-make format                # gofmt -w .
-make lint                  # golangci-lint run ./...
-make generate              # sqlc + oapi-codegen (regenerates dbgen + contract)
-make sqlc                  # regenerate internal/dbgen from sql/ + migrations/ (sqlc v1.31.1)
+make generate              # sqlc + oapi-codegen + OpenAPI regions
+make gen-check             # fails when generated code, OpenAPI regions or skills drifted
+make openapi-check         # spec valid + no route drift (every route must be in api/openapi.yaml)
 make migrate               # goose + River migrations
+make web-typecheck         # dashboard: tsc --noEmit
+make web-build             # dashboard: build web/dev/dist (embedded by the binary)
 
 # Integration tests (real Postgres; each package gets its own schema):
-#   make db-up                                         (docker compose; or any local PG)
-#   make test-integration                              (uses DATABASE_TEST_DSN)
 $env:DATABASE_TEST_DSN = "postgres://postgres:postgres@127.0.0.1:5432/ims_go_api_test?sslmode=disable"
 go test -count=1 ./...
 go test -count=1 -race -p 2 ./...   # -p 2 locally: parallel race builds can exhaust memory
 ```
 
-Always finish work with `make check` (gofmt-clean, `go vet`, `golangci-lint` exit 0, unit tests
-green) plus the integration suite when a DSN is available. Never commit; the user commits.
+Finish work with the `verify-changes` skill. Commit only when the user asks; then one commit per
+feature with a message that says what changed and why.
 
 ## Repository map
 
 ```text
-cmd/app/                      Single binary entry point
-web/dev/                      TanStack Start developer dashboard (SPA mode, embedded via go:embed)
+cmd/app/                      single binary entry point
+module.go                     root package: embeds go.mod (dashboard Inspector → Packages)
+web/dev/                      dashboard SPA (TanStack Router/Query, cmdk); embed.go also embeds package.json
+  src/components/ui.tsx       Card, Button, Chip, Drawer, Modal, Tabs, StatCard, Icon, ...
+  src/components/inputs.tsx   Select, DatePicker, TimePicker (use these, never native <select>/date)
 internal/
-  app/        composition root: platform.go (shared deps), wiring.go (HTTP deps), routes.go
-              (middleware chain + route groups), lifecycle.go
-  cli/        Cobra tree: root.go, registry.go, one file per command group
-              (serve, migrate*, db:seed, queue*, schedule*, cache*, settings*, billing*, ...)
-  config/     typed config; .env precedence: --env-file → APP_ENV_FILE → .env → code defaults
-  apperr/     application error codes + *apperr.Error (stable, machine-readable codes)
-  authn/      opaque tokens (Authenticator), OTP, login throttle, bearer middleware, Identity
-  authz/      permission Catalog, Checker (Can/MustCan, super-admin bypass),
-              permission cache + invalidation, Require middleware
-  tenancy/    Scope (identity vs impersonation), Resolve/Exempt middleware, cached checks
+  app/        composition root: platform.go (shared deps), schedule.go (recurring tasks),
+              wiring.go (HTTP deps), routes.go (middleware chain + route groups), dev_commands.go (dashboard commands)
+  cli/        Cobra tree; withPlatform(state, fn) boots the app for a command (platform.go)
+  config/     typed config, one file per section (app, database, cache, queue, auth, billing,
+              storage, backup, mail, ops, activity, env); config.go = Load + cross-section Validate
+  apperr/     application error codes + *apperr.Error
+  authn/      opaque tokens, OTP, throttle, recovery (password reset / e-mail verify), bearer
+              middleware, Identity, UserID(r) / UserIDFromContext(ctx)
+  authz/      permission Catalog, Checker (Can/MustCan, super-admin bypass), Require → *Gate
+  tenancy/    Scope, Filter (fails closed), Resolve/Exempt/InternalOnly middleware, From(r)
+  testkit/    integration-test app + factories (User, Role, Tenant, SuperAdmin) + request builder
   platform/   technical infra:
-    database/   named pgx pools (registry), TxManager, goose+River migrate, dbtest helpers
-    cache/      Store interface + factory/ + memory|file|redis|database drivers
-    cachekeys/  versioned, scope-aware cache keys
-    queue/      queue.Engine (sync | River), job registry, River dispatch + health/stats
-    scheduler/  task registry, cron runner, heartbeat + health
-    httpx/      BindJSON, validator + message mapping, Problem (RFC 9457), response helpers,
-                pagination, middleware (RequestID, AccessLog, Recover, Timeout)
-    health/     check registry + /api/health handler
-    i18n/       Accept-Language → locale in context (embedded go-i18n en/bn catalogs)
-    mail/       Driver interface: log | smtp; mail.send queue job
-    storage/    Disk interface: private/public local roots + s3 (aws-sdk-go-v2); /storage static
-    ratelimit/  Limiter interface: memory + cache-backed fixed window
-  modules/    business features (see "Module anatomy")
-    system/ auth/ identity/ access/ tenants/ branches/ settings/ dataprocessing/ billing/ backup/
-    files/ notifications/
-  dbgen/      sqlc generated code (never edit by hand)
-  contract/   oapi-codegen generated code (never edit by hand)
-  scaffold/   `ims gen module` + `ims gen openapi` generators (templates, analyzer, region splice)
-migrations/   goose SQL, embedded (also sqlc's schema source)
-sql/          sqlc queries
-tests/        docker-compose.yml for local Postgres
-specs/        per-phase specs (accepted before each phase starts)
+    database/   pgx registry, TxManager (WithTx, WithTenantLock, TryHoldLock), migrate, dbtest
+    cache/      Store interface + memory|file|redis|database drivers
+    queue/      Engine (sync | River), job registry, admin
+    scheduler/  task registry, cron runner, heartbeat
+    httpx/      Kit (Bind/Validate/PathID + Responder), Binder, Validator, Problem (RFC 9457),
+                pagination, middleware, ClientIP(ctx)/UserAgent(ctx)
+    storage/    Disk interface (Put/Get/Delete/URL/TemporaryURL/Public) + local and S3 drivers
+    telemetry/  dashboard capture (requests, SQL, cache, queue, logs) + Redactor
+    health/ i18n/ mail/ ratelimit/ metrics/
+  modules/    business features (see "Module anatomy"):
+    access activity auth backup billing branches dataprocessing dev featureflags files
+    identity notifications settings system tenants
+  scaffold/   `ims gen module` + `ims gen openapi` generators
+  dbgen/      sqlc generated code (never edit)
+  contract/   oapi-codegen generated code (never edit)
+api/openapi.yaml              canonical API contract (served at /docs)
+migrations/                   goose SQL, embedded (also sqlc's schema source)
+sql/queries/                  sqlc queries
 ```
 
 ## Module anatomy (the pattern to follow)
@@ -90,201 +98,185 @@ specs/        per-phase specs (accepted before each phase starts)
 Small/medium modules are flat; large modules (billing) split into subpackages:
 
 ```text
-internal/modules/<name>/            (e.g. identity, tenants, branches, access, auth)
-├── routes.go        Route registration ONLY (RegisterRoutesResolve / RegisterRoutesExempt /
-│                    RegisterPublicRoutes methods or free functions). No business logic.
-├── handler.go       HTTP transport: bind → validate → call service → respond. No SQL, no rules.
-├── request.go       Request DTOs (+ response DTOs & mappers).
-├── service.go       Business rules, authorization checks, transactions.
-├── repository.go    Repo interface(s) + sqlc-backed implementation. No HTTP concepts.
+internal/modules/<name>/
+├── routes.go        Route registration + each route's permission:
+│                    r.With(h.can(authz.PermBranchCreate)).Post("/branch", h.store)
+├── handler.go       HTTP transport: h.Bind → service → h.Data/h.Error. No SQL, no rules.
+│                    Large handlers split by resource (identity: users_/profile_/import_export_handler.go).
+├── request.go       Request DTOs (validate tags) + response DTOs & mappers.
+├── service.go       Business rules, tenancy, invariants, transactions, activity records.
+├── repository.go    Repo interface + sqlc-backed impl. No HTTP concepts.
 └── model.go         Domain structs + row mappers (never expose dbgen types outside).
 
 internal/modules/billing/           Big-module layout (HTTP stays at the module root):
-├── routes.go                        Route registration ONLY
-├── handler.go, request.go           HTTP transport + request/response DTOs
-├── orchestrator.go, drivers.go      gateway registry + drivers (implement domain.PaymentDriver)
-├── domain/                          shared types: features.go, model.go (domain structs),
-│                                    repository.go (interfaces + input types),
-│                                    gateway.go (driver contract + result structs), invoice.go
-└── service/                         All services: guard.go, package_service.go,
-                                     subscription_service.go, payment_service.go,
-                                     approval_service.go (+ helpers.go, gateway.go interface)
+├── routes.go, handler.go, request.go, orchestrator.go, drivers.go
+├── domain/   shared types: features.go, model.go, repository.go, gateway.go, invoice.go
+└── service/  guard.go, package_service.go, subscription_service.go, payment_service.go, ...
 ```
 
-Why a `domain/` leaf exists: services live in a subpackage and must not import the HTTP root
-(import cycle), so everything shared (domain types, repository interfaces, feature catalog,
-driver contract) lives in `domain/`; the root imports `domain/` + `service/` and nothing imports
-the root.
+A handler action, the whole shape:
 
-Rules of the layering (enforced by review, not the compiler):
+```go
+func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
+	var req InsertUpdateRequest
+	if !h.Bind(w, r, &req) { // JSON + validate; writes the 400/415/422 itself
+		return
+	}
+	branch, err := h.service.Create(r.Context(), tenancy.From(r), authn.UserID(r), req.toInput())
+	if err != nil {
+		h.Error(w, r, err)
+		return
+	}
+	h.Data(w, r, http.StatusCreated, NewResponse(*branch))
+}
+```
+
+Rules of the layering (enforced by review and `route_permissions_integration_test.go`):
 
 1. `handler → service → repository → dbgen`. Services never import `httpx`; repositories never
    import `httpx`/`authn`.
-2. `routes.go` files only map paths to handler methods. If routes need a dependency, it is the
-   handler, not middleware construction.
-3. Services are callable from HTTP, CLI, jobs and scheduled tasks — no `http.Request` anywhere
-   below the handler layer.
-4. Repositories take explicit typed params (`tenantID int64`, `scope tenancy.Scope` where needed);
-   no hidden global state. Services own transactions (`platform.Tx.WithTx`).
+2. Handlers embed `httpx.Kit` (built once in `wiring.go`, passed to every `NewHandler`, including
+   the dashboard's); each module defines `func (h *Handler) can(perm string)` returning
+   `authz.Require(h.checker, perm, h.Responder)`.
+3. Permissions are declared on the route. Call `h.checker.MustCan(ctx, authn.UserID(r), perm)`
+   inside a handler only when the permission depends on the payload (e.g. sending `roles`).
+4. Services are callable from HTTP, CLI, jobs and scheduled tasks — no `http.Request` below the
+   handler. Optional collaborators are `WithX(...)` options (`WithTx`, `WithActivity`, ...).
+5. Repositories take explicit typed params (`tenancy.Filter`, `tenantID`); services own
+   transactions (`TxManager.WithTx`, `WithTenantLock` for quota checks). Inside a lock, every
+   query runs on the locked transaction (`q`); read anything else (like the plan limit) before
+   taking it, or concurrent requests can fill the pool and deadlock.
 
-### Adding a new module (checklist)
+### Adding a new module (checklist — details in the `add-module` skill)
 
-1. Skim `specs/` for the phase that owns the feature; if behavior is unclear, read the design
-   notes referenced in that spec.
-2. Migration: `migrations/000NN_*.sql` (goose `-- +goose Up/Down`). Include
-   `tenant_id`/`branch_id` where the resource is scoped, audit columns (`created_by`,
-   `updated_by`), `deleted_at` for soft deletes, and partial unique indexes
-   (`WHERE deleted_at IS NULL`) for soft-deleted uniqueness.
-3. Queries: `sql/queries/<name>.sql` with sqlc annotations; run `make sqlc`.
-4. `model.go` (domain + mapper), `repository.go` (interface + impl, `database.MapError` for
-   driver errors, `ErrNoRows` → `apperr.ResourceNotFound`).
-5. `service.go` (or `service/`): authorization via `authz.Checker.MustCan`, tenancy via the
-   `tenancy.Scope` argument, stamping `tenant_id`/`branch_id`/actor from scope/identity.
-6. `request.go` + `handler.go`: strict JSON binding (`httpx.Binder`), `validate:` tags,
-   `httpx.PageParams`/`OrderParams` for lists, `httpx.NewPagination` for paginated responses.
-7. `routes.go`: register in the right group (see below); wiring in `internal/app/wiring.go`;
-   route mounting in `internal/app/routes.go`.
-8. OpenAPI: if the module was scaffolded with `ims gen module` its paths + schemas are written into
-   the managed regions of `api/openapi.yaml` automatically. For a hand-written module run
-   `ims gen openapi --module=<name>` (or `make openapi-gen` for all). Never edit text between the
-   `BEGIN/END GENERATED` markers by hand — copy an entry outside the region to customize it.
-   `make gen-check` / `ims openapi:check` fail when a region is stale.
-9. Tests: service unit tests with fakes where possible; repository/service integration tests via
-   `dbtest` (gated by `DATABASE_TEST_DSN`); handler coverage through the app e2e test if it is a
-    critical flow.
-10. Commands/scheduled tasks if the feature needs them (`internal/cli/`, `internal/app/platform.go`).
-11. Update the phase spec's implementation notes; mark the checklist item.
+1. Prefer `ims gen module --name=x --fields="..."` (writes migration, queries, model, repository,
+   service, request, handler, routes, service test and OpenAPI regions), then adapt.
+2. Migration + queries (`db-change` skill); `make sqlc`.
+3. Service: tenancy from `tenancy.Scope`, stamping actor/tenant, `activity.Recorder` for changes
+   tenant admins should see.
+4. Handler + routes with `h.can(...)`; mount in `internal/app/routes.go`, wire in
+   `internal/app/wiring.go`.
+5. Permissions in `internal/authz/catalog.go` (+ `AdminTenantPermissions` group if tenant admins
+   get it); `permission:sync`.
+6. OpenAPI: `ims gen openapi --module=<name>` (or hand-write outside the generated regions);
+   `make openapi-check`.
+7. Tests: unit tests with fakes; an integration test with `testkit` including a cross-tenant
+   isolation check.
+8. Record non-obvious decisions in `docs/architecture.md` §11 and the list below.
 
 ## Route groups (registered in `internal/app/routes.go`)
 
 | Group | Middleware | Use for |
 |---|---|---|
-| Public | none | login/OTP, public packages, gateway callbacks, `/api/health`, `/up` |
-| Authenticated + tenant-resolved | `authn.Authenticate` → `tenancy.Resolve` | tenant-scoped resources (users, branches, roles in-tenant, subscription status, payments) |
-| Authenticated + tenant-exempt | `authn.Authenticate` → `tenancy.Exempt` | global/system management (tenants CRUD, permissions, internal users/roles, packages/admin billing) |
+| Public | none | login/OTP, password reset, e-mail verify, public packages, gateway callbacks, `/api/health`, `/up` |
+| Authenticated (no tenancy) | `auth` | logout / logout-all (tenantless accounts must reach them) |
+| Authenticated + tenant-resolved | `auth` → `tenant.resolve` | tenant-scoped resources (users, branches, roles, settings, flags, activity, billing status) |
+| Authenticated + tenant-exempt | `auth` → `tenant.exempt` (+ `tenant.internal`) | global management (tenants, permissions, internal users/roles, packages, approvals) |
+| Dashboard `/dev/api` | `dev.enabled` → `auth` → `tenant.exempt` → `can:dev.view` | dashboard JSON API; mutations add `can:dev.manage` |
 
-Middleware order (outermost first): `RequestID → AccessLog → Recover → Timeout → RateLimit →
-Locale`. Handlers inside tenant-resolved groups read the scope with
-`tenancy.FromContext(ctx)`; impersonators use `X-Acting-Tenant` / `X-Acting-Branch` (writes
-without acting headers on resolved routes are 403).
+Global middleware (outermost first): `request-id → public-origin (non-local) → real-ip →
+security-headers → cors → access-log → recover → telescope → metrics → timeout → throttle →
+locale`. The dashboard Inspector shows the live table.
 
 ## Cross-cutting patterns (memorize these)
 
-**Errors** — services return `*apperr.Error` (codes in `internal/apperr`). Handlers call
-`responder.Error(w, r, err)`; the responder renders RFC 9457 problem+json with `error_code`,
-`timestamp`, `trace_id` (5xx), `errors` (422), `meta`
-(feature limits), `retry_after` (429). Never write raw JSON errors. 5xx details are masked
-outside debug; the real error is attached via `apperr.Wrap(...)` for logs.
+**Errors** — services return `*apperr.Error`; handlers call `h.Error(w, r, err)`, which renders
+RFC 9457 problem+json (`error_code`, `errors` for 422, `meta` for feature limits, `retry_after`
+for 429, `trace_id` for 5xx). Never write raw JSON errors. Wrap causes with `apperr.Wrap`.
 
-**Validation** — `binder.JSON` (size limit, content type, strict unknown fields, trailing
-garbage) then `validator.Struct`. Messages are human-readable (validator tags never leak).
-Business validation (uniqueness, ownership) lives in services and returns
-`apperr.Validation(map[string][]string{...})` — dot-path field errors.
+**Validation** — `h.Bind` (size limit, content type, strict fields, then `validate:` tags).
+Business validation lives in services: `apperr.Validation(map[string][]string{...})`.
 
-**Tenancy** — `tenancy.Scope` carries identity (TenantID/BranchID), impersonation
-(Acting*) and `Internal`. `EffectiveTenantID()/EffectiveBranchID()` is what repositories filter
-on; `0` means "no filter" (global). Tenant/branch membership checks are cached 5 minutes with
-invalidation from branch writes. Repos receive explicit ids; never build queries from ambient
-state.
+**Tenancy** — `tenancy.From(r)` gives the `Scope`; `scope.Filter()` is what repositories use for
+single-row reads: one tenant, or every tenant only for internal/global reads. A zero `Filter`
+matches **no** tenant rows (fails closed). Impersonators send `X-Acting-Tenant` /
+`X-Acting-Branch`.
 
-> **Tenant isolation is explicit — there is no RLS.** Postgres row-level security was evaluated
-> and dropped (see `docs/architecture.md` §11.18). Explicit scoping in SQL is the *only* isolation
-> boundary: **every tenant-scoped query MUST receive and filter on an explicit `tenant_id`** (plus
-> `branch_id` when branch-scoped). A query that forgets the filter is a security bug — not a style
-> issue. Cover each module with a cross-tenant isolation test (reads, updates and deletes) modeled
-> on `internal/modules/branches/isolation_integration_test.go`.
+> **Tenant isolation is explicit — there is no RLS.** Every tenant-scoped query MUST filter on
+> an explicit tenant (SQL predicate `(@all_tenants OR tenant_id = @tenant_id)`). A query that
+> forgets it is a security bug. Cover each module with a cross-tenant isolation test.
 
-**Auth** — opaque tokens behind `authn.Authenticator` (`id|secret`, SHA-256 at rest, per-device).
-`authn.IdentityFromContext(ctx)` gives the caller; `authz.Checker.MustCan(ctx, userID, perm)`
-enforces permissions (super-admin bypasses). The permission catalog lives in
-`internal/authz/catalog.go` — add new permissions there and run `permission:sync`.
+**Auth** — opaque tokens (`id|secret`, SHA-256 at rest, per device). `authn.UserID(r)` is
+`auth()->id()`. Super-admins bypass permission checks. CLI/jobs/scheduled tasks are trusted and do
+not re-check permissions. Password reset and e-mail verification use single-use hashed tokens in
+the cache (`authn.Recovery`); responses never reveal whether an e-mail exists.
 
-**Pagination** — offset lists use `page` + `per_page` (default 10, max 100) via
-`httpx.PageParams`, whitelisted `order_by`/`order_direction` via `httpx.OrderParams`, response via
-`httpx.NewPagination` → `{data, links, meta}`. Cursor feeds (notification feed) use
-`limit` (default 20, max 100) + `cursor` (plus `unread_only`/`priority`) and
-`responder.Cursor`; `per_page` is intentionally ignored there.
+**Activity log** — services call `s.activity.Record(ctx, activity.Entry{TenantID, Action:
+"branch.created", Subject: "branch", SubjectID, Changes})` after a change succeeds. A nil recorder
+records nothing; actor, IP and request id come from the context; secret-looking keys are redacted.
+Read at `GET /api/v1/activity` (`activity.view`).
 
-**Cache** — depend on `cache.Store` (never a driver directly). Namespace keys with
-`cachekeys.Key(ctx, store, scope, namespace, args...)` for anything derived from tenant data;
-`cachekeys.Bump` invalidates a namespace. `Remember` degrades to computing on cache errors.
+**Pagination** — `page`/`per_page` (default 10, max 100) via `httpx.PageParams`, whitelisted
+ordering via `httpx.OrderParams`, `h.Paginated(...)` with `httpx.NewPagination`. Feeds
+(notifications, activity, dashboard streams) use `limit` + opaque `cursor` and `h.Cursor(...)`.
 
-**Queue** — declare jobs as `queue.Definition{Kind, Queue, Validate, Handle}` in a
-`queue.Registry`. Enqueue with the `queue.Engine` (sync executes inline; River persists).
-Payloads are small JSON structs; handlers receive a context with tenancy restored from the
-envelope. Prefer `EnqueueTx` for enqueue-with-your-write.
+**Cache** — depend on `cache.Store`. Keys are owned by the module that caches; include the tenant
+id in tenant-derived keys and delete the key in the service method that writes the data. Default
+driver: `memory` locally, `database` elsewhere.
 
-**Scheduler** — add tasks to the registry in `internal/app/platform.go`:
-`{ID, Spec (cron), Description, Timeout, Overlap, Run}`. The runner logs start/finish and writes
-the heartbeat (health check warns if stale; a shared cache driver is required to see it across
-processes).
+**Queue / Scheduler** — jobs are `queue.Definition{Kind, Queue, Validate, Handle}`; prefer
+`EnqueueTx`. Scheduled tasks are listed in `internal/app/schedule.go`
+(`{ID, Spec, Description, Timeout, Run}`; overlap is skipped by default); one scheduler process at a time (advisory lock).
 
-**Settings** — typed catalog in `internal/modules/settings/registry.go`; resolution is tenant
-override → global row → code default, cached and invalidated on set. `settings:sync` seeds
-globals.
+**Settings & feature flags** — settings: typed catalog (`modules/settings/registry.go`), tenant →
+global → default, groups + order editable in the dashboard. Flags: catalog in
+`modules/featureflags/registry.go`, user → tenant → global → default, optional percentage rollout
+(stable per-user or per-tenant buckets); gate routes with `featureflags.Require`.
 
-**Billing** — features resolve overrides → package → default via `service.Guard`
-(`Can/Require/Limit/WithinLimit/RequireWithinLimit`, 402 problems with
-`meta{feature_key,limit,current}`). Resource services enforce limits through small
-`LimitChecker` interfaces (see identity/branches). Payments go through
-`billing.Orchestrator` + a `PaymentDriver` (bkash HTTP with cached token; cash/bank manual with
-approval; nagad stub). Subscription lifecycle lives in `billing/service`.
+**Storage** — code names a disk (`FILES_DISK=r2`); disks are declared in config
+(`private`, `public`, `s3`, plus `STORAGE_DISKS=...`). Visibility, not the name, decides whether a
+file gets a URL; private files go through the authorized download route.
 
-## Database workflow (critical rules)
+**Billing** — `service.Guard` resolves features/limits (overrides → package); resource services
+read the limit with `LimitChecker.QuotaFor` before `WithTenantLock`, then count and compare inside it. Gateway callbacks
+are always confirmed with the gateway. Staff move a tenant onto a plan with `SubscriptionService.Assign`
+(`POST /billing/internal/tenants/{tenant_id}/subscription`); an override set to `null` is removed.
+Billing management belongs in the product's admin app, not the developer dashboard.
 
-1. **Never edit `internal/dbgen` by hand.** Change `sql/` queries or `migrations/`, then
-   `make sqlc`. CI fails on a generated-code diff.
-2. **Goose migrations are the only schema source** (sqlc parses them). Keep `-- +goose Up/Down`.
-3. **Explicit-id seeding does not advance bigserial sequences.** After inserting rows with
-   explicit ids (like the seeded tenant/branch), call `SyncIDSequence` — see
-   `internal/seeder/seeder.go`.
-4. **Soft deletes**: partial unique indexes (`WHERE deleted_at IS NULL`); every read filters
-   `deleted_at IS NULL`.
-5. Timestamps come back as `pgtype.Timestamptz`; map to `*time.Time` in `model.go`.
-6. **Integration tests get their own schema per package** (`dbtest`): call
-   `dbtest.Queries(t)`/`dbtest.Pool(t)` and `dbtest.Clean(t, pool, "table", ...)` at the start.
-   Tests **skip** (never fail) when `DATABASE_TEST_DSN` is unset. `dbtest.DSN(t)` returns the
-   schema-scoped DSN for tests that build the full app.
-7. River owns its tables; they are created through `ims migrate` (`rivermigrate`), never by hand.
+## Database workflow (critical rules — details in the `db-change` skill)
+
+1. Never edit `internal/dbgen` by hand; change `sql/queries/` or `migrations/` and `make sqlc`.
+2. Goose migrations are the only schema source.
+3. Explicit-id seeding needs `SyncIDSequence` (tenants/branches repositories; used by the seeder).
+4. Soft deletes: partial unique indexes (`WHERE deleted_at IS NULL`); reads filter `deleted_at`.
+5. Map `pgtype.Timestamptz` to `time.Time`/`*time.Time` in `model.go`.
+6. River owns its tables (`ims migrate`).
 
 ## Testing conventions
 
-- Unit tests: stdlib `testing`, table-driven, fakes for repository interfaces (see
-  `internal/authn/service_test.go`). No mocking frameworks.
-- HTTP behavior is covered via `httptest` against `deps.Router()` (see
-  `internal/app/routes_test.go`) and the full e2e flow in
-  `internal/app/identity_integration_test.go`.
-- Cache drivers: shared contract suite in `internal/platform/cache/cachetest` — every driver
-  must pass it (Redis is env-gated: `REDIS_TEST_ADDR`).
-- Gateway HTTP is tested against `httptest.Server` stubs (`billing/drivers_test.go`).
-- CLI commands get a smoke test through `BuildRoot` (`internal/cli/root_test.go`).
-- Local machines may need `go test -race -p 2 ./...` (parallel race builds are memory-hungry);
-  CI runs full parallelism.
+- Unit tests: stdlib `testing`, table-driven, fakes for repository interfaces. No mock frameworks.
+- **Integration tests use `internal/testkit`** in the package's external test package
+  (`package x_test`): `app := testkit.New(t)`, `app.User(t, testkit.Role(...), testkit.InTenant(...))`,
+  `app.As(user).Post(path, body).Status(t, 201).Data(t, &v)`. Tests skip without
+  `DATABASE_TEST_DSN`. `dbtest.Queries/Pool/Clean` remain for repository-level tests.
+- `internal/app/route_permissions_integration_test.go` asserts every protected route answers 403 to
+  a user without permissions — new routes must be protected or allowlisted there.
+- Cache drivers share the `cachetest` contract suite; gateway HTTP is tested against
+  `httptest.Server` stubs; CLI commands get a smoke test through `BuildRoot`.
 
 ## Design decisions (deliberate)
 
 Keep this list accurate; add to it when you make a non-obvious choice (also update
 `docs/architecture.md`).
 
-- Query scoping is explicit (parameters/SQL) instead of ORM global scopes.
-- No Postgres RLS (evaluated and dropped in Phase 6): explicit tenant-scoped SQL is the only
-  isolation boundary; every tenant-scoped query must take and filter an explicit `tenant_id`.
-- Tenant/audit stamping happens in services, not model observers.
-- `ActingGlobal` impersonation yields tenant `0`.
-- Bigserial sequences are synced after explicit-id seeding.
-- Subscriptions are created/charged before old ones are deactivated (safer ordering); gateway
-  failures mark payments `failed` and return 503.
-- `users.email` is immutable via `PATCH /user/{id}` in the current phase.
-- List endpoints whitelist `order_by`.
-- Error responses are unified RFC 9457 (no separate "bare message" error shape).
-- OTP codes are cache-only (not stored on the user row).
-- Backups are local-first (the local archive is mandatory) with optional S3/R2 copies; the
-  `backup` module is transport-free and the dev module owns `/dev/api/backups*`.
+- Explicit query scoping (SQL parameters) instead of ORM global scopes; no Postgres RLS.
+- Permission checks on routes/handlers (Laravel `can:` / controller style); services enforce
+  tenancy + invariants. CLI/jobs are trusted callers.
+- Tenant/audit stamping in services, not model observers. Activity is recorded explicitly.
+- `tenancy.Filter{}` fails closed; all-tenant reads are explicit (`tenancy.Unscoped()`).
+- Nobody changes their own roles; the Super-Admin cannot be stripped or deleted.
+- Quota checks (users.max, branches.max) run under a per-tenant advisory lock.
+- Billing callbacks are confirmed with the gateway; subscribe is idempotent per tenant.
+- Error responses are unified RFC 9457.
+- OTP and recovery tokens are cache-only.
+- Backups are local-first with optional S3/R2 copies.
+- Dashboard: handlers call services (`dev/services.go`), mutations need `dev.manage` on the route,
+  every mutation and dashboard sign-in is audited (`dev_actions`, with IP and browser).
+- Tenant `is_active` is not enforced at request time yet (dashboard shows it read-only).
 
 ## When a task is ambiguous
 
-1. Check the relevant `specs/phase-N-*.md` (decisions are recorded there) and
-   `docs/architecture.md`.
-2. Prefer the established pattern in this codebase over inventing a new one.
-3. Record decisions you had to make in the spec's implementation notes and, if architectural,
-   in `docs/architecture.md`.
+1. Check `docs/architecture.md` (§11 lists the deliberate decisions) and the developer guide.
+2. Prefer the established pattern in this codebase over inventing a new one — the reference
+   modules are `branches` (small), `identity` (rich) and `billing` (big).
+3. Record a new non-obvious decision in `docs/architecture.md` §11 and in the list above.

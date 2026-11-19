@@ -22,37 +22,29 @@ func newDataProcessingCleanupCommand(state *State) *cobra.Command {
 		Use:   "data-processing:cleanup-completed",
 		Short: "Delete completed processing-job records older than the retention window",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := state.Config()
-			if err := cfg.Validate(); err != nil {
-				return err
-			}
-			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
-			if err != nil {
-				return err
-			}
-			defer cleanup()
+			return withPlatform(state, func(platform *app.Platform) error {
+				ctx := cmd.Context()
+				retention := days
+				if retention <= 0 {
+					retention = dataprocessing.CleanupSetting(ctx, platform.Settings, tenancy.Scope{Internal: true})
+				}
 
-			ctx := cmd.Context()
-			retention := days
-			if retention <= 0 {
-				retention = dataprocessing.CleanupSetting(ctx, platform.Settings, tenancy.Scope{Internal: true})
-			}
+				if dryRun {
+					count, err := platform.Processing.CountCompleted(ctx, retention)
+					if err != nil {
+						return err
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "%d job(s) would be deleted (retention %d day(s)).\n", count, retention)
+					return nil
+				}
 
-			if dryRun {
-				count, err := platform.Processing.CountCompleted(ctx, retention)
+				deleted, err := platform.Processing.CleanupCompleted(ctx, retention)
 				if err != nil {
 					return err
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%d job(s) would be deleted (retention %d day(s)).\n", count, retention)
+				fmt.Fprintf(cmd.OutOrStdout(), "Deleted %d job(s) (retention %d day(s)).\n", deleted, retention)
 				return nil
-			}
-
-			deleted, err := platform.Processing.CleanupCompleted(ctx, retention)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Deleted %d job(s) (retention %d day(s)).\n", deleted, retention)
-			return nil
+			})
 		},
 	}
 	cmd.Flags().IntVar(&days, "days", 0, "retention window in days (default: data_processing_job.cleanup_days setting)")

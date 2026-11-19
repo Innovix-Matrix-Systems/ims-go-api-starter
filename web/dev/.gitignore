@@ -6,3 +6,4 @@ dist/client/*
 *.local
 .DS_Store
 node_modules/
+.tanstack/

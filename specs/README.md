@@ -26,6 +26,18 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 9 | [phase-9-developer-dashboard.md](phase-9-developer-dashboard.md) | In progress (A–J done; hardening remaining) |
 | 10 | [phase-10-openapi-generator.md](phase-10-openapi-generator.md) | Done (2026-10-18) |
 | 11 | [phase-11-settings-groups-feature-flags.md](phase-11-settings-groups-feature-flags.md) | **Done** (2026-10-18) |
+| 12 | [phase-12-isolation-security-blockers.md](phase-12-isolation-security-blockers.md) | **Done** (2026-11-19, integration-verified) |
+| 13 | [phase-13-authorization-data-integrity.md](phase-13-authorization-data-integrity.md) | **Done** (2026-11-19) |
+| 14 | [phase-14-billing-correctness.md](phase-14-billing-correctness.md) | **Done** (2026-11-19) |
+| 15 | [phase-15-platform-hardening.md](phase-15-platform-hardening.md) | **Done** (2026-11-19, some deferred) |
+| 16 | [phase-16-performance-data-layer.md](phase-16-performance-data-layer.md) | **Done** (2026-11-19, some deferred) |
+| 17 | [phase-17-product-ops-maturity.md](phase-17-product-ops-maturity.md) | **Done** (2026-11-19, some deferred) |
+| 18 | [phase-18-account-recovery.md](phase-18-account-recovery.md) | **Done** (2026-11-19) |
+| 19 | [phase-19-simplicity-audit-testkit.md](phase-19-simplicity-audit-testkit.md) | Done — handler helpers, config split, activity log, testkit, flag rollout, storage disks |
+| 20 | [phase-20-dev-dashboard-finish.md](phase-20-dev-dashboard-finish.md) | Done — inspector, commands, form kit, settings view, dev service layer, tests on testkit |
+
+Remediation phases 12–17 are derived from [docs/codebase-review.md](../docs/codebase-review.md)
+(the full-codebase review at commit `1f55eeb`); each spec lists the finding IDs it resolves.
 
 ## Template
 

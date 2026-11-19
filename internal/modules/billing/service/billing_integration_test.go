@@ -65,8 +65,8 @@ func newBillingHarness(t *testing.T) *billingHarness {
 
 	return &billingHarness{
 		tenantID:      tenant.ID,
-		packages:      service.NewPackageService(packagesRepo),
-		subscriptions: service.NewSubscriptionService(subsRepo, packagesRepo, paymentsRepo, approvalsRepo, orchestrator),
+		packages:      service.NewPackageService(packagesRepo).WithTx(tx),
+		subscriptions: service.NewSubscriptionService(subsRepo, packagesRepo, paymentsRepo, approvalsRepo, orchestrator).WithTx(tx),
 		payments:      service.NewPaymentService(paymentsRepo, "BDT"),
 		approvals:     service.NewApprovalService(approvalsRepo, paymentsRepo, subsRepo, tx),
 		guard:         service.NewGuard(subsRepo, packagesRepo),

@@ -13,7 +13,7 @@ Exactly **one** scheduler and **one** (or more) worker per environment.
 
 ## Prerequisites
 
-- Go 1.26+, PostgreSQL 16+, GNU Make
+- Go 1.26.11+ (older 1.26 patches have standard-library CVEs), PostgreSQL 16+, GNU Make
 - Node.js 20.19+ with npm (developer dashboard dev/build)
 - Optional: Docker (throwaway Postgres); `air` + `golangci-lint` via `make tools`
 
@@ -26,10 +26,9 @@ npm --prefix web/dev ci       # dashboard dependencies (Vite/React)
 git config core.hooksPath .githooks   # enable pre-commit/pre-push hooks
 chmod +x .githooks/pre-commit .githooks/pre-push   # macOS/Linux only
 
-make db-up                    # start Postgres via docker compose (or use your own)
-# compose DB is ims_go_api_test; either point DATABASE_DSN at it, or create the
-# database the template defaults to:
-#   createdb ims_go_api
+make db-up                    # Postgres via docker compose: creates ims_go_api (app) and
+                              # ims_go_api_test (integration tests). With your own server:
+                              #   createdb ims_go_api && createdb ims_go_api_test
 
 make migrate                  # goose migrations AND River's tables
 make seed                     # permissions, roles, tenant+branch, admin + developer users
@@ -108,8 +107,9 @@ go run ./cmd/app backup:list
 ```
 
 `DEV_DASHBOARD_ENABLED` defaults to true outside production; set it to `false` to make `/dev` and
-`/dev/api/*` return 404. The hidden `Developer` account holds every catalog permission, equivalent
-to a second super-admin — rotate it outside local use.
+`/dev/api/*` return 404. The hidden `Developer` account holds only the developer-dashboard
+permissions (`dev.view`, `dev.manage`) — it cannot administer tenants, users or billing data
+through the API. Still rotate its password outside local use.
 
 To watch a job end-to-end, trigger a background user export (`POST /api/v1/user/export-background`),
 watch Shell B process it, then check `queue:stats` and the job status.
@@ -124,6 +124,10 @@ watch Shell B process it, then check `queue:stats` and the job status.
 | `billing.send-renewal-reminders` | `0 8 * * *` | 7/3/1-day renewal reminders |
 | `backup.run` | `30 1 * * *` | database backup (when `BACKUP_ENABLED=true`) |
 | `backup.clean` | `30 2 * * *` | backup retention cleanup (when enabled) |
+| `notifications.purge-expired` | `30 3 * * *` | delete notifications expired for 7+ days |
+| `activity.prune` | `45 3 * * *` | activity log older than `ACTIVITY_RETENTION_DAYS` |
+| `devdashboard.prune` | `0 3 * * *` | dashboard telemetry and audit rows past their retention |
+| `cache.purge-expired` | `15 * * * *` | expired rows in the database cache (`CACHE_DRIVER=database`) |
 
 Times use `SCHEDULE_TIMEZONE` (falls back to `APP_TIMEZONE`).
 
@@ -147,6 +151,9 @@ go run ./cmd/app cache:clear
 go run ./cmd/app backup:run
 ```
 
+Most of these are also one click away in the dashboard's **Commands** page
+(`http://localhost:8080/dev/commands`, or Ctrl+K → the command name), with their output and history.
+
 ## Feature knobs (`.env`)
 
 | Need | Set |
@@ -155,7 +162,7 @@ go run ./cmd/app backup:run
 | Inline jobs, no worker | `QUEUE_DRIVER=sync` |
 | Shared cache / counters / heartbeat | `CACHE_DRIVER=database` (or `redis` + `REDIS_*`) |
 | Email | `MAIL_DRIVER=log` (default) or `smtp` + `MAIL_HOST`/`MAIL_PORT`/`MAIL_USERNAME`/`MAIL_PASSWORD` |
-| Uploads | `FILES_DISK=public`, `APP_STORAGE_DIR`, `STORAGE_*` |
+| Uploads | `FILES_DISK=public` (any disk: `private`, `public`, `s3` or a `STORAGE_DISKS` name such as an R2/MinIO bucket); `APP_STORAGE_DIR`, `STORAGE_*` |
 | Metrics / docs | `METRICS_ENABLED=true` (`/metrics`), `DOCS_ENABLED=true` (`/docs`) |
 | Developer dashboard | `DEV_DASHBOARD_ENABLED=true` (default outside production); `/dev` |
 | Billing gateways | `BKASH_*`, `NAGAD_*`, `BANK_TRANSFER_*` |
@@ -175,6 +182,10 @@ real environment variables always override file values).
 - `/dev` returns 404: set `DEV_DASHBOARD_ENABLED=true`; the dashboard is off in production by default.
 - Dashboard login fails: run `make seed` (it creates `developer@ims.com` and the hidden role).
 - Integration tests: set `DATABASE_TEST_DSN` (they skip, never fail, when it is unset).
+- New API routes answer 404/405 after an edit (Windows): air could not restart the API because the
+  old process still holds `:8081`. Stop the old `ims` process (`Get-Process ims`) and save a Go
+  file with a real change, or restart `make dev`. The worker and scheduler never hot-reload —
+  restart `make queue` / `make schedule` after changing jobs or tasks.
 - `backup:run` fails: install PostgreSQL client tools and point `BACKUP_PG_DUMP_PATH` at a
   `pg_dump` version matching or exceeding the server; see [`backups.md`](backups.md).
 

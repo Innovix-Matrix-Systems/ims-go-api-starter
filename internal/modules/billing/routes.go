@@ -11,24 +11,25 @@ func (h *Handler) RegisterPublicRoutes(r chi.Router) {
 // RegisterRoutesResolve mounts tenant-scoped billing routes.
 func (h *Handler) RegisterRoutesResolve(r chi.Router) {
 	r.Get("/billing/subscription/status", h.status)
-	r.Get("/billing/payments", h.listTenantPayments)
-	r.Post("/billing/subscribe", h.subscribe)
+	r.With(h.can("payment.view")).Get("/billing/payments", h.listTenantPayments)
+	r.With(h.can("subscription.manage")).Post("/billing/subscribe", h.subscribe)
 }
 
 // RegisterRoutesExempt mounts system billing management routes.
 func (h *Handler) RegisterRoutesExempt(r chi.Router) {
-	r.Get("/packages", h.listPackages)
-	r.Post("/packages", h.storePackage)
-	r.Get("/packages/{id}", h.showPackage)
-	r.Patch("/packages/{id}", h.updatePackage)
-	r.Delete("/packages/{id}", h.destroyPackage)
+	r.With(h.can("package.view.all")).Get("/packages", h.listPackages)
+	r.With(h.can("package.create")).Post("/packages", h.storePackage)
+	r.With(h.can("package.view")).Get("/packages/{id}", h.showPackage)
+	r.With(h.can("package.update")).Patch("/packages/{id}", h.updatePackage)
+	r.With(h.can("package.delete")).Delete("/packages/{id}", h.destroyPackage)
 
-	r.Get("/billing/internal/subscriptions", h.listSubscriptions)
-	r.Post("/billing/internal/subscriptions/{id}/cancel", h.cancelSubscription)
-	r.Post("/billing/internal/subscriptions/{id}/overrides", h.overrides)
-	r.Get("/billing/internal/payments", h.listAllPayments)
-	r.Post("/billing/internal/payments", h.recordPayment)
-	r.Get("/billing/internal/payment-approvals", h.listApprovals)
-	r.Post("/billing/internal/payment-approvals/{id}/approve", h.approve)
-	r.Post("/billing/internal/payment-approvals/{id}/reject", h.reject)
+	r.With(h.can("subscription.view.all")).Get("/billing/internal/subscriptions", h.listSubscriptions)
+	r.With(h.can("subscription.manage")).Post("/billing/internal/subscriptions/{id}/cancel", h.cancelSubscription)
+	r.With(h.can("subscription.override")).Post("/billing/internal/subscriptions/{id}/overrides", h.overrides)
+	r.With(h.can("subscription.manage")).Post("/billing/internal/tenants/{tenant_id}/subscription", h.assignPlan)
+	r.With(h.can("payment.view.all")).Get("/billing/internal/payments", h.listAllPayments)
+	r.With(h.can("payment.record")).Post("/billing/internal/payments", h.recordPayment)
+	r.With(h.can("payment_approval.view.all")).Get("/billing/internal/payment-approvals", h.listApprovals)
+	r.With(h.can("payment_approval.review")).Post("/billing/internal/payment-approvals/{id}/approve", h.approve)
+	r.With(h.can("payment_approval.review")).Post("/billing/internal/payment-approvals/{id}/reject", h.reject)
 }

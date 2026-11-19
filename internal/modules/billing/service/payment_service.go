@@ -61,6 +61,10 @@ func (s *PaymentService) RecordManual(ctx context.Context, tenantID, subscriptio
 		})
 	}
 
+	invoice, err := domain.GenerateInvoiceNumber(s.now())
+	if err != nil {
+		return nil, err
+	}
 	payment, err := s.payments.Create(ctx, domain.PaymentInput{
 		TenantID:       tenantID,
 		SubscriptionID: &subscriptionID,
@@ -68,7 +72,7 @@ func (s *PaymentService) RecordManual(ctx context.Context, tenantID, subscriptio
 		Status:         domain.PaymentCompleted,
 		Amount:         amount,
 		Currency:       s.currency,
-		InvoiceNumber:  domain.GenerateInvoiceNumber(s.now()),
+		InvoiceNumber:  invoice,
 		CreatedBy:      &actorID,
 	})
 	if err != nil {

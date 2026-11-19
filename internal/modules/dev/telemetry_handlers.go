@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 )
 
 // Telemetry handlers: request inspector, logs, exceptions and prune.
@@ -15,19 +15,19 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	limit, err := parseLimit(query.Get("limit"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	beforeID, err := parseCursor(query.Get("cursor"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	status := int32(0)
 	if raw := strings.TrimSpace(query.Get("status")); raw != "" {
 		value, parseErr := strconv.Atoi(raw)
 		if parseErr != nil || value < 100 || value > 599 {
-			h.responder.Error(w, r, apperr.Validation(map[string][]string{
+			h.Error(w, r, apperr.Validation(map[string][]string{
 				"status": {"The status must be a valid HTTP status code."},
 			}))
 			return
@@ -36,12 +36,12 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID, err := parseOptionalID(query.Get("tenant_id"), "tenant_id")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	userID, err := parseOptionalID(query.Get("user_id"), "user_id")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.telemetry.ListRequests(r.Context(), RequestFilter{
@@ -55,119 +55,117 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 		RequestID: strings.TrimSpace(query.Get("request_id")),
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	nextCursor := ""
 	if len(items) == limit && len(items) > 0 {
 		nextCursor = strconv.FormatInt(items[len(items)-1].ID, 10)
 	}
-	h.responder.Cursor(w, r, http.StatusOK, items, map[string]any{"next_cursor": nextCursor}, nil)
+	h.Cursor(w, r, http.StatusOK, items, map[string]any{"next_cursor": nextCursor}, nil)
 }
 
 func (h *Handler) getRequest(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	detail, err := h.telemetry.GetRequestDetail(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if detail == nil {
-		h.responder.Error(w, r, apperr.Newf(apperr.ResourceNotFound, "Captured request with ID '%d' was not found.", id))
+		h.Error(w, r, apperr.Newf(apperr.ResourceNotFound, "Captured request with ID '%d' was not found.", id))
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, detail)
+	h.Data(w, r, http.StatusOK, detail)
 }
 
 func (h *Handler) listLogs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	limit, err := parseLimit(query.Get("limit"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	beforeID, err := parseCursor(query.Get("cursor"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.telemetry.ListLogs(r.Context(), beforeID, int32(limit),
 		strings.ToLower(strings.TrimSpace(query.Get("level"))),
-		strings.TrimSpace(query.Get("request_id")))
+		strings.TrimSpace(query.Get("request_id")),
+		strings.TrimSpace(query.Get("search")))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	nextCursor := ""
 	if len(items) == limit && len(items) > 0 {
 		nextCursor = strconv.FormatInt(items[len(items)-1].ID, 10)
 	}
-	h.responder.Cursor(w, r, http.StatusOK, items, map[string]any{"next_cursor": nextCursor}, nil)
+	h.Cursor(w, r, http.StatusOK, items, map[string]any{"next_cursor": nextCursor}, nil)
 }
 
 func (h *Handler) listExceptions(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	limit, err := parseLimit(query.Get("limit"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	beforeID, err := parseCursor(query.Get("cursor"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.telemetry.ListExceptions(r.Context(), beforeID, int32(limit),
 		strings.TrimSpace(query.Get("request_id")))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	nextCursor := ""
 	if len(items) == limit && len(items) > 0 {
 		nextCursor = strconv.FormatInt(items[len(items)-1].ID, 10)
 	}
-	h.responder.Cursor(w, r, http.StatusOK, items, map[string]any{"next_cursor": nextCursor}, nil)
+	h.Cursor(w, r, http.StatusOK, items, map[string]any{"next_cursor": nextCursor}, nil)
 }
 
 func (h *Handler) getLog(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	item, err := h.telemetry.GetLog(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if item == nil {
-		h.responder.Error(w, r, apperr.Newf(apperr.ResourceNotFound, "Captured log with ID '%d' was not found.", id))
+		h.Error(w, r, apperr.Newf(apperr.ResourceNotFound, "Captured log with ID '%d' was not found.", id))
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, item)
+	h.Data(w, r, http.StatusOK, item)
 }
 
 func (h *Handler) getException(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	item, err := h.telemetry.GetException(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if item == nil {
-		h.responder.Error(w, r, apperr.Newf(apperr.ResourceNotFound, "Captured exception with ID '%d' was not found.", id))
+		h.Error(w, r, apperr.Newf(apperr.ResourceNotFound, "Captured exception with ID '%d' was not found.", id))
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, item)
+	h.Data(w, r, http.StatusOK, item)
 }
 
 type pruneTelemetryRequest struct {
@@ -175,32 +173,14 @@ type pruneTelemetryRequest struct {
 }
 
 func (h *Handler) pruneTelemetry(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
 	var request pruneTelemetryRequest
-	if err := h.binder.JSON(w, r, &request); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &request) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &request); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	days := request.RetentionDays
-	if days == 0 {
-		days = h.retentionDays
-	}
-	started := time.Now()
-	deleted, err := h.telemetry.Prune(r.Context(), days)
-	h.recordAction(r.Context(), actorID, "telemetry.prune", "", map[string]any{"retention_days": days}, started, err)
+	days, deleted, err := h.telemetry.Prune(r.Context(), authn.UserID(r), request.RetentionDays)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{
-		"retention_days": days,
-		"deleted":        deleted,
-	})
+	h.Data(w, r, http.StatusOK, map[string]any{"retention_days": days, "deleted": deleted})
 }

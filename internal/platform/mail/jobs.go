@@ -26,6 +26,7 @@ func RegisterJob(registry *queue.Registry, driver Driver) error {
 		Description: "Delivers an email through the configured mail driver.",
 		Queue:       queue.QueueDefault,
 		Timeout:     time.Minute,
+		SystemJob:   true,
 		Validate:    validateSendPayload,
 		Handle: func(ctx context.Context, payload []byte) error {
 			var input sendPayload

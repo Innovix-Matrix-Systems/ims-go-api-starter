@@ -24,6 +24,8 @@ func testBkashConfig() config.Bkash {
 
 func TestBkashDriverAgainstStub(t *testing.T) {
 	calls := map[string]int{}
+	gatewayStatus := "Completed" // what bKash reports for PAY-123
+	httpStatus := http.StatusOK  // what the status endpoint answers with
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls[r.URL.Path]++
 		w.Header().Set("Content-Type", "application/json")
@@ -44,8 +46,9 @@ func TestBkashDriverAgainstStub(t *testing.T) {
 				"trxID":             "TRX-9",
 			})
 		case "/tokenized/checkout/payment/status":
+			w.WriteHeader(httpStatus)
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"transactionStatus": "Completed",
+				"transactionStatus": gatewayStatus,
 				"trxID":             "TRX-9",
 			})
 		default:
@@ -99,10 +102,64 @@ func TestBkashDriverAgainstStub(t *testing.T) {
 		t.Fatalf("callback = %+v", callback)
 	}
 
-	// Failed callback short-circuits without executing.
+	// A forged "failure" callback cannot fail a payment bKash reports as
+	// completed: the outcome always comes from the gateway (H8).
 	callback, err = driver.HandleCallback(ctx, map[string]any{"status": "failure", "paymentID": "PAY-123"})
-	if err != nil || callback.IsSuccessful {
-		t.Fatalf("failed callback = %+v, %v", callback, err)
+	if err != nil || !callback.IsSuccessful || callback.IsFailed {
+		t.Fatalf("forged failure callback = %+v, %v", callback, err)
+	}
+
+	// Still in progress at bKash: neither successful nor failed (stays pending).
+	gatewayStatus = "Initiated"
+	callback, err = driver.HandleCallback(ctx, map[string]any{"status": "cancel", "paymentID": "PAY-123"})
+	if err != nil || callback.IsSuccessful || callback.IsFailed {
+		t.Fatalf("in-progress callback = %+v, %v", callback, err)
+	}
+
+	// bKash confirms the failure: only now is the payment failed.
+	gatewayStatus = "Cancelled"
+	callback, err = driver.HandleCallback(ctx, map[string]any{"status": "cancel", "paymentID": "PAY-123"})
+	if err != nil || !callback.IsFailed {
+		t.Fatalf("confirmed failure callback = %+v, %v", callback, err)
+	}
+
+	// A bKash 5xx is an error (retry), never a failed payment (H10).
+	httpStatus = http.StatusBadGateway
+	if _, err := driver.HandleCallback(ctx, map[string]any{"status": "cancel", "paymentID": "PAY-123"}); err == nil {
+		t.Fatal("5xx status answer: error = nil, want a retryable error")
+	}
+
+	// A 401 drops the cached token so the next call grants a new one (M18).
+	httpStatus = http.StatusUnauthorized
+	_, _ = driver.HandleCallback(ctx, map[string]any{"status": "cancel", "paymentID": "PAY-123"})
+	httpStatus = http.StatusOK
+	grantsBefore := calls["/tokenized/checkout/token/grant"]
+	if _, err := driver.HandleCallback(ctx, map[string]any{"status": "cancel", "paymentID": "PAY-123"}); err != nil {
+		t.Fatalf("callback after token reset: %v", err)
+	}
+	if calls["/tokenized/checkout/token/grant"] != grantsBefore+1 {
+		t.Fatalf("token grants = %d, want %d (token re-granted after 401)", calls["/tokenized/checkout/token/grant"], grantsBefore+1)
+	}
+}
+
+func TestManualDriversRejectCallbacksAndUseRandomReferences(t *testing.T) {
+	ctx := context.Background()
+	payment := &domain.Payment{ID: 1, Amount: 100, Currency: "BDT"}
+	seen := map[string]bool{}
+	for _, driver := range []domain.PaymentDriver{CashDriver{}, BankTransferDriver{}} {
+		if _, err := driver.HandleCallback(ctx, map[string]any{"paymentID": "x"}); err == nil {
+			t.Errorf("%T accepted a callback", driver)
+		}
+		for range 3 {
+			result, err := driver.Initiate(ctx, payment, map[string]any{"reference_number": "SAME-REF"})
+			if err != nil || result.Reference == nil {
+				t.Fatalf("%T Initiate() = %+v, %v", driver, result, err)
+			}
+			if seen[*result.Reference] || len(*result.Reference) < 20 {
+				t.Fatalf("%T reference %q is reused or too short", driver, *result.Reference)
+			}
+			seen[*result.Reference] = true
+		}
 	}
 }
 

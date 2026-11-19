@@ -84,6 +84,27 @@ func (q *Queries) DeleteAllSessionTokensExcept(ctx context.Context, keepID int64
 	return result.RowsAffected(), nil
 }
 
+const deleteOtherTokensForUser = `-- name: DeleteOtherTokensForUser :execrows
+DELETE FROM personal_access_tokens
+WHERE tokenable_type = $1
+  AND tokenable_id = $2
+  AND id <> $3
+`
+
+type DeleteOtherTokensForUserParams struct {
+	TokenableType string `json:"tokenable_type"`
+	TokenableID   int64  `json:"tokenable_id"`
+	KeepID        int64  `json:"keep_id"`
+}
+
+func (q *Queries) DeleteOtherTokensForUser(ctx context.Context, arg DeleteOtherTokensForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOtherTokensForUser, arg.TokenableType, arg.TokenableID, arg.KeepID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deletePrunableSessionTokens = `-- name: DeletePrunableSessionTokens :execrows
 DELETE FROM personal_access_tokens
 WHERE tokenable_type = 'user'

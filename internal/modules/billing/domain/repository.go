@@ -45,6 +45,9 @@ type PaymentRepository interface {
 	Create(ctx context.Context, input PaymentInput) (*Payment, error)
 	Get(ctx context.Context, id int64) (*Payment, error)
 	GetByGatewayRef(ctx context.Context, gatewayRef string) (*Payment, error)
+	// PendingCheckout returns the in-flight (pending) payment of a pending
+	// subscription for tenant + package + method, if any.
+	PendingCheckout(ctx context.Context, tenantID, packageID int64, method string) (*Payment, bool, error)
 	UpdateGateway(ctx context.Context, id int64, gatewayRef, gatewayStatus *string, response []byte) error
 	UpdateStatus(ctx context.Context, id int64, status string, recordedBy *int64, gatewayStatus *string) (*Payment, error)
 	ListForTenant(ctx context.Context, tenantID int64, limit, offset int32) ([]Payment, int64, error)
@@ -340,7 +343,7 @@ func (r *subscriptionRepository) Activate(ctx context.Context, id int64, expires
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperr.Newf(apperr.ResourceNotFound, "Subscription with ID '%d' was not found.", id)
+			return nil, apperr.Newf(apperr.InvalidState, "Subscription '%d' was not found or has been cancelled.", id)
 		}
 		return nil, database.MapError("billing.activate_subscription", err)
 	}
@@ -443,6 +446,22 @@ func (r *paymentRepository) GetByGatewayRef(ctx context.Context, gatewayRef stri
 	return &payment, nil
 }
 
+func (r *paymentRepository) PendingCheckout(ctx context.Context, tenantID, packageID int64, method string) (*Payment, bool, error) {
+	row, err := r.queries.GetPendingCheckout(ctx, dbgen.GetPendingCheckoutParams{
+		TenantID:      tenantID,
+		PackageID:     packageID,
+		PaymentMethod: method,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, database.MapError("billing.pending_checkout", err)
+	}
+	payment := mapPayment(row)
+	return &payment, true, nil
+}
+
 func (r *paymentRepository) UpdateGateway(ctx context.Context, id int64, gatewayRef, gatewayStatus *string, response []byte) error {
 	if _, err := r.queries.UpdatePaymentGateway(ctx, dbgen.UpdatePaymentGatewayParams{
 		ID:              id,
@@ -464,7 +483,7 @@ func (r *paymentRepository) UpdateStatus(ctx context.Context, id int64, status s
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, apperr.Newf(apperr.ResourceNotFound, "Payment with ID '%d' was not found.", id)
+			return nil, apperr.Newf(apperr.InvalidState, "Payment '%d' was not found or cannot change to %s.", id, status)
 		}
 		return nil, database.MapError("billing.update_payment_status", err)
 	}

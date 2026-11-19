@@ -2,7 +2,10 @@
 // for every request, job and command.
 package tenancy
 
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 // Acting describes impersonation state for the current request.
 type Acting int
@@ -76,4 +79,36 @@ func WithScope(ctx context.Context, scope Scope) context.Context {
 func FromContext(ctx context.Context) (Scope, bool) {
 	scope, ok := ctx.Value(scopeKey).(Scope)
 	return scope, ok
+}
+
+// Filter is the tenant predicate a repository applies to a single-row query:
+// either every tenant (All) or exactly one tenant. A zero Filter matches no
+// tenant-owned rows (tenant_id = 0 never exists), so a forgotten scope fails
+// closed instead of leaking.
+type Filter struct {
+	All      bool
+	TenantID int64
+}
+
+// Filter returns the tenant predicate for this scope: every tenant for
+// internal/global reads, otherwise the effective tenant.
+func (s Scope) Filter() Filter {
+	if s.AllTenants() {
+		return Filter{All: true}
+	}
+	return Filter{TenantID: s.EffectiveTenantID()}
+}
+
+// InTenant restricts a query to one tenant.
+func InTenant(tenantID int64) Filter { return Filter{TenantID: tenantID} }
+
+// Unscoped spans every tenant. Use it only for trusted lookups that are not
+// driven by a tenant request: the caller's own record, auth, seeding, jobs.
+func Unscoped() Filter { return Filter{All: true} }
+
+// From returns the request's resolved tenant scope (zero Scope when the route
+// is not behind tenancy.Resolve).
+func From(r *http.Request) Scope {
+	scope, _ := FromContext(r.Context())
+	return scope
 }

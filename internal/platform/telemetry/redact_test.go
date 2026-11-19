@@ -73,7 +73,7 @@ func TestRedactorHeaders(t *testing.T) {
 func TestRedactorArgs(t *testing.T) {
 	redactor := NewRedactor(nil)
 	args := []any{"safe", map[string]any{"password": "hunter2", "id": 7}}
-	encoded := string(redactor.Args(args))
+	encoded := string(redactor.Args("SELECT 1", args))
 	if strings.Contains(encoded, "hunter2") {
 		t.Fatalf("arg secret leaked: %s", encoded)
 	}

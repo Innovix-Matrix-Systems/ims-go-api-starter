@@ -25,7 +25,9 @@ log "creating service user $SERVICE_USER"
 id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --home "$BASE_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
 
 log "creating directories"
-install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0755 "$BASE_DIR" "$BASE_DIR/releases"
+# The release tree is root-owned: the service runs the binary but can never
+# rewrite it (M62). Writable state lives in $STATE_DIR only.
+install -d -o root -g root -m 0755 "$BASE_DIR" "$BASE_DIR/releases"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$STATE_DIR"
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0750 "$LOG_DIR"
 install -d -o root -g "$SERVICE_USER" -m 0750 "$ENV_DIR"
@@ -38,9 +40,11 @@ for unit in "$DEPLOY_DIR"/systemd/*.service; do
 done
 
 if [[ ! -f "$ENV_DIR/.env" ]]; then
-  if [[ -f "$DEPLOY_DIR/../.env.example" ]]; then
-    log "seeding $ENV_DIR/.env from .env.example (review it before starting)"
-    install -o root -g "$SERVICE_USER" -m 0640 "$DEPLOY_DIR/../.env.example" "$ENV_DIR/.env"
+  if [[ -f "$DEPLOY_DIR/.env.production" ]]; then
+    # The production template: APP_ENV=production, state under $STATE_DIR
+    # (writable under ProtectSystem=strict), no default secrets (H2/H29).
+    log "seeding $ENV_DIR/.env from deploy/.env.production (fill in every MUST SET value)"
+    install -o root -g "$SERVICE_USER" -m 0640 "$DEPLOY_DIR/.env.production" "$ENV_DIR/.env"
   else
     echo "# IMS Go API environment — fill in real values" > "$ENV_DIR/.env"
     chown root:"$SERVICE_USER" "$ENV_DIR/.env"

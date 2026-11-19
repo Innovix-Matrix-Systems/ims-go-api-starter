@@ -73,6 +73,15 @@ type OverridesRequest struct {
 	Overrides map[string]any `json:"overrides" validate:"required"`
 }
 
+// AssignPlanRequest moves a tenant onto a package from the admin side.
+// Without payment_method the plan is assigned free of charge; amount
+// defaults to the package price.
+type AssignPlanRequest struct {
+	PackageID     int64  `json:"package_id" validate:"required,gt=0"`
+	PaymentMethod string `json:"payment_method" validate:"omitempty,oneof=cash bank_transfer"`
+	Amount        *int64 `json:"amount" validate:"omitempty,gt=0"`
+}
+
 // RecordPaymentRequest records a manual payment.
 type RecordPaymentRequest struct {
 	TenantID       int64   `json:"tenant_id" validate:"required,gt=0"`

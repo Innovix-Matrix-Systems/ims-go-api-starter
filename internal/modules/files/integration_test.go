@@ -73,7 +73,7 @@ func TestFileResourceAndAvatarReplacement(t *testing.T) {
 
 	// Library file: type mapping, disk write, URL, unattached flag.
 	pdf := uploadHeader(t, "file", "report.pdf", []byte("%PDF-1.4 hello"))
-	file, err := service.Create(ctx, 1, pdf)
+	file, err := service.Create(ctx, 1, 1, pdf)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
@@ -88,12 +88,12 @@ func TestFileResourceAndAvatarReplacement(t *testing.T) {
 	}
 
 	// Disallowed extension is rejected.
-	if _, err := service.Create(ctx, 1, uploadHeader(t, "file", "payload.exe", []byte("MZ"))); err == nil {
+	if _, err := service.Create(ctx, 1, 1, uploadHeader(t, "file", "payload.exe", []byte("MZ"))); err == nil {
 		t.Fatal("Create(.exe) = nil error")
 	}
 
 	// Avatar: single-file collection with atomic replacement.
-	if err := service.UpdateAvatar(ctx, 1, 1, uploadHeader(t, "avatar", "me.png", pngBytes)); err != nil {
+	if err := service.UpdateAvatar(ctx, 1, 1, 1, uploadHeader(t, "avatar", "me.png", pngBytes)); err != nil {
 		t.Fatalf("UpdateAvatar() error = %v", err)
 	}
 	firstPhoto, err := service.repo.GetByOwner(ctx, OwnerUser, 1, CollectionProfile)
@@ -104,7 +104,7 @@ func TestFileResourceAndAvatarReplacement(t *testing.T) {
 		t.Fatalf("PhotoURL() = %q, %v", url, err)
 	}
 
-	if err := service.UpdateAvatar(ctx, 1, 1, uploadHeader(t, "avatar", "me2.png", pngBytes)); err != nil {
+	if err := service.UpdateAvatar(ctx, 1, 1, 1, uploadHeader(t, "avatar", "me2.png", pngBytes)); err != nil {
 		t.Fatalf("UpdateAvatar(replace) error = %v", err)
 	}
 	photos, err := service.PhotoURLs(ctx, []int64{1})
@@ -124,7 +124,7 @@ func TestFileResourceAndAvatarReplacement(t *testing.T) {
 	}
 
 	// Non-image avatars are rejected.
-	if err := service.UpdateAvatar(ctx, 1, 1, uploadHeader(t, "avatar", "notes.txt", []byte("hello"))); err == nil {
+	if err := service.UpdateAvatar(ctx, 1, 1, 1, uploadHeader(t, "avatar", "notes.txt", []byte("hello"))); err == nil {
 		t.Fatal("UpdateAvatar(.txt) = nil error")
 	}
 
@@ -133,7 +133,7 @@ func TestFileResourceAndAvatarReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Delete(ctx, current.ID); err != nil {
+	if err := service.Delete(ctx, current.ID, true, 0); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	if _, err := service.repo.GetByOwner(ctx, OwnerUser, 1, CollectionProfile); !isNotFound(err) {
@@ -146,4 +146,58 @@ func TestFileResourceAndAvatarReplacement(t *testing.T) {
 
 func isNotFound(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "RESOURCE_NOT_FOUND")
+}
+
+// TestFilesTenantIsolation proves the phase-12 contract: a tenant-bound
+// caller cannot read, list or delete another tenant's files even with the
+// granular file permissions, while a tenantless system caller (all_tenants)
+// can. See docs/codebase-review.md C3.
+func TestFilesTenantIsolation(t *testing.T) {
+	queries, pool := dbtest.Queries(t)
+	dbtest.Clean(t, pool, "files", "personal_access_tokens", "role_has_permissions", "model_has_roles", "users", "roles", "permissions", "branches", "tenants")
+	ctx := context.Background()
+
+	for _, statement := range []string{
+		`INSERT INTO tenants (id, name, code) VALUES (1, 'Tenant One', 'TEN1'), (2, 'Tenant Two', 'TEN2')`,
+		`INSERT INTO users (id, tenant_id, branch_id, name, email, password) VALUES (1, 1, NULL, 'User One', 'u1@example.com', 'x'), (2, 2, NULL, 'User Two', 'u2@example.com', 'x')`,
+	} {
+		if _, err := pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("seed: %v\n%s", err, statement)
+		}
+	}
+	dbtest.SyncSequence(t, pool, "users")
+
+	cfg := config.Config{App: config.App{URL: "https://api.test"}, Storage: config.Storage{PublicDir: t.TempDir(), PrivateDir: t.TempDir()}}
+	registry, err := storage.New(&cfg, nil)
+	if err != nil {
+		t.Fatalf("storage.New() error = %v", err)
+	}
+	tx := database.NewTxManager(&database.Conn{Name: "test", Driver: "pgsql", Pool: pool})
+	service := NewService(NewRepository(queries), registry, storage.DiskPublic, tx, nil)
+
+	tenantTwoFile, err := service.Create(ctx, 2, 2, uploadHeader(t, "file", "secret.pdf", []byte("%PDF-1.4 tenant two")))
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// Tenant One caller: scoped reads and deletes.
+	if _, err := service.Get(ctx, tenantTwoFile.ID, false, 1); !isNotFound(err) {
+		t.Fatalf("Get(cross-tenant) = %v, want not found", err)
+	}
+	if _, _, err := service.List(ctx, ListFilter{AllTenants: false, TenantID: 1}); err != nil {
+		t.Fatalf("List() error = %v", err)
+	} else if total, err := service.repo.Count(ctx, ListFilter{AllTenants: false, TenantID: 1}); err != nil || total != 0 {
+		t.Fatalf("Count(tenant 1) = %d, %v; want 0 (no cross-tenant rows)", total, err)
+	}
+	if err := service.Delete(ctx, tenantTwoFile.ID, false, 1); !isNotFound(err) {
+		t.Fatalf("Delete(cross-tenant) = %v, want not found", err)
+	}
+
+	// System caller (all_tenants): full visibility.
+	if _, err := service.Get(ctx, tenantTwoFile.ID, true, 0); err != nil {
+		t.Fatalf("Get(all tenants) error = %v", err)
+	}
+	if err := service.Delete(ctx, tenantTwoFile.ID, true, 0); err != nil {
+		t.Fatalf("Delete(all tenants) error = %v", err)
+	}
 }

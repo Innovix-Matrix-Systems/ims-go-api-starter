@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"context"
@@ -7,9 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 // TestDeveloperPlaygroundEndToEnd proves the local-only Playground can enqueue
@@ -228,28 +227,13 @@ func TestDeveloperPlaygroundLocalOnly(t *testing.T) {
 
 func playgroundRouter(t *testing.T, environment string) (http.Handler, string) {
 	t.Helper()
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
 	t.Setenv("APP_ENV", environment)
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 	t.Setenv("DEV_DASHBOARD_ENABLED", "true")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-	dbtest.Clean(t, pool,
-		"data_processing_jobs", "dev_actions", "feature_flags", "personal_access_tokens",
-		"role_has_permissions", "model_has_roles", "users", "roles", "permissions", "branches", "tenants",
-	)
+	kit := testkit.New(t)
+	cfg := kit.Config
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
+	deps := kit.Deps
 	if err := seeder.Run(context.Background(), cfg, deps.Tx.Queries(), deps.Tx, deps.Checker, logger); err != nil {
 		t.Fatalf("seeder.Run() error = %v", err)
 	}

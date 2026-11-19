@@ -26,7 +26,7 @@ import (
 const SuperAdminEmail = "superadmin@ims.com"
 
 // DeveloperEmail is the seeded developer account e-mail. The account holds the
-// hidden Developer role (every catalog permission) and is the non-super-admin
+// hidden Developer role (developer-dashboard permissions only) and is the non-super-admin
 // access path to the developer dashboard.
 const DeveloperEmail = "developer@ims.com"
 
@@ -50,7 +50,7 @@ func Run(ctx context.Context, cfg *config.Config, queries *dbgen.Queries, tx *da
 	if err != nil {
 		return err
 	}
-	if err := assignAllPermissions(ctx, roleRepo, permRepo, superRole.ID); err != nil {
+	if err := assignPermissions(ctx, roleRepo, permRepo, superRole.ID, authz.Catalog); err != nil {
 		return err
 	}
 
@@ -58,7 +58,7 @@ func Run(ctx context.Context, cfg *config.Config, queries *dbgen.Queries, tx *da
 	if err != nil {
 		return err
 	}
-	if err := assignAllPermissions(ctx, roleRepo, permRepo, devRole.ID); err != nil {
+	if err := assignPermissions(ctx, roleRepo, permRepo, devRole.ID, authz.DeveloperPermissions()); err != nil {
 		return err
 	}
 
@@ -146,9 +146,9 @@ func ensureDeveloperRole(ctx context.Context, roleRepo access.RoleRepository) (*
 	return created, nil
 }
 
-func assignAllPermissions(ctx context.Context, roleRepo access.RoleRepository, permRepo access.PermissionRepository, roleID int64) error {
-	names := make([]string, 0, len(authz.Catalog))
-	for _, permission := range authz.Catalog {
+func assignPermissions(ctx context.Context, roleRepo access.RoleRepository, permRepo access.PermissionRepository, roleID int64, set []authz.Permission) error {
+	names := make([]string, 0, len(set))
+	for _, permission := range set {
 		names = append(names, permission.Name)
 	}
 	permissions, err := permRepo.GetByNames(ctx, names)

@@ -23,6 +23,9 @@ func newServeCommand(state *State) *cobra.Command {
 			if err := cfg.Validate(); err != nil {
 				return err
 			}
+			if err := cfg.ValidateDeploymentPosture(); err != nil {
+				return err
+			}
 			deps, cleanup, err := app.NewDependencies(cfg, state.Logger())
 			if err != nil {
 				return err

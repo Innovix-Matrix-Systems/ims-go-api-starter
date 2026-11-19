@@ -1,6 +1,10 @@
 package notifications
 
-import "github.com/go-chi/chi/v5"
+import (
+	"github.com/go-chi/chi/v5"
+
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
+)
 
 // RegisterRoutesResolve mounts tenant-scoped notification routes (feed and
 // read state for the authenticated user).
@@ -18,9 +22,9 @@ func (h *Handler) RegisterRoutesExempt(r chi.Router) {
 	r.Post("/internal/notification/{id}/read", h.markRead)
 	r.Post("/internal/notification/read-all", h.markAllRead)
 
-	r.Get("/internal/notification", h.index)
-	r.Get("/internal/notification/{id}", h.show)
-	r.Post("/internal/notification", h.store)
-	r.Patch("/internal/notification/{id}", h.update)
-	r.Delete("/internal/notification/{id}", h.destroy)
+	r.With(h.can(authz.PermNotificationViewAll)).Get("/internal/notification", h.index)
+	r.With(h.can(authz.PermNotificationView)).Get("/internal/notification/{id}", h.show)
+	r.With(h.can(authz.PermNotificationCreate)).Post("/internal/notification", h.store)
+	r.With(h.can(authz.PermNotificationUpdate)).Patch("/internal/notification/{id}", h.update)
+	r.With(h.can(authz.PermNotificationDelete)).Delete("/internal/notification/{id}", h.destroy)
 }

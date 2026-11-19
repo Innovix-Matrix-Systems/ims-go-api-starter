@@ -5,6 +5,7 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { api } from '../api/client'
 import type { CursorPage, DevRequestSummary } from '../api/types'
 import { DataTable } from '../components/DataTable'
+import { Select } from '../components/inputs'
 import {
   Button,
   EmptyState,
@@ -170,14 +171,11 @@ function RequestsPage() {
         </label>
         <label className="field">
           <span className="field-label">Method</span>
-          <select className="select" value={method} onChange={(event) => setMethod(event.target.value)}>
-            <option value="">Any</option>
-            <option value="GET">GET</option>
-            <option value="POST">POST</option>
-            <option value="PATCH">PATCH</option>
-            <option value="PUT">PUT</option>
-            <option value="DELETE">DELETE</option>
-          </select>
+          <Select
+            value={method}
+            onChange={setMethod}
+            options={['', 'GET', 'POST', 'PATCH', 'PUT', 'DELETE'].map((value) => ({ value, label: value || 'Any' }))}
+          />
         </label>
         <label className="field">
           <span className="field-label">Status</span>

@@ -4,12 +4,32 @@ import (
 	"context"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 )
 
 // PackageService manages billing plans and their feature definitions.
 type PackageService struct {
 	packages domain.PackageRepository
+	tx       *database.TxManager
+}
+
+// WithTx makes a package write and its feature replacement one transaction,
+// so a failure never leaves a half-replaced feature set (M10).
+func (s *PackageService) WithTx(tx *database.TxManager) *PackageService {
+	s.tx = tx
+	return s
+}
+
+// inTx runs fn with a transaction-bound repository when a TxManager is set.
+func (s *PackageService) inTx(ctx context.Context, fn func(packages domain.PackageRepository) error) error {
+	if s.tx == nil {
+		return fn(s.packages)
+	}
+	return s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
+		return fn(domain.NewPackageRepository(q))
+	})
 }
 
 // NewPackageService creates the package service.
@@ -55,14 +75,20 @@ func (s *PackageService) Create(ctx context.Context, input domain.PackageInput, 
 	if err != nil {
 		return nil, err
 	}
-	pkg, err := s.packages.Create(ctx, input)
+	var pkg *domain.Package
+	err = s.inTx(ctx, func(packages domain.PackageRepository) error {
+		created, err := packages.Create(ctx, input)
+		if err != nil {
+			return err
+		}
+		pkg = created
+		if len(validated) == 0 {
+			return nil
+		}
+		return packages.ReplaceFeatures(ctx, created.ID, validated)
+	})
 	if err != nil {
 		return nil, err
-	}
-	if len(validated) > 0 {
-		if err := s.packages.ReplaceFeatures(ctx, pkg.ID, validated); err != nil {
-			return nil, err
-		}
 	}
 	return s.Get(ctx, pkg.ID)
 }
@@ -73,13 +99,17 @@ func (s *PackageService) Update(ctx context.Context, id int64, input domain.Pack
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.packages.Update(ctx, id, input); err != nil {
-		return nil, err
-	}
-	if features != nil {
-		if err := s.packages.ReplaceFeatures(ctx, id, validated); err != nil {
-			return nil, err
+	err = s.inTx(ctx, func(packages domain.PackageRepository) error {
+		if _, err := packages.Update(ctx, id, input); err != nil {
+			return err
 		}
+		if features == nil {
+			return nil
+		}
+		return packages.ReplaceFeatures(ctx, id, validated)
+	})
+	if err != nil {
+		return nil, err
 	}
 	return s.Get(ctx, id)
 }

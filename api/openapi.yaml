@@ -22,7 +22,6 @@ info:
     Authenticated routes are resolved to a tenant/branch from the caller's identity.
     Impersonators may send the optional headers `X-Acting-Tenant` and `X-Acting-Branch`;
     sends on tenant-resolved write routes without acting headers are rejected with 403.
-    Public tenant resolution accepts `X-Tenant-Code` (+ optional `X-Branch-Id`).
     Request locale is negotiated from `Accept-Language` (`en`, `bn`).
 
 servers:
@@ -37,6 +36,8 @@ tags:
   - name: Users
     description: Tenant users, profiles and background import/export.
   - name: Branches
+  - name: Activity
+    description: Tenant activity log (who did what).
   - name: Roles & Permissions
   - name: Tenants
   - name: Billing
@@ -293,6 +294,110 @@ paths:
             application/json:
               schema: {$ref: "#/components/schemas/LoginEnvelope"}
         "401": *unauthorized
+        "422": *validationFailed
+        "429": *tooManyRequests
+
+  /api/v1/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Send a password reset link
+      description: >-
+        Always answers 200 with the same message, whether or not the e-mail belongs to an account
+        (no account enumeration). At most one mail per address per minute.
+      operationId: authForgotPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: {type: string, format: email, maxLength: 255}
+      responses:
+        "200":
+          description: Accepted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "422": *validationFailed
+        "429": *tooManyRequests
+
+  /api/v1/reset-password:
+    post:
+      tags: [Auth]
+      summary: Set a new password with a reset token
+      description: The token works once. Every session of the account is signed out.
+      operationId: authResetPassword
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, token, password, password_confirmation]
+              properties:
+                email: {type: string, format: email, maxLength: 255}
+                token: {type: string, maxLength: 200}
+                password: {type: string, minLength: 8, maxLength: 72}
+                password_confirmation: {type: string}
+      responses:
+        "200":
+          description: Password changed.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "422": *validationFailed
+        "429": *tooManyRequests
+
+  /api/v1/email/verification-notification:
+    post:
+      tags: [Auth]
+      summary: Send (again) the e-mail verification link
+      description: Same answer for every address (no enumeration); at most one mail per address per minute.
+      operationId: authResendVerification
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: {type: string, format: email, maxLength: 255}
+      responses:
+        "200":
+          description: Accepted.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "422": *validationFailed
+        "429": *tooManyRequests
+
+  /api/v1/email/verify:
+    post:
+      tags: [Auth]
+      summary: Verify an e-mail address with the token from the verification link
+      operationId: authVerifyEmail
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string, maxLength: 200}
+      responses:
+        "200":
+          description: Verified.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/MessageEnvelope"}
         "422": *validationFailed
         "429": *tooManyRequests
 
@@ -651,6 +756,7 @@ paths:
         "401": *unauthorized
         "403": *forbidden
         "404": *notFound
+        "409": *conflict
         "422": *validationFailed
     delete:
       tags: [Users]
@@ -976,6 +1082,35 @@ paths:
         "415": *unsupportedMedia
         "422": *validationFailed
         "503": *serviceUnavailable
+
+  /api/v1/activity:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    get:
+      tags: [Activity]
+      summary: The tenant's activity log, newest first
+      description: |
+        Who did what in the resolved tenant (user, role, branch, setting and
+        subscription changes). Platform accounts without an acting tenant see
+        every tenant. Requires `activity.view`. Secrets in `changes` are redacted.
+      operationId: listActivity
+      parameters:
+        - {name: cursor, in: query, required: false, schema: {type: string}, description: Opaque cursor from `meta.next_cursor`.}
+        - {name: per_page, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: subject_type, in: query, required: false, schema: {type: string}, example: user}
+        - {name: subject_id, in: query, required: false, schema: {type: integer, format: int64}}
+        - {name: actor_id, in: query, required: false, schema: {type: integer, format: int64}}
+      responses:
+        "200":
+          description: One page of activity.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ActivityFeedEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+        "429": *tooManyRequests
 
   /api/v1/branch:
     parameters:
@@ -1500,6 +1635,10 @@ paths:
     get:
       tags: [Billing]
       summary: Payment gateway callback (public)
+      description: >-
+        The query string is only a hint: the payment outcome is always confirmed with the gateway.
+        A payment fails only when the gateway reports it failed/cancelled; a gateway outage answers
+        503 and changes nothing. Manual methods (cash, bank_transfer) do not accept callbacks.
       operationId: billingCallback
       security: []
       parameters:
@@ -1518,6 +1657,7 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/MessageEnvelope"}
+        "400": *badRequest
         "404": *notFound
         "422": *validationFailed
         "503": *serviceUnavailable
@@ -1564,6 +1704,9 @@ paths:
     post:
       tags: [Billing]
       summary: Subscribe the resolved tenant to a package
+      description: >-
+        Idempotent per tenant + package + payment method: while a checkout is still pending, calling
+        again returns that same subscription and payment instead of charging twice.
       operationId: billingSubscribe
       requestBody:
         required: true
@@ -1637,6 +1780,10 @@ paths:
     post:
       tags: [Billing]
       summary: Set per-tenant feature overrides
+      description: >-
+        Merges the given feature overrides into the subscription. Values are booleans (switch a
+        feature) or numbers (a limit); `null` removes the override so the feature falls back to the
+        plan. Keys must be catalog features.
       operationId: setSubscriptionOverrides
       parameters:
         - $ref: "#/components/parameters/PathID"
@@ -1650,13 +1797,55 @@ paths:
               properties:
                 overrides:
                   type: object
-                  additionalProperties: true
+                  additionalProperties:
+                    nullable: true
+                    oneOf:
+                      - {type: boolean}
+                      - {type: number}
+            example:
+              overrides: {users.max: 10, reports.export: true, branches.max: null}
       responses:
         "200":
           description: The updated subscription.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/SubscriptionEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /api/v1/billing/internal/tenants/{tenant_id}/subscription:
+    parameters:
+      - {$ref: "#/components/parameters/ActingTenant"}
+      - {$ref: "#/components/parameters/ActingBranch"}
+    post:
+      tags: [Billing]
+      summary: Assign a plan to a tenant (system)
+      description: >-
+        Ends the tenant's current subscription and starts an active one on the package, in one
+        transaction. With `payment_method` (cash or bank transfer) a completed payment is recorded
+        for `amount`, which defaults to the package price; without it the plan is assigned free of
+        charge. Hidden (inactive) packages can be assigned. Overrides start empty on the new
+        subscription.
+      operationId: assignTenantPlan
+      parameters:
+        - name: tenant_id
+          in: path
+          required: true
+          schema: {type: integer, format: int64, minimum: 1}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AssignPlanRequest"}
+      responses:
+        "201":
+          description: The new subscription and the recorded payment (null when free of charge).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AssignPlanEnvelope"}
+        "400": *badRequest
         "401": *unauthorized
         "403": *forbidden
         "404": *notFound
@@ -2054,6 +2243,26 @@ paths:
       operationId: deleteFile
       responses:
         "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/files/{id}/download:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+    get:
+      tags: [Files]
+      summary: Download a file (authorized; the only way to read private-disk files)
+      description: >-
+        Streams the file as an attachment. Same access rule as GET /files/{id}. When
+        FILES_DISK=private, the file `url` points here.
+      operationId: downloadFile
+      responses:
+        "200":
+          description: The file contents.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
         "401": *unauthorized
         "403": *forbidden
         "404": *notFound
@@ -2540,12 +2749,330 @@ paths:
         "403": *forbidden
         "404": *notFound
 
+  /dev/api/settings/groups/order:
+    put:
+      tags: [Dev]
+      summary: Reorder settings groups (dev.manage)
+      operationId: devReorderSettingGroups
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: {type: array, items: {type: integer, format: int64}, description: Group ids in the new order.}
+      responses:
+        "200":
+          description: Saved order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ids: {type: array, items: {type: integer, format: int64}}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /dev/api/settings/groups/{id}/keys:
+    put:
+      tags: [Dev]
+      summary: Put settings into a group in the given order (dev.manage)
+      description: Moves each key into the group and stores its position (drag and drop). Keys need their global row (settings:sync).
+      operationId: devPlaceSettings
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keys]
+              properties:
+                keys: {type: array, items: {type: string}, description: Setting keys in their new order.}
+      responses:
+        "200":
+          description: Saved placement.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      group_id: {type: integer, format: int64}
+                      keys: {type: array, items: {type: string}}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /dev/api/tenants:
+    get:
+      tags: [Dev]
+      summary: Tenants with subscription, usage and override counts
+      operationId: devListTenants
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - {name: search, in: query, schema: {type: string}, description: "Name, code, email, phone or domain."}
+        - {name: active, in: query, schema: {type: string, enum: [active, inactive]}}
+        - {name: subscription, in: query, schema: {type: string, enum: [none, trial, active, pending, past_due, cancelled, expired]}}
+      responses:
+        "200":
+          description: Paginated tenants.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta, links]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/DevTenant"}
+                  meta: {$ref: "#/components/schemas/PaginationMeta"}
+                  links: {$ref: "#/components/schemas/PaginationLinks"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /dev/api/tenants/{id}:
+    get:
+      tags: [Dev]
+      summary: One tenant with plan features, usage against limits and subscription history
+      operationId: devGetTenant
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        "200":
+          description: Tenant detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevTenantDetail"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/inspector/routes:
+    get:
+      tags: [Dev]
+      summary: Every registered route with its handler, middleware and permissions
+      operationId: devInspectorRoutes
+      responses:
+        "200":
+          description: Route table (like `php artisan route:list`).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevRouteReport"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/inspector/access:
+    get:
+      tags: [Dev]
+      summary: Platform roles and the permission catalog compared with the database
+      operationId: devInspectorAccess
+      responses:
+        "200":
+          description: Roles, permissions and catalog drift.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevAccessReport"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/inspector/config:
+    get:
+      tags: [Dev]
+      summary: Effective configuration by section, secrets masked
+      operationId: devInspectorConfig
+      responses:
+        "200":
+          description: Configuration sections.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/DevConfigSection"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/inspector/packages:
+    get:
+      tags: [Dev]
+      summary: Go modules and dashboard npm packages
+      operationId: devInspectorPackages
+      responses:
+        "200":
+          description: Dependencies.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevPackagesReport"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/commands:
+    get:
+      tags: [Dev]
+      summary: Allowlisted maintenance commands with their last run
+      operationId: devListCommands
+      responses:
+        "200":
+          description: Commands.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/DevCommand"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/commands/runs:
+    get:
+      tags: [Dev]
+      summary: Command run history, newest first
+      operationId: devListCommandRuns
+      parameters:
+        - {name: command, in: query, schema: {type: string}, description: Only runs of this command.}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
+        - {name: cursor, in: query, schema: {type: string}, description: Last seen run id (exclusive).}
+      responses:
+        "200":
+          description: Cursor-paginated runs.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/DevCommandRun"}
+                  links: {type: object, nullable: true}
+                  meta:
+                    type: object
+                    properties:
+                      next_cursor: {type: string}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/commands/runs/{id}:
+    get:
+      tags: [Dev]
+      summary: One command run with its output
+      operationId: devGetCommandRun
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        "200":
+          description: The run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevCommandRun"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/commands/{name}/run:
+    post:
+      tags: [Dev]
+      summary: Run an allowlisted command (dev.manage)
+      description: Quick commands answer 200 with the finished run; background commands answer 202 with a running record to poll.
+      operationId: devRunCommand
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}, example: "permission:sync"}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                options:
+                  type: object
+                  additionalProperties: {type: string}
+      responses:
+        "200":
+          description: Finished run.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevCommandRun"}
+        "202":
+          description: Background run started.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevCommandRun"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
   /dev/api/actions:
     get:
       tags: [Dev]
       summary: Developer action audit log
+      description: Every dashboard sign-in and action, newest first. `meta.total` counts all matches.
       operationId: devListActions
       parameters:
+        - {name: search, in: query, schema: {type: string}, description: "Actor e-mail, target, IP prefix or details text."}
+        - {name: action, in: query, schema: {type: string}, example: command.run}
+        - {name: actor_id, in: query, schema: {type: integer, format: int64}}
+        - {name: status, in: query, schema: {type: string, enum: [ok, error]}}
+        - {name: from, in: query, schema: {type: string}, description: "YYYY-MM-DD or RFC 3339 (inclusive)."}
+        - {name: to, in: query, schema: {type: string}, description: "YYYY-MM-DD (whole day included) or RFC 3339."}
         - name: limit
           in: query
           schema: {type: integer, minimum: 1, maximum: 100, default: 25}
@@ -2559,6 +3086,65 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DevActionListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/actions/facets:
+    get:
+      tags: [Dev]
+      summary: Actions and people that appear in the audit log (filter menus)
+      operationId: devActionFacets
+      responses:
+        "200":
+          description: Facets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevActionFacets"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/actions/stats:
+    get:
+      tags: [Dev]
+      summary: Audit log header numbers
+      operationId: devActionStats
+      responses:
+        "200":
+          description: Stats.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevActionStats"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/actions/{id}:
+    get:
+      tags: [Dev]
+      summary: One audit row
+      operationId: devGetAction
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        "200":
+          description: The audit row.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevAction"}
         "401": *unauthorized
         "403": *forbidden
         "404": *notFound
@@ -2840,6 +3426,10 @@ paths:
       parameters:
         - name: level
           in: query
+          schema: {type: string}
+        - name: search
+          in: query
+          description: Text in the message or attributes, or a request id prefix.
           schema: {type: string}
         - name: request_id
           in: query
@@ -3889,11 +4479,6 @@ components:
         Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
         only when impersonating — there is no default.
       schema: {type: integer, format: int64}
-    TenantCode:
-      name: X-Tenant-Code
-      in: header
-      description: Public tenant resolution code.
-      schema: {type: string}
 
   responses:
     BadRequest: *badRequest
@@ -4167,7 +4752,15 @@ components:
         branch_id: {type: integer, format: int64, nullable: true}
         roles:
           type: array
+          description: Changing roles also requires `user.role.assign`; you cannot change your own roles.
           items: {type: integer, format: int64}
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >-
+            Update only, optional. The `updated_at` you last read; if the user changed since,
+            the update answers 409 instead of overwriting.
       example:
         name: Jane Doe
         email: jane.doe@acme.test
@@ -4290,6 +4883,47 @@ components:
       required: [data]
       properties:
         data: {$ref: "#/components/schemas/Branch"}
+
+    ActivityEntry:
+      type: object
+      required: [id, tenant_id, actor, action, subject_type, subject_id, changes, ip, request_id, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        actor:
+          type: object
+          nullable: true
+          required: [id, name]
+          properties:
+            id: {type: integer, format: int64}
+            name: {type: string}
+        action: {type: string, example: user.created}
+        subject_type: {type: string, example: user}
+        subject_id: {type: integer, format: int64, nullable: true}
+        changes: {type: object, additionalProperties: true}
+        ip: {type: string, nullable: true}
+        request_id: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+
+    ActivityFeedEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/ActivityEntry"}
+        links:
+          type: object
+          required: [next]
+          properties:
+            next: {type: string, nullable: true}
+        meta:
+          type: object
+          required: [path, per_page, next_cursor]
+          properties:
+            path: {type: string}
+            per_page: {type: integer}
+            next_cursor: {type: string, nullable: true}
 
     BranchPageEnvelope:
       type: object
@@ -4598,6 +5232,35 @@ components:
           properties:
             subscription: {$ref: "#/components/schemas/Subscription"}
             payment: {$ref: "#/components/schemas/Payment"}
+
+    AssignPlanRequest:
+      type: object
+      required: [package_id]
+      properties:
+        package_id: {type: integer, format: int64, minimum: 1}
+        payment_method: {type: string, enum: [cash, bank_transfer]}
+        amount:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Defaults to the package price. Requires payment_method.
+      example:
+        package_id: 2
+        payment_method: cash
+        amount: 1500
+
+    AssignPlanEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [subscription, payment]
+          properties:
+            subscription: {$ref: "#/components/schemas/Subscription"}
+            payment:
+              allOf: [{$ref: "#/components/schemas/Payment"}]
+              nullable: true
 
     Payment:
       type: object
@@ -4946,10 +5609,11 @@ components:
 
     FeatureFlagItem:
       type: object
-      required: [key, value, default, source, description, group]
+      required: [key, value, rollout, default, source, description, group]
       properties:
         key: {type: string}
-        value: {type: boolean}
+        value: {type: boolean, description: "Effective value. With a rollout it is decided for a user target; otherwise it means \"on for `rollout`%\"."}
+        rollout: {type: integer, nullable: true, minimum: 0, maximum: 100, description: Percentage of users (or tenants) the winning value is enabled for; null means everyone.}
         default: {type: boolean}
         source: {type: string, enum: [user, tenant, global, default]}
         description: {type: string}
@@ -4973,13 +5637,18 @@ components:
 
     FeatureFlagUpdateRequest:
       type: object
-      required: [flags]
+      description: Send `flags`, `rollout` or both.
       properties:
         target_type: {type: string, enum: [global, tenant, user]}
         target_id: {type: integer, format: int64}
         flags:
           type: object
           additionalProperties: {type: boolean, nullable: true}
+        rollout:
+          type: object
+          description: Flag key to percentage (0-100). Enables the flag for that share of users; 100 means everyone.
+          additionalProperties: {type: integer, minimum: 0, maximum: 100}
+          example: {feature.audit: 60}
 
     SettingsGroup:
       type: object
@@ -5052,6 +5721,220 @@ components:
         status: {type: string, enum: [ok, error]}
         error_message: {type: string, nullable: true}
         duration_ms: {type: integer}
+        ip: {type: string, nullable: true}
+        user_agent: {type: string, nullable: true}
+        actor_email: {type: string, nullable: true}
+        actor_name: {type: string, nullable: true}
+        created_at: {type: string, format: date-time}
+
+    DevActionFacets:
+      type: object
+      required: [actions, actors]
+      properties:
+        actions:
+          type: array
+          items:
+            type: object
+            required: [action, total]
+            properties:
+              action: {type: string}
+              total: {type: integer, format: int64}
+        actors:
+          type: array
+          items:
+            type: object
+            required: [user_id, email, total]
+            properties:
+              user_id: {type: integer, format: int64}
+              email: {type: string, nullable: true}
+              total: {type: integer, format: int64}
+
+    DevActionStats:
+      type: object
+      required: [last_day, failed_sign_ins, retention_days]
+      properties:
+        last_day: {type: integer, format: int64, description: Actions in the last 24 hours.}
+        failed_sign_ins: {type: integer, format: int64, description: Failed dashboard sign-ins in the last 24 hours.}
+        retention_days: {type: integer}
+
+    DevTenant:
+      type: object
+      required: [id, name, code, domain, email, phone, is_active, subscription_status, package_name, expires_at, users, branches, overrides, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        code: {type: string}
+        domain: {type: string, nullable: true}
+        email: {type: string, nullable: true}
+        phone: {type: string, nullable: true}
+        is_active: {type: boolean}
+        subscription_status: {type: string, nullable: true}
+        package_name: {type: string, nullable: true}
+        expires_at: {type: string, format: date-time, nullable: true}
+        users: {type: integer, format: int64}
+        branches: {type: integer, format: int64}
+        overrides: {type: integer, format: int64, description: Tenant setting and feature-flag overrides.}
+        created_at: {type: string, format: date-time}
+
+    DevTenantDetail:
+      allOf:
+        - $ref: "#/components/schemas/DevTenant"
+        - type: object
+          required: [storage_bytes, features, subscriptions]
+          properties:
+            storage_bytes: {type: integer, format: int64}
+            features:
+              type: array
+              items:
+                type: object
+                required: [key, description, is_limit, enabled, limit, used, overridden]
+                properties:
+                  key: {type: string}
+                  description: {type: string}
+                  is_limit: {type: boolean}
+                  enabled: {type: boolean}
+                  limit: {type: integer, format: int64, nullable: true, description: "null = unlimited."}
+                  used: {type: integer, format: int64, nullable: true}
+                  overridden: {type: boolean}
+            subscriptions:
+              type: array
+              items:
+                type: object
+                required: [id, status, package_name, starts_at, expires_at, trial_ends_at, cancelled_at, created_at]
+                properties:
+                  id: {type: integer, format: int64}
+                  status: {type: string}
+                  package_name: {type: string}
+                  starts_at: {type: string, format: date-time, nullable: true}
+                  expires_at: {type: string, format: date-time, nullable: true}
+                  trial_ends_at: {type: string, format: date-time, nullable: true}
+                  cancelled_at: {type: string, format: date-time, nullable: true}
+                  created_at: {type: string, format: date-time}
+
+    DevRouteReport:
+      type: object
+      required: [global, routes]
+      properties:
+        global:
+          type: array
+          items: {type: string}
+          description: Middleware every route runs, in order.
+        routes:
+          type: array
+          items:
+            type: object
+            required: [method, path, handler, permissions, middleware]
+            properties:
+              method: {type: string}
+              path: {type: string}
+              handler: {type: string}
+              permissions: {type: array, items: {type: string}}
+              middleware: {type: array, items: {type: string}}
+
+    DevAccessReport:
+      type: object
+      required: [roles, tenant_roles, permissions, declared_not_stored, stored_not_declared, developer_permissions, admin_permissions]
+      properties:
+        roles:
+          type: array
+          items:
+            type: object
+            required: [id, name, guard, is_system, permissions, users]
+            properties:
+              id: {type: integer, format: int64}
+              name: {type: string}
+              guard: {type: string}
+              is_system: {type: boolean}
+              permissions: {type: integer, format: int64}
+              users: {type: integer, format: int64}
+        tenant_roles: {type: integer, format: int64}
+        permissions:
+          type: array
+          items:
+            type: object
+            required: [name, group, description, is_system, declared, stored]
+            properties:
+              name: {type: string}
+              group: {type: string}
+              description: {type: string}
+              is_system: {type: boolean}
+              declared: {type: boolean}
+              stored: {type: boolean}
+        declared_not_stored: {type: array, items: {type: string}}
+        stored_not_declared: {type: array, items: {type: string}}
+        developer_permissions: {type: array, items: {type: string}}
+        admin_permissions: {type: array, items: {type: string}}
+
+    DevConfigSection:
+      type: object
+      required: [name, entries]
+      properties:
+        name: {type: string}
+        entries:
+          type: array
+          items:
+            type: object
+            required: [key, value, masked]
+            properties:
+              key: {type: string}
+              value: {type: string}
+              masked: {type: boolean}
+
+    DevPackagesReport:
+      type: object
+      required: [go_version, module, packages]
+      properties:
+        go_version: {type: string}
+        module: {type: string}
+        packages:
+          type: array
+          items:
+            type: object
+            required: [name, version, kind, runtime]
+            properties:
+              name: {type: string}
+              version: {type: string}
+              kind: {type: string, enum: [require, indirect, dependency, devDependency]}
+              runtime: {type: string, enum: [go, npm]}
+
+    DevCommand:
+      type: object
+      required: [name, label, description, group, confirm, background, options, runs, last_status, last_run_at]
+      properties:
+        name: {type: string}
+        label: {type: string}
+        description: {type: string}
+        group: {type: string}
+        confirm: {type: boolean, description: The command changes data; ask before running.}
+        background: {type: boolean, description: Runs in the background; poll the run.}
+        options:
+          type: array
+          items:
+            type: object
+            required: [name, label, type, default]
+            properties:
+              name: {type: string}
+              label: {type: string}
+              type: {type: string, enum: [bool, number, text, select]}
+              default: {type: string}
+              choices: {type: array, items: {type: string}}
+              description: {type: string}
+        runs: {type: integer, format: int64}
+        last_status: {type: string, nullable: true}
+        last_run_at: {type: string, format: date-time, nullable: true}
+
+    DevCommandRun:
+      type: object
+      required: [id, command, actor_user_id, status, options, output, error, duration_ms, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        command: {type: string}
+        actor_user_id: {type: integer, format: int64}
+        status: {type: string, enum: [running, ok, error]}
+        options: {type: object, additionalProperties: {type: string}}
+        output: {type: string}
+        error: {type: string, nullable: true}
+        duration_ms: {type: integer}
         created_at: {type: string, format: date-time}
 
     DevActionListEnvelope:
@@ -5066,6 +5949,7 @@ components:
           type: object
           properties:
             next_cursor: {type: string}
+            total: {type: integer, format: int64}
 
     DevQueue:
       type: object
@@ -5677,10 +6561,11 @@ components:
 
     DevFlag:
       type: object
-      required: [key, value, default, source, overridden, description, group]
+      required: [key, value, rollout, default, source, overridden, description, group]
       properties:
         key: {type: string}
         value: {type: boolean, description: Effective value after resolution.}
+        rollout: {type: integer, nullable: true, description: Rollout percentage of the winning value; null means everyone.}
         default: {type: boolean, description: Code-defined default.}
         source: {type: string, enum: [default, global, tenant, user]}
         overridden: {type: boolean, description: True when the requested target stores an override.}
@@ -5697,7 +6582,7 @@ components:
 
     DevFlagUpdateRequest:
       type: object
-      required: [flags]
+      description: Send `flags`, `rollout` or both.
       properties:
         target_type: {type: string, enum: [global, tenant, user], default: global}
         target_id: {type: integer, format: int64, nullable: true}
@@ -5705,6 +6590,10 @@ components:
           type: object
           additionalProperties: {type: boolean, nullable: true}
           description: Flag key to value; null clears the override at this target.
+        rollout:
+          type: object
+          additionalProperties: {type: integer, minimum: 0, maximum: 100}
+          description: Flag key to rollout percentage (enables the flag for that share).
 
     DevFlagResetEnvelope:
       type: object

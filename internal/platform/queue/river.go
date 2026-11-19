@@ -258,11 +258,21 @@ func (e *RiverEngine) prepare(ctx context.Context, kind string, payload any, opt
 	if err != nil {
 		return jobArgs{}, nil, err
 	}
+	// Same contract as the sync engine: reject malformed payloads before
+	// they are persisted and retried forever (M47).
+	if def.Validate != nil {
+		if err := def.Validate(data); err != nil {
+			return jobArgs{}, nil, err
+		}
+	}
 
 	args := jobArgs{JobKind: kind, Payload: data}
 	if scope, ok := tenancy.FromContext(ctx); ok {
 		args.TenantID = scope.EffectiveTenantID()
 		args.BranchID = scope.EffectiveBranchID()
+	}
+	if err := checkScope(def, args.TenantID); err != nil {
+		return jobArgs{}, nil, err
 	}
 
 	channel := ChannelConfig(e.cfg, def.Queue)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	filesmod "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/files"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 )
@@ -36,54 +37,55 @@ func (h *Handler) listFiles(w http.ResponseWriter, r *http.Request) {
 	page, perPage, offset := httpx.PageParams(r)
 	filter, err := fileFilterFromQuery(r, int32(perPage), int32(offset))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.files.List(r.Context(), filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	total, err := h.files.Count(r.Context(), filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	data := make([]FileResponse, 0, len(items))
 	for _, item := range items {
 		data = append(data, FileResponse{
 			FileItem:    item,
-			URL:         h.fileService.URL(r.Context(), filesDomain(item)),
+			URL:         h.files.URL(r.Context(), item),
 			PreviewKind: previewKind(item.MimeType),
 		})
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
+	h.Paginated(w, r, http.StatusOK, data, meta, links)
 }
 
 func (h *Handler) fileStats(w http.ResponseWriter, r *http.Request) {
 	tenantID, err := parseOptionalID(r.URL.Query().Get("tenant_id"), "tenant_id")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	stats, err := h.files.Stats(r.Context(), tenantID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, stats)
+	h.Data(w, r, http.StatusOK, stats)
 }
 
 func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	// Downloading tenant documents is an action, not a view (H14): the route
+	// needs dev.manage.
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	reader, file, err := h.fileService.Open(r.Context(), id)
+	reader, file, err := h.files.Open(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	defer reader.Close()
@@ -113,34 +115,15 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
+	id, ok := h.PathID(w, r, "id")
 	if !ok {
 		return
 	}
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	if err := h.files.Delete(r.Context(), authn.UserID(r), id); err != nil {
+		h.Error(w, r, err)
 		return
 	}
-
-	started := time.Now()
-	file, opErr := h.fileService.Get(r.Context(), id)
-	if opErr == nil {
-		opErr = h.fileService.Delete(r.Context(), id)
-	}
-	params := map[string]any{"file_id": id}
-	if file != nil {
-		params["name"] = file.Name
-		params["disk"] = file.Disk
-		params["path"] = file.Path
-		params["size"] = file.Size
-	}
-	h.recordAction(r.Context(), actorID, "files.delete", formatTarget("file", id), params, started, opErr)
-	if opErr != nil {
-		h.responder.Error(w, r, opErr)
-		return
-	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 func fileFilterFromQuery(r *http.Request, limit, offset int32) (FileFilter, error) {

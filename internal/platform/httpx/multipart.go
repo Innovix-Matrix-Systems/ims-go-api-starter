@@ -8,11 +8,16 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 )
 
+// multipartMemory caps the in-memory part of a parsed multipart body (H22).
+const multipartMemory = 8 << 20
+
 // Multipart parses a multipart/form-data request body with a per-route byte
 // limit (the global JSON limit does not apply to multipart routes).
 func Multipart(w http.ResponseWriter, r *http.Request, maxBytes int64) (*multipart.Form, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	if err := r.ParseMultipartForm(maxBytes); err != nil {
+	// Keep at most 8 MB of parts in memory; larger files spill to temp files
+	// (removed by net/http after the handler) instead of pinning the heap.
+	if err := r.ParseMultipartForm(min(maxBytes, multipartMemory)); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			return nil, apperr.New(apperr.RequestEntityTooLarge, "The uploaded payload is too large.")

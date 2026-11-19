@@ -68,6 +68,9 @@ SELECT * FROM dev_logs
 WHERE (@before_id::bigint = 0 OR id < @before_id::bigint)
   AND (@level::text = '' OR level = @level::text)
   AND (@request_id::text = '' OR request_id = @request_id::text)
+  AND (@search::text = '' OR message ILIKE '%' || @search::text || '%'
+       OR coalesce(attributes::text, '') ILIKE '%' || @search::text || '%'
+       OR coalesce(request_id, '') ILIKE @search::text || '%')
 ORDER BY id DESC
 LIMIT @row_limit;
 

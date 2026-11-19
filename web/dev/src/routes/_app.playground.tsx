@@ -3,6 +3,7 @@ import { Link, createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { api, fetchMe, getCachedMe } from '../api/client'
 import type { PlaygroundInfo, PlaygroundQueueResult } from '../api/types'
+import { Select } from '../components/inputs'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -349,13 +350,11 @@ function PlaygroundPage() {
         <div className="filters" style={{ marginBottom: 0 }}>
           <label className="field">
             <span className="field-label">Queue</span>
-            <select className="select" value={queue} onChange={(event) => setQueue(event.target.value)}>
-              {(info.data?.queues ?? ['default', 'critical', 'heavy']).map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+            <Select
+              value={queue}
+              onChange={setQueue}
+              options={(info.data?.queues ?? ['default', 'critical', 'heavy']).map((option) => ({ value: option, label: option }))}
+            />
           </label>
           <label className="field">
             <span className="field-label">Count (1–10)</span>

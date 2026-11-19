@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
@@ -18,6 +19,10 @@ type InsertUpdateRequest struct {
 	IsActive  *bool   `json:"is_active"`
 	BranchID  *int64  `json:"branch_id" validate:"omitempty,gt=0"`
 	Roles     []int64 `json:"roles" validate:"omitempty,dive,gt=0"`
+	// UpdatedAt (update only, optional) is the updated_at the client last
+	// read; when sent, a concurrent change answers 409 instead of being
+	// silently overwritten.
+	UpdatedAt *time.Time `json:"updated_at"`
 }
 
 // InternalInsertRequest extends creation with an explicit tenant.
@@ -121,5 +126,23 @@ func NewResponse(user User, roles []authz.RoleRef, photo *string) Response {
 		Roles:           slim,
 		CreatedAt:       user.CreatedAt,
 		UpdatedAt:       user.UpdatedAt,
+	}
+}
+func (req InsertUpdateRequest) toCreateInput() CreateParams {
+	var password string
+	if req.Password != nil {
+		password = *req.Password
+	}
+	return CreateParams{
+		BranchID:  req.BranchID,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		UserName:  req.UserName,
+		Name:      strings.TrimSpace(req.Name),
+		Email:     strings.TrimSpace(req.Email),
+		Password:  password,
+		Phone:     req.Phone,
+		IsActive:  req.IsActive,
+		Roles:     req.Roles,
 	}
 }

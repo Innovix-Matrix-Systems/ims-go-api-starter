@@ -23,6 +23,10 @@ type RoleRepository interface {
 	Update(ctx context.Context, id int64, name string, description *string, actorID *int64) (*Role, error)
 	SetHidden(ctx context.Context, id int64, hidden bool) error
 	Delete(ctx context.Context, id int64) error
+	// UpdateInTenant / DeleteInTenant only touch non-system roles owned by
+	// tenantID (isolation enforced in SQL).
+	UpdateInTenant(ctx context.Context, tenantID, id int64, name string, description *string, actorID *int64) (*Role, error)
+	DeleteInTenant(ctx context.Context, tenantID, id int64) error
 	ExistsForTenant(ctx context.Context, tenantID, id int64) (bool, error)
 	ClearPermissions(ctx context.Context, roleID int64) error
 	AssignPermissions(ctx context.Context, roleID int64, permissionIDs []int64) error
@@ -184,6 +188,35 @@ func (r *roleRepository) Delete(ctx context.Context, id int64) error {
 	affected, err := r.queries.DeleteRole(ctx, id)
 	if err != nil {
 		return database.MapError("access.delete_role", err)
+	}
+	if affected == 0 {
+		return apperr.Newf(apperr.ResourceNotFound, "Role with ID '%d' was not found.", id)
+	}
+	return nil
+}
+
+func (r *roleRepository) UpdateInTenant(ctx context.Context, tenantID, id int64, name string, description *string, actorID *int64) (*Role, error) {
+	row, err := r.queries.UpdateTenantRole(ctx, dbgen.UpdateTenantRoleParams{
+		ID:          id,
+		TenantID:    tenantID,
+		Name:        name,
+		Description: description,
+		UpdatedBy:   actorID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, apperr.Newf(apperr.ResourceNotFound, "Role with ID '%d' was not found.", id)
+		}
+		return nil, database.MapError("access.update_tenant_role", err)
+	}
+	role := mapRole(row)
+	return &role, nil
+}
+
+func (r *roleRepository) DeleteInTenant(ctx context.Context, tenantID, id int64) error {
+	affected, err := r.queries.DeleteTenantRole(ctx, dbgen.DeleteTenantRoleParams{ID: id, TenantID: tenantID})
+	if err != nil {
+		return database.MapError("access.delete_tenant_role", err)
 	}
 	if affected == 0 {
 		return apperr.Newf(apperr.ResourceNotFound, "Role with ID '%d' was not found.", id)

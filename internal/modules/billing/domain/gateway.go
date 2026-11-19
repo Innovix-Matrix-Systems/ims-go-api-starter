@@ -22,9 +22,13 @@ type VerificationResult struct {
 	RawResponse   map[string]any
 }
 
-// CallbackResult is the driver outcome of a gateway callback.
+// CallbackResult is the driver outcome of a gateway callback, always
+// confirmed with the gateway (never trusted from the callback body).
+// IsSuccessful and IsFailed are both false when the outcome is not final yet;
+// the payment then stays pending.
 type CallbackResult struct {
 	IsSuccessful  bool
+	IsFailed      bool
 	PaymentRef    *string
 	GatewayRef    *string
 	GatewayStatus *string

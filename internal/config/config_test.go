@@ -34,7 +34,7 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadEnvFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
-	content := "APP_NAME=test-app\nAPP_ENV=testing\nHTTP_READ_TIMEOUT=20\nRATE_LIMIT_PER_MINUTE=50\n"
+	content := "APP_NAME=test-app\nAPP_ENV=Staging\nHTTP_READ_TIMEOUT=20\nRATE_LIMIT_PER_MINUTE=50\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write env file: %v", err)
 	}
@@ -52,8 +52,8 @@ func TestLoadEnvFile(t *testing.T) {
 	if cfg.App.Name != "test-app" {
 		t.Errorf("App.Name = %q, want test-app", cfg.App.Name)
 	}
-	if cfg.App.Env != "testing" {
-		t.Errorf("App.Env = %q, want testing", cfg.App.Env)
+	if cfg.App.Env != EnvStaging {
+		t.Errorf("App.Env = %q, want %q (normalised: trimmed + lowercased)", cfg.App.Env, EnvStaging)
 	}
 	if cfg.HTTP.ReadTimeout != 20*time.Second {
 		t.Errorf("HTTP.ReadTimeout = %v, want 20s (integer seconds fallback)", cfg.HTTP.ReadTimeout)
@@ -63,6 +63,32 @@ func TestLoadEnvFile(t *testing.T) {
 	}
 	if cfg.App.EnvFile != path {
 		t.Errorf("App.EnvFile = %q, want %q", cfg.App.EnvFile, path)
+	}
+}
+
+func TestLoadRejectsUnknownEnv(t *testing.T) {
+	t.Setenv("APP_ENV_FILE", "")
+	t.Setenv("APP_ENV", "prodution") // typo — must fail, not silently disable hardening
+	if _, err := Load(""); err == nil {
+		t.Fatal("Load() with unknown APP_ENV = nil error, want error")
+	}
+}
+
+func TestEnvNormalisation(t *testing.T) {
+	for raw, want := range map[string]string{
+		"  production ": "production",
+		"PRODUCTION":    "production",
+		" Dev ":         EnvDev,
+	} {
+		t.Setenv("APP_ENV_FILE", "")
+		t.Setenv("APP_ENV", raw)
+		cfg, err := Load("")
+		if err != nil {
+			t.Fatalf("Load(%q) error = %v", raw, err)
+		}
+		if cfg.App.Env != want {
+			t.Errorf("App.Env for %q = %q, want %q", raw, cfg.App.Env, want)
+		}
 	}
 }
 

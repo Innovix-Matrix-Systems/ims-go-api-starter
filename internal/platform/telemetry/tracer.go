@@ -86,7 +86,7 @@ func (t *Tracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQ
 	t.collector.Query(QueryEntry{
 		RequestID:  httpx.RequestIDFromContext(ctx),
 		SQL:        start.sql,
-		Args:       t.collector.redactor.Args(start.args),
+		Args:       t.collector.redactor.Args(start.sql, start.args),
 		DurationMS: float64(time.Since(start.at).Microseconds()) / 1000.0,
 		RowCount:   data.CommandTag.RowsAffected(),
 		Error:      errorText,

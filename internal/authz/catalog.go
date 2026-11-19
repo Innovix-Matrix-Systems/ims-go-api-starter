@@ -32,20 +32,22 @@ const (
 	PermRoleInternalUpdate = "role.internal.update"
 	PermRoleDelete         = "role.delete"
 
-	PermUserViewAll        = "user.view.all"
-	PermUserView           = "user.view"
-	PermUserCreate         = "user.create"
-	PermUserInternalCreate = "user.internal.create"
-	PermUserUpdate         = "user.update"
-	PermUserInternalUpdate = "user.internal.update"
-	PermUserDelete         = "user.delete"
-	PermUserRoleAssign     = "user.role.assign"
-	PermUserTenantSwitch   = "user.tenant.switch"
-	PermUserBranchSwitch   = "user.branch.switch"
-	PermUserImport         = "user.import"
-	PermUserExport         = "user.export"
-	PermUserInternalImport = "user.internal.import"
-	PermUserInternalExport = "user.internal.export"
+	PermUserViewAll            = "user.view.all"
+	PermUserView               = "user.view"
+	PermUserCreate             = "user.create"
+	PermUserInternalCreate     = "user.internal.create"
+	PermUserUpdate             = "user.update"
+	PermUserInternalUpdate     = "user.internal.update"
+	PermUserDelete             = "user.delete"
+	PermUserInternalDelete     = "user.internal.delete"
+	PermUserRoleAssign         = "user.role.assign"
+	PermUserInternalRoleAssign = "user.internal.role.assign"
+	PermUserTenantSwitch       = "user.tenant.switch"
+	PermUserBranchSwitch       = "user.branch.switch"
+	PermUserImport             = "user.import"
+	PermUserExport             = "user.export"
+	PermUserInternalImport     = "user.internal.import"
+	PermUserInternalExport     = "user.internal.export"
 
 	PermFileView    = "file.view"
 	PermFileViewAll = "file.view.all"
@@ -56,7 +58,9 @@ const (
 	PermNotificationViewAll = "notification.view.all"
 	PermNotificationCreate  = "notification.create"
 	PermNotificationUpdate  = "notification.update"
-	PermNotificationDelete  = "notification.delete"
+
+	PermActivityView       = "activity.view"
+	PermNotificationDelete = "notification.delete"
 
 	PermDataProcessingViewAll = "data_processing_job.view.all"
 	PermDataProcessingView    = "data_processing_job.view"
@@ -96,9 +100,9 @@ var Catalog = []Permission{
 	{Name: PermRoleView, Group: "role", Description: "Can view role details"},
 	{Name: PermRoleViewAll, Group: "role", Description: "Can view all roles"},
 	{Name: PermRoleCreate, Group: "role", Description: "Can create new roles"},
-	{Name: PermRoleInternalCreate, Group: "role", Description: "Can create new internal roles"},
+	{Name: PermRoleInternalCreate, Group: "role", IsSystem: true, Description: "Can create new internal roles"},
 	{Name: PermRoleUpdate, Group: "role", Description: "Can modify existing roles"},
-	{Name: PermRoleInternalUpdate, Group: "role", Description: "Can modify existing internal roles"},
+	{Name: PermRoleInternalUpdate, Group: "role", IsSystem: true, Description: "Can modify existing internal roles"},
 	{Name: PermRoleDelete, Group: "role", Description: "Can delete roles"},
 
 	// ── tenant ────────────────────────────────────────────
@@ -123,7 +127,9 @@ var Catalog = []Permission{
 	{Name: PermUserUpdate, Group: "user", Description: "Can modify existing users"},
 	{Name: PermUserInternalUpdate, Group: "user", IsSystem: true, Description: "Can modify existing users"},
 	{Name: PermUserDelete, Group: "user", Description: "Can delete users"},
+	{Name: PermUserInternalDelete, Group: "user", IsSystem: true, Description: "Can delete users across tenants"},
 	{Name: PermUserRoleAssign, Group: "user", Description: "Can Assign role to users"},
+	{Name: PermUserInternalRoleAssign, Group: "user", IsSystem: true, Description: "Can assign roles to users across tenants"},
 	{Name: "user.export", Group: "user", Description: "Can export all users"},
 	{Name: "user.import", Group: "user", Description: "Can import users"},
 	{Name: PermUserInternalExport, Group: "user", IsSystem: true, Description: "Can export internal users"},
@@ -133,9 +139,9 @@ var Catalog = []Permission{
 
 	// ── file ──────────────────────────────────────────────
 	{Name: PermFileView, Group: "file", Description: "Can view file details"},
-	{Name: PermFileViewAll, Group: "file", Description: "Can view all files"},
+	{Name: PermFileViewAll, Group: "file", IsSystem: true, Description: "Can view all files"},
 	{Name: PermFileCreate, Group: "file", Description: "Can upload files"},
-	{Name: PermFileDelete, Group: "file", Description: "Can delete files"},
+	{Name: PermFileDelete, Group: "file", IsSystem: true, Description: "Can delete files"},
 
 	// ── data_processing_job ───────────────────────────────
 	{Name: PermDataProcessingViewAll, Group: "data_processing_job", Description: "Can view all data processing jobs"},
@@ -164,11 +170,13 @@ var Catalog = []Permission{
 	{Name: "payment_approval.review", Group: "payment_approval", IsSystem: true, Description: "Can approve or reject manual payment requests"},
 
 	// ── notification ──────────────────────────────────────
-	{Name: PermNotificationView, Group: "notification", Description: "Can view notification details"},
-	{Name: PermNotificationViewAll, Group: "notification", Description: "Can view all notifications"},
-	{Name: PermNotificationCreate, Group: "notification", Description: "Can create new notifications"},
-	{Name: PermNotificationUpdate, Group: "notification", Description: "Can modify existing notifications"},
-	{Name: PermNotificationDelete, Group: "notification", Description: "Can delete notifications"},
+	{Name: PermNotificationView, Group: "notification", IsSystem: true, Description: "Can view notification details"},
+	{Name: PermNotificationViewAll, Group: "notification", IsSystem: true, Description: "Can view all notifications"},
+	{Name: PermNotificationCreate, Group: "notification", IsSystem: true, Description: "Can create new notifications"},
+	{Name: PermNotificationUpdate, Group: "notification", IsSystem: true, Description: "Can modify existing notifications"},
+
+	{Name: PermActivityView, Group: "activity", Description: "Can view the activity log"},
+	{Name: PermNotificationDelete, Group: "notification", IsSystem: true, Description: "Can delete notifications"},
 
 	// ── setting ───────────────────────────────────────────
 	{Name: PermSettingUpdate, Group: "setting", Description: "Can change tenant setting values"},
@@ -190,6 +198,20 @@ var Catalog = []Permission{
 	{Name: PermDevManage, Group: "dev", IsSystem: true, Description: "Can execute developer dashboard actions"},
 }
 
+// DeveloperPermissions is the hidden Developer role: developer-dashboard
+// access only (dev.view, dev.manage). It deliberately holds no tenant or
+// system data-administration permissions — a leaked developer token must not
+// be a platform super-user (review H13).
+func DeveloperPermissions() []Permission {
+	out := make([]Permission, 0, 2)
+	for _, permission := range Catalog {
+		if permission.Group == "dev" {
+			out = append(out, permission)
+		}
+	}
+	return out
+}
+
 // AdminTenantPermissions is the tenant Admin role composition, matching
 // RoleService::createDefaultRolesForTenant: role + branch + user permissions
 // minus the internal role-management permissions; system permissions are never
@@ -205,7 +227,7 @@ func AdminTenantPermissions() []Permission {
 			continue
 		}
 		switch permission.Group {
-		case "role", "branch", "user", "setting":
+		case "role", "branch", "user", "setting", "activity":
 			if _, skip := exclude[permission.Name]; skip {
 				continue
 			}

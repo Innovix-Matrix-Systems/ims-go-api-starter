@@ -24,8 +24,9 @@ func newMemoryStore(t *testing.T) cache.Store {
 type fakeRepo struct {
 	createWithTargets func(ctx context.Context, input CreateInput) (*Notification, []Target, error)
 	get               func(ctx context.Context, id int64) (*Notification, error)
-	updateWithTargets func(ctx context.Context, id int64, input UpdateInput) (*Notification, []Target, error)
-	deleteFn          func(ctx context.Context, id int64) error
+	getInTenant       func(ctx context.Context, id int64, allTenants bool, tenantID int64) (*Notification, error)
+	updateWithTargets func(ctx context.Context, id int64, allTenants bool, tenantID int64, input UpdateInput) (*Notification, []Target, error)
+	deleteFn          func(ctx context.Context, id int64, allTenants bool, tenantID int64) error
 	listFn            func(ctx context.Context, filter ListFilter) ([]Notification, error)
 	countFn           func(ctx context.Context, filter ListFilter) (int64, error)
 	listTargets       func(ctx context.Context, notificationID int64) ([]Target, error)
@@ -53,13 +54,16 @@ func (f *fakeRepo) Default() {
 	if f.get == nil {
 		f.get = func(context.Context, int64) (*Notification, error) { return nil, errNotStubbed }
 	}
+	if f.getInTenant == nil {
+		f.getInTenant = func(context.Context, int64, bool, int64) (*Notification, error) { return nil, errNotStubbed }
+	}
 	if f.updateWithTargets == nil {
-		f.updateWithTargets = func(context.Context, int64, UpdateInput) (*Notification, []Target, error) {
+		f.updateWithTargets = func(context.Context, int64, bool, int64, UpdateInput) (*Notification, []Target, error) {
 			return nil, nil, errNotStubbed
 		}
 	}
 	if f.deleteFn == nil {
-		f.deleteFn = func(context.Context, int64) error { return errNotStubbed }
+		f.deleteFn = func(context.Context, int64, bool, int64) error { return errNotStubbed }
 	}
 	if f.listFn == nil {
 		f.listFn = func(context.Context, ListFilter) ([]Notification, error) { return nil, errNotStubbed }
@@ -119,11 +123,17 @@ func (f *fakeRepo) Get(ctx context.Context, id int64) (*Notification, error) {
 	return f.get(ctx, id)
 }
 
-func (f *fakeRepo) UpdateWithTargets(ctx context.Context, id int64, input UpdateInput) (*Notification, []Target, error) {
-	return f.updateWithTargets(ctx, id, input)
+func (f *fakeRepo) GetInTenant(ctx context.Context, id int64, allTenants bool, tenantID int64) (*Notification, error) {
+	return f.getInTenant(ctx, id, allTenants, tenantID)
 }
 
-func (f *fakeRepo) Delete(ctx context.Context, id int64) error { return f.deleteFn(ctx, id) }
+func (f *fakeRepo) UpdateWithTargets(ctx context.Context, id int64, allTenants bool, tenantID int64, input UpdateInput) (*Notification, []Target, error) {
+	return f.updateWithTargets(ctx, id, allTenants, tenantID, input)
+}
+
+func (f *fakeRepo) Delete(ctx context.Context, id int64, allTenants bool, tenantID int64) error {
+	return f.deleteFn(ctx, id, allTenants, tenantID)
+}
 
 func (f *fakeRepo) List(ctx context.Context, filter ListFilter) ([]Notification, error) {
 	return f.listFn(ctx, filter)

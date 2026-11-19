@@ -33,17 +33,25 @@ func (q *Queries) BranchExistsInTenant(ctx context.Context, arg BranchExistsInTe
 
 const countNotifications = `-- name: CountNotifications :one
 SELECT count(*) FROM notifications
-WHERE ($1::text IS NULL OR title ILIKE '%' || $1 || '%')
-  AND ($2::text IS NULL OR priority = $2::text)
+WHERE ($1::boolean OR tenant_id = $2)
+  AND ($3::text IS NULL OR title ILIKE '%' || $3 || '%')
+  AND ($4::text IS NULL OR priority = $4::text)
 `
 
 type CountNotificationsParams struct {
-	Search   string  `json:"search"`
-	Priority *string `json:"priority"`
+	AllTenants bool    `json:"all_tenants"`
+	TenantID   *int64  `json:"tenant_id"`
+	Search     string  `json:"search"`
+	Priority   *string `json:"priority"`
 }
 
 func (q *Queries) CountNotifications(ctx context.Context, arg CountNotificationsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countNotifications, arg.Search, arg.Priority)
+	row := q.db.QueryRow(ctx, countNotifications,
+		arg.AllTenants,
+		arg.TenantID,
+		arg.Search,
+		arg.Priority,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -161,12 +169,20 @@ func (q *Queries) CreateNotificationTarget(ctx context.Context, arg CreateNotifi
 	return i, err
 }
 
-const deleteNotification = `-- name: DeleteNotification :execrows
-DELETE FROM notifications WHERE id = $1
+const deleteNotificationInTenant = `-- name: DeleteNotificationInTenant :execrows
+DELETE FROM notifications
+WHERE id = $1
+  AND ($2::boolean OR tenant_id = $3)
 `
 
-func (q *Queries) DeleteNotification(ctx context.Context, id int64) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteNotification, id)
+type DeleteNotificationInTenantParams struct {
+	ID         int64  `json:"id"`
+	AllTenants bool   `json:"all_tenants"`
+	TenantID   *int64 `json:"tenant_id"`
+}
+
+func (q *Queries) DeleteNotificationInTenant(ctx context.Context, arg DeleteNotificationInTenantParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteNotificationInTenant, arg.ID, arg.AllTenants, arg.TenantID)
 	if err != nil {
 		return 0, err
 	}
@@ -191,6 +207,43 @@ SELECT id, tenant_id, event_type, priority, title, body, data, group_key, create
 
 func (q *Queries) GetNotification(ctx context.Context, id int64) (Notification, error) {
 	row := q.db.QueryRow(ctx, getNotification, id)
+	var i Notification
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.EventType,
+		&i.Priority,
+		&i.Title,
+		&i.Body,
+		&i.Data,
+		&i.GroupKey,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getNotificationInTenant = `-- name: GetNotificationInTenant :one
+
+SELECT id, tenant_id, event_type, priority, title, body, data, group_key, created_by, updated_by, expires_at, created_at, updated_at FROM notifications
+WHERE id = $1
+  AND ($2::boolean OR tenant_id = $3)
+`
+
+type GetNotificationInTenantParams struct {
+	ID         int64  `json:"id"`
+	AllTenants bool   `json:"all_tenants"`
+	TenantID   *int64 `json:"tenant_id"`
+}
+
+// Scoped admin reads (fail-closed): all_tenants is only true for internal
+// scopes; a tenant-bound caller matches their tenant only. Global
+// notifications (tenant_id IS NULL) are invisible to tenant-bound callers.
+func (q *Queries) GetNotificationInTenant(ctx context.Context, arg GetNotificationInTenantParams) (Notification, error) {
+	row := q.db.QueryRow(ctx, getNotificationInTenant, arg.ID, arg.AllTenants, arg.TenantID)
 	var i Notification
 	err := row.Scan(
 		&i.ID,
@@ -546,20 +599,23 @@ func (q *Queries) ListNotificationTargets(ctx context.Context, notificationID in
 
 const listNotifications = `-- name: ListNotifications :many
 SELECT id, tenant_id, event_type, priority, title, body, data, group_key, created_by, updated_by, expires_at, created_at, updated_at FROM notifications
-WHERE ($1::text IS NULL OR title ILIKE '%' || $1 || '%')
-  AND ($2::text IS NULL OR priority = $2::text)
+WHERE ($1::boolean OR tenant_id = $2)
+  AND ($3::text IS NULL OR title ILIKE '%' || $3 || '%')
+  AND ($4::text IS NULL OR priority = $4::text)
 ORDER BY
-  CASE WHEN $3::text = 'created_at' AND $4::text = 'asc' THEN created_at END ASC,
-  CASE WHEN $3::text = 'created_at' AND $4::text = 'desc' THEN created_at END DESC,
-  CASE WHEN $3::text = 'title' AND $4::text = 'asc' THEN lower(title) END ASC,
-  CASE WHEN $3::text = 'title' AND $4::text = 'desc' THEN lower(title) END DESC,
-  CASE WHEN $3::text = 'priority' AND $4::text = 'asc' THEN priority END ASC,
-  CASE WHEN $3::text = 'priority' AND $4::text = 'desc' THEN priority END DESC,
+  CASE WHEN $5::text = 'created_at' AND $6::text = 'asc' THEN created_at END ASC,
+  CASE WHEN $5::text = 'created_at' AND $6::text = 'desc' THEN created_at END DESC,
+  CASE WHEN $5::text = 'title' AND $6::text = 'asc' THEN lower(title) END ASC,
+  CASE WHEN $5::text = 'title' AND $6::text = 'desc' THEN lower(title) END DESC,
+  CASE WHEN $5::text = 'priority' AND $6::text = 'asc' THEN priority END ASC,
+  CASE WHEN $5::text = 'priority' AND $6::text = 'desc' THEN priority END DESC,
   id DESC
-LIMIT $6 OFFSET $5
+LIMIT $8 OFFSET $7
 `
 
 type ListNotificationsParams struct {
+	AllTenants bool    `json:"all_tenants"`
+	TenantID   *int64  `json:"tenant_id"`
 	Search     string  `json:"search"`
 	Priority   *string `json:"priority"`
 	OrderBy    string  `json:"order_by"`
@@ -570,6 +626,8 @@ type ListNotificationsParams struct {
 
 func (q *Queries) ListNotifications(ctx context.Context, arg ListNotificationsParams) ([]Notification, error) {
 	rows, err := q.db.Query(ctx, listNotifications,
+		arg.AllTenants,
+		arg.TenantID,
 		arg.Search,
 		arg.Priority,
 		arg.OrderBy,
@@ -640,11 +698,20 @@ func (q *Queries) ListUnreadDeliveryUserIDs(ctx context.Context, notificationID 
 }
 
 const listUserIDsByBranch = `-- name: ListUserIDsByBranch :many
-SELECT id FROM users WHERE deleted_at IS NULL AND branch_id = $1
+SELECT id FROM users
+WHERE deleted_at IS NULL
+  AND branch_id = $1
+  AND ($2::boolean OR tenant_id = $3)
 `
 
-func (q *Queries) ListUserIDsByBranch(ctx context.Context, branchID *int64) ([]int64, error) {
-	rows, err := q.db.Query(ctx, listUserIDsByBranch, branchID)
+type ListUserIDsByBranchParams struct {
+	BranchID   *int64 `json:"branch_id"`
+	AllTenants bool   `json:"all_tenants"`
+	TenantID   *int64 `json:"tenant_id"`
+}
+
+func (q *Queries) ListUserIDsByBranch(ctx context.Context, arg ListUserIDsByBranchParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listUserIDsByBranch, arg.BranchID, arg.AllTenants, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -693,10 +760,17 @@ FROM users u
 JOIN model_has_roles mhr ON mhr.model_type = 'user' AND mhr.model_id = u.id
 WHERE u.deleted_at IS NULL
   AND mhr.role_id = ANY($1::bigint[])
+  AND ($2::boolean OR u.tenant_id = $3)
 `
 
-func (q *Queries) ListUserIDsByRoleIDs(ctx context.Context, roleIds []int64) ([]int64, error) {
-	rows, err := q.db.Query(ctx, listUserIDsByRoleIDs, roleIds)
+type ListUserIDsByRoleIDsParams struct {
+	RoleIds    []int64 `json:"role_ids"`
+	AllTenants bool    `json:"all_tenants"`
+	TenantID   *int64  `json:"tenant_id"`
+}
+
+func (q *Queries) ListUserIDsByRoleIDs(ctx context.Context, arg ListUserIDsByRoleIDsParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, listUserIDsByRoleIDs, arg.RoleIds, arg.AllTenants, arg.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -860,7 +934,22 @@ func (q *Queries) NotificationVisibleToUser(ctx context.Context, arg Notificatio
 	return visible, err
 }
 
-const updateNotification = `-- name: UpdateNotification :one
+const purgeExpiredNotifications = `-- name: PurgeExpiredNotifications :execrows
+DELETE FROM notifications
+WHERE expires_at IS NOT NULL AND expires_at < now() - interval '7 days'
+`
+
+// Retention: notifications expired for more than a week are invisible in
+// every feed query already; their targets/reads/deliveries cascade.
+func (q *Queries) PurgeExpiredNotifications(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, purgeExpiredNotifications)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateNotificationInTenant = `-- name: UpdateNotificationInTenant :one
 UPDATE notifications
 SET event_type = $1,
     priority   = $2,
@@ -872,23 +961,26 @@ SET event_type = $1,
     updated_by = $8,
     updated_at = now()
 WHERE id = $9
+  AND ($10::boolean OR tenant_id = $11)
 RETURNING id, tenant_id, event_type, priority, title, body, data, group_key, created_by, updated_by, expires_at, created_at, updated_at
 `
 
-type UpdateNotificationParams struct {
-	EventType string             `json:"event_type"`
-	Priority  string             `json:"priority"`
-	Title     string             `json:"title"`
-	Body      *string            `json:"body"`
-	Data      []byte             `json:"data"`
-	GroupKey  *string            `json:"group_key"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-	UpdatedBy *int64             `json:"updated_by"`
-	ID        int64              `json:"id"`
+type UpdateNotificationInTenantParams struct {
+	EventType  string             `json:"event_type"`
+	Priority   string             `json:"priority"`
+	Title      string             `json:"title"`
+	Body       *string            `json:"body"`
+	Data       []byte             `json:"data"`
+	GroupKey   *string            `json:"group_key"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	UpdatedBy  *int64             `json:"updated_by"`
+	ID         int64              `json:"id"`
+	AllTenants bool               `json:"all_tenants"`
+	TenantID   *int64             `json:"tenant_id"`
 }
 
-func (q *Queries) UpdateNotification(ctx context.Context, arg UpdateNotificationParams) (Notification, error) {
-	row := q.db.QueryRow(ctx, updateNotification,
+func (q *Queries) UpdateNotificationInTenant(ctx context.Context, arg UpdateNotificationInTenantParams) (Notification, error) {
+	row := q.db.QueryRow(ctx, updateNotificationInTenant,
 		arg.EventType,
 		arg.Priority,
 		arg.Title,
@@ -898,6 +990,8 @@ func (q *Queries) UpdateNotification(ctx context.Context, arg UpdateNotification
 		arg.ExpiresAt,
 		arg.UpdatedBy,
 		arg.ID,
+		arg.AllTenants,
+		arg.TenantID,
 	)
 	var i Notification
 	err := row.Scan(

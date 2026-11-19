@@ -106,3 +106,17 @@ export function shortRequestID(value: string): string {
   if (!value) return '—'
   return value.length > 12 ? value.slice(0, 12) : value
 }
+
+/** "in 3 days", "in 2 years" or "5 days ago" for dates either side of now. */
+export function relativeDate(value: string | number): string {
+  const delta = new Date(value).getTime() - Date.now()
+  if (Number.isNaN(delta)) return '—'
+  const future = delta > 0
+  const days = Math.abs(delta) / 86_400_000
+  let text: string
+  if (days < 1) text = `${Math.max(1, Math.round(Math.abs(delta) / 3_600_000))}h`
+  else if (days < 60) text = `${Math.round(days)} day${Math.round(days) === 1 ? '' : 's'}`
+  else if (days < 730) text = `${Math.round(days / 30)} months`
+  else text = `${Math.round(days / 365)} years`
+  return future ? `in ${text}` : `${text} ago`
+}

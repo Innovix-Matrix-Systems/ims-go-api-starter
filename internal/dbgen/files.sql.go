@@ -13,17 +13,29 @@ import (
 
 const countFiles = `-- name: CountFiles :one
 SELECT count(*) FROM files
-WHERE ($1::text IS NULL OR type = $1::text)
-  AND ($2::boolean IS NULL OR (owner_id IS NOT NULL) = $2::boolean)
+WHERE (
+      $1::boolean
+      OR tenant_id = $2
+      OR (tenant_id IS NULL AND $2::bigint = 0)
+  )
+  AND ($3::text IS NULL OR type = $3::text)
+  AND ($4::boolean IS NULL OR (owner_id IS NOT NULL) = $4::boolean)
 `
 
 type CountFilesParams struct {
-	Type     *string `json:"type"`
-	Attached *bool   `json:"attached"`
+	AllTenants bool    `json:"all_tenants"`
+	TenantID   *int64  `json:"tenant_id"`
+	Type       *string `json:"type"`
+	Attached   *bool   `json:"attached"`
 }
 
 func (q *Queries) CountFiles(ctx context.Context, arg CountFilesParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countFiles, arg.Type, arg.Attached)
+	row := q.db.QueryRow(ctx, countFiles,
+		arg.AllTenants,
+		arg.TenantID,
+		arg.Type,
+		arg.Attached,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -32,13 +44,13 @@ func (q *Queries) CountFiles(ctx context.Context, arg CountFilesParams) (int64, 
 const createFile = `-- name: CreateFile :one
 INSERT INTO files (
     uuid, name, file_name, disk, path, mime_type, size, type,
-    owner_type, owner_id, collection, created_by, updated_by
+    owner_type, owner_id, collection, tenant_id, created_by, updated_by
 )
 VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8,
-    $9, $10, $11, $12, $13
+    $9, $10, $11, $12, $13, $14
 )
-RETURNING id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at
+RETURNING id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at, tenant_id
 `
 
 type CreateFileParams struct {
@@ -53,6 +65,7 @@ type CreateFileParams struct {
 	OwnerType  *string     `json:"owner_type"`
 	OwnerID    *int64      `json:"owner_id"`
 	Collection *string     `json:"collection"`
+	TenantID   *int64      `json:"tenant_id"`
 	CreatedBy  *int64      `json:"created_by"`
 	UpdatedBy  *int64      `json:"updated_by"`
 }
@@ -70,6 +83,7 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, e
 		arg.OwnerType,
 		arg.OwnerID,
 		arg.Collection,
+		arg.TenantID,
 		arg.CreatedBy,
 		arg.UpdatedBy,
 	)
@@ -91,16 +105,29 @@ func (q *Queries) CreateFile(ctx context.Context, arg CreateFileParams) (File, e
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TenantID,
 	)
 	return i, err
 }
 
-const deleteFile = `-- name: DeleteFile :execrows
-DELETE FROM files WHERE id = $1
+const deleteFileInTenant = `-- name: DeleteFileInTenant :execrows
+DELETE FROM files
+WHERE id = $1
+  AND (
+      $2::boolean
+      OR tenant_id = $3
+      OR (tenant_id IS NULL AND $3::bigint = 0)
+  )
 `
 
-func (q *Queries) DeleteFile(ctx context.Context, id int64) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteFile, id)
+type DeleteFileInTenantParams struct {
+	ID         int64  `json:"id"`
+	AllTenants bool   `json:"all_tenants"`
+	TenantID   *int64 `json:"tenant_id"`
+}
+
+func (q *Queries) DeleteFileInTenant(ctx context.Context, arg DeleteFileInTenantParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFileInTenant, arg.ID, arg.AllTenants, arg.TenantID)
 	if err != nil {
 		return 0, err
 	}
@@ -112,7 +139,7 @@ DELETE FROM files
 WHERE owner_type = $1::text
   AND owner_id = $2::bigint
   AND collection = $3::text
-RETURNING id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at
+RETURNING id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at, tenant_id
 `
 
 type DeleteFilesByOwnerParams struct {
@@ -147,6 +174,7 @@ func (q *Queries) DeleteFilesByOwner(ctx context.Context, arg DeleteFilesByOwner
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TenantID,
 		); err != nil {
 			return nil, err
 		}
@@ -159,7 +187,7 @@ func (q *Queries) DeleteFilesByOwner(ctx context.Context, arg DeleteFilesByOwner
 }
 
 const getFile = `-- name: GetFile :one
-SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at FROM files WHERE id = $1
+SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at, tenant_id FROM files WHERE id = $1
 `
 
 func (q *Queries) GetFile(ctx context.Context, id int64) (File, error) {
@@ -182,12 +210,13 @@ func (q *Queries) GetFile(ctx context.Context, id int64) (File, error) {
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TenantID,
 	)
 	return i, err
 }
 
 const getFileByOwner = `-- name: GetFileByOwner :one
-SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at FROM files
+SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at, tenant_id FROM files
 WHERE owner_type = $1::text
   AND owner_id = $2::bigint
   AND collection = $3::text
@@ -221,19 +250,73 @@ func (q *Queries) GetFileByOwner(ctx context.Context, arg GetFileByOwnerParams) 
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.TenantID,
+	)
+	return i, err
+}
+
+const getFileInTenant = `-- name: GetFileInTenant :one
+
+SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at, tenant_id FROM files
+WHERE id = $1
+  AND (
+      $2::boolean
+      OR tenant_id = $3
+      OR (tenant_id IS NULL AND $3::bigint = 0)
+  )
+`
+
+type GetFileInTenantParams struct {
+	ID         int64  `json:"id"`
+	AllTenants bool   `json:"all_tenants"`
+	TenantID   *int64 `json:"tenant_id"`
+}
+
+// Scoped reads: all_tenants is only true for system operators (file.view.all
+// is a system permission). A tenant-bound caller matches their tenant only;
+// a tenantless caller matches global (tenant_id IS NULL) files only. Rows
+// with no tenant are never visible to tenant-bound callers.
+func (q *Queries) GetFileInTenant(ctx context.Context, arg GetFileInTenantParams) (File, error) {
+	row := q.db.QueryRow(ctx, getFileInTenant, arg.ID, arg.AllTenants, arg.TenantID)
+	var i File
+	err := row.Scan(
+		&i.ID,
+		&i.Uuid,
+		&i.Name,
+		&i.FileName,
+		&i.Disk,
+		&i.Path,
+		&i.MimeType,
+		&i.Size,
+		&i.Type,
+		&i.OwnerType,
+		&i.OwnerID,
+		&i.Collection,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.TenantID,
 	)
 	return i, err
 }
 
 const listFiles = `-- name: ListFiles :many
-SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at FROM files
-WHERE ($1::text IS NULL OR type = $1::text)
-  AND ($2::boolean IS NULL OR (owner_id IS NOT NULL) = $2::boolean)
+SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at, tenant_id FROM files
+WHERE (
+      $1::boolean
+      OR tenant_id = $2
+      OR (tenant_id IS NULL AND $2::bigint = 0)
+  )
+  AND ($3::text IS NULL OR type = $3::text)
+  AND ($4::boolean IS NULL OR (owner_id IS NOT NULL) = $4::boolean)
 ORDER BY created_at DESC, id DESC
-LIMIT $4 OFFSET $3
+LIMIT $6 OFFSET $5
 `
 
 type ListFilesParams struct {
+	AllTenants bool    `json:"all_tenants"`
+	TenantID   *int64  `json:"tenant_id"`
 	Type       *string `json:"type"`
 	Attached   *bool   `json:"attached"`
 	PageOffset int32   `json:"page_offset"`
@@ -242,6 +325,8 @@ type ListFilesParams struct {
 
 func (q *Queries) ListFiles(ctx context.Context, arg ListFilesParams) ([]File, error) {
 	rows, err := q.db.Query(ctx, listFiles,
+		arg.AllTenants,
+		arg.TenantID,
 		arg.Type,
 		arg.Attached,
 		arg.PageOffset,
@@ -271,6 +356,7 @@ func (q *Queries) ListFiles(ctx context.Context, arg ListFilesParams) ([]File, e
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TenantID,
 		); err != nil {
 			return nil, err
 		}
@@ -283,7 +369,7 @@ func (q *Queries) ListFiles(ctx context.Context, arg ListFilesParams) ([]File, e
 }
 
 const listProfileFilesByUserIDs = `-- name: ListProfileFilesByUserIDs :many
-SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at FROM files
+SELECT id, uuid, name, file_name, disk, path, mime_type, size, type, owner_type, owner_id, collection, created_by, updated_by, created_at, updated_at, tenant_id FROM files
 WHERE owner_type = 'user' AND collection = 'profile'
   AND owner_id = ANY($1::bigint[])
 `
@@ -314,6 +400,7 @@ func (q *Queries) ListProfileFilesByUserIDs(ctx context.Context, userIds []int64
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.TenantID,
 		); err != nil {
 			return nil, err
 		}
@@ -323,4 +410,16 @@ func (q *Queries) ListProfileFilesByUserIDs(ctx context.Context, userIds []int64
 		return nil, err
 	}
 	return items, nil
+}
+
+const sumFileBytesForTenant = `-- name: SumFileBytesForTenant :one
+SELECT COALESCE(sum(size), 0)::bigint FROM files WHERE tenant_id = $1::bigint
+`
+
+// Storage used by a tenant (storage.mb plan limit).
+func (q *Queries) SumFileBytesForTenant(ctx context.Context, tenantID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, sumFileBytesForTenant, tenantID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }

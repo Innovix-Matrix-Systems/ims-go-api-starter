@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 )
@@ -20,6 +21,7 @@ import (
 type devFlag struct {
 	Key         string `json:"key"`
 	Value       bool   `json:"value"`
+	Rollout     *int   `json:"rollout"`
 	Default     bool   `json:"default"`
 	Source      string `json:"source"`
 	Overridden  bool   `json:"overridden"`
@@ -30,40 +32,33 @@ type devFlag struct {
 type updateFlagsRequest struct {
 	TargetType string           `json:"target_type" validate:"omitempty,oneof=global tenant user"`
 	TargetID   *int64           `json:"target_id" validate:"omitempty,gt=0"`
-	Flags      map[string]*bool `json:"flags" validate:"required,min=1"`
+	Flags      map[string]*bool `json:"flags" validate:"required_without=Rollout"`
+	Rollout    map[string]int   `json:"rollout" validate:"omitempty,dive,min=0,max=100"`
 }
 
 func (h *Handler) listFlags(w http.ResponseWriter, r *http.Request) {
 	target, err := flagTargetFromQuery(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	items, err := h.flags.EffectiveForTarget(r.Context(), target)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, toDevFlags(items, target))
+	h.Data(w, r, http.StatusOK, toDevFlags(items, target))
 }
 
 func (h *Handler) updateFlags(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	var request updateFlagsRequest
-	if err := h.binder.JSON(w, r, &request); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &request); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &request) {
 		return
 	}
 	target, err := flagTargetFromBody(request)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 
@@ -76,47 +71,50 @@ func (h *Handler) updateFlags(w http.ResponseWriter, r *http.Request) {
 		}
 		setKeys = append(setKeys, key)
 	}
+	for key := range request.Rollout {
+		if _, listed := request.Flags[key]; !listed {
+			setKeys = append(setKeys, key)
+		}
+	}
 	sort.Strings(setKeys)
 	sort.Strings(clearKeys)
 
 	started := time.Now()
-	items, opErr := h.flags.SetBatch(r.Context(), actorID, target, request.Flags)
-	h.recordAction(r.Context(), actorID, "flags.set", flagTargetLabel(target), map[string]any{
+	items, opErr := h.flags.SetBatch(r.Context(), actorID, target, request.Flags, request.Rollout)
+	h.audit.Record(r.Context(), actorID, "flags.set", flagTargetLabel(target), map[string]any{
 		"target_type": target.Type,
 		"target_id":   target.ID,
 		"set":         setKeys,
 		"cleared":     clearKeys,
+		"rollout":     request.Rollout,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, toDevFlags(items, target))
+	h.Data(w, r, http.StatusOK, toDevFlags(items, target))
 }
 
 func (h *Handler) resetFlag(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	target, err := flagTargetFromQuery(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	key := chi.URLParam(r, "key")
 	started := time.Now()
 	opErr := h.flags.Delete(r.Context(), target, key)
-	h.recordAction(r.Context(), actorID, "flags.reset", key, map[string]any{
+	h.audit.Record(r.Context(), actorID, "flags.reset", key, map[string]any{
 		"target_type": target.Type,
 		"target_id":   target.ID,
 		"key":         key,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{
+	h.Data(w, r, http.StatusOK, map[string]any{
 		"key":    key,
 		"target": flagTargetLabel(target),
 		"reset":  true,
@@ -124,51 +122,48 @@ func (h *Handler) resetFlag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) syncFlags(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	started := time.Now()
 	created, opErr := h.flags.Sync(r.Context())
-	h.recordAction(r.Context(), actorID, "flags.sync", "flags", map[string]any{
+	h.audit.Record(r.Context(), actorID, "flags.sync", "flags", map[string]any{
 		"created": created,
 	}, started, opErr)
 	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+		h.Error(w, r, opErr)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{"created": created})
+	h.Data(w, r, http.StatusOK, map[string]any{"created": created})
 }
 
 func (h *Handler) searchTargets(w http.ResponseWriter, r *http.Request) {
 	kind, err := targetKind(r.URL.Query().Get("type"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	page, perPage, offset := httpx.PageParams(r)
 	items, total, err := h.targets.List(r.Context(), kind,
 		strings.TrimSpace(r.URL.Query().Get("search")), int32(perPage), int32(offset))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, items, meta, links)
+	h.Paginated(w, r, http.StatusOK, items, meta, links)
 }
 
 func (h *Handler) targetStats(w http.ResponseWriter, r *http.Request) {
 	kind, err := targetKind(r.URL.Query().Get("type"))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	stats, err := h.targets.Stats(r.Context(), kind)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, stats)
+	h.Data(w, r, http.StatusOK, stats)
 }
 
 func targetKind(raw string) (string, error) {
@@ -239,6 +234,7 @@ func toDevFlags(items []featureflags.EffectiveFlag, target featureflags.Target) 
 		flags = append(flags, devFlag{
 			Key:         item.Flag.Key,
 			Value:       item.Value,
+			Rollout:     item.Rollout,
 			Default:     item.Flag.Default,
 			Source:      item.Source,
 			Overridden:  item.Source == flagTargetSource(target),

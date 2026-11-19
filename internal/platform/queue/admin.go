@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/riverqueue/river"
@@ -242,6 +243,17 @@ func mapAdminJob(job *rivertype.JobRow) AdminJob {
 	args := json.RawMessage(job.EncodedArgs)
 	if len(args) == 0 {
 		args = json.RawMessage("null")
+	}
+	if strings.HasPrefix(kind, "mail.") {
+		// Mail jobs carry recipients and message bodies (customer data):
+		// the dashboard shows the envelope, never the payload (H14).
+		var envelope jobArgs
+		if err := json.Unmarshal(job.EncodedArgs, &envelope); err == nil {
+			envelope.Payload = json.RawMessage(`"[redacted]"`)
+			if redacted, err := json.Marshal(envelope); err == nil {
+				args = redacted
+			}
+		}
 	}
 	errors := job.Errors
 	if len(errors) > maxAdminJobErrors {

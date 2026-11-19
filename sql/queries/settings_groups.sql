@@ -68,3 +68,6 @@ ORDER BY
   CASE WHEN @order_by::text = 'created_at' AND @order_dir::text = 'asc' THEN created_at END ASC,
   CASE WHEN @order_by::text = 'created_at' AND @order_dir::text = 'desc' THEN created_at END DESC,
   sort_order ASC, id ASC;
+
+-- name: SetSettingsGroupSortOrder :execrows
+UPDATE settings_groups SET sort_order = @sort_order, updated_at = now() WHERE id = @id;

@@ -19,7 +19,7 @@ SET status              = 'active',
     cancelled_at        = NULL,
     cancellation_reason = NULL,
     updated_at          = now()
-WHERE id = $2
+WHERE id = $2 AND status IN ('pending', 'trial', 'active', 'expired')
 RETURNING id, tenant_id, package_id, status, starts_at, trial_ends_at, expires_at, cancelled_at, cancellation_reason, overrides, created_at, updated_at
 `
 
@@ -28,6 +28,8 @@ type ActivateSubscriptionParams struct {
 	ID        int64              `json:"id"`
 }
 
+// A cancelled subscription is final: a stale or replayed callback must not
+// bring it back (M8).
 func (q *Queries) ActivateSubscription(ctx context.Context, arg ActivateSubscriptionParams) (Subscription, error) {
 	row := q.db.QueryRow(ctx, activateSubscription, arg.ExpiresAt, arg.ID)
 	var i Subscription
@@ -511,11 +513,56 @@ func (q *Queries) GetPaymentApproval(ctx context.Context, id int64) (PaymentAppr
 }
 
 const getPaymentByGatewayRef = `-- name: GetPaymentByGatewayRef :one
-SELECT id, tenant_id, subscription_id, payment_method, status, amount, currency, gateway_ref, gateway_status, gateway_response, invoice_number, paid_at, recorded_by, created_by, updated_by, created_at, updated_at FROM payments WHERE gateway_ref = $1 ORDER BY id DESC LIMIT 1
+SELECT id, tenant_id, subscription_id, payment_method, status, amount, currency, gateway_ref, gateway_status, gateway_response, invoice_number, paid_at, recorded_by, created_by, updated_by, created_at, updated_at FROM payments WHERE gateway_ref = $1
 `
 
 func (q *Queries) GetPaymentByGatewayRef(ctx context.Context, gatewayRef *string) (Payment, error) {
 	row := q.db.QueryRow(ctx, getPaymentByGatewayRef, gatewayRef)
+	var i Payment
+	err := row.Scan(
+		&i.ID,
+		&i.TenantID,
+		&i.SubscriptionID,
+		&i.PaymentMethod,
+		&i.Status,
+		&i.Amount,
+		&i.Currency,
+		&i.GatewayRef,
+		&i.GatewayStatus,
+		&i.GatewayResponse,
+		&i.InvoiceNumber,
+		&i.PaidAt,
+		&i.RecordedBy,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPendingCheckout = `-- name: GetPendingCheckout :one
+SELECT p.id, p.tenant_id, p.subscription_id, p.payment_method, p.status, p.amount, p.currency, p.gateway_ref, p.gateway_status, p.gateway_response, p.invoice_number, p.paid_at, p.recorded_by, p.created_by, p.updated_by, p.created_at, p.updated_at FROM payments p
+JOIN subscriptions s ON s.id = p.subscription_id
+WHERE s.tenant_id = $1
+  AND s.package_id = $2
+  AND s.status = 'pending'
+  AND p.status = 'pending'
+  AND p.payment_method = $3
+ORDER BY p.id DESC
+LIMIT 1
+`
+
+type GetPendingCheckoutParams struct {
+	TenantID      int64  `json:"tenant_id"`
+	PackageID     int64  `json:"package_id"`
+	PaymentMethod string `json:"payment_method"`
+}
+
+// The in-flight checkout for a tenant + package + method: a pending
+// subscription whose payment is still pending (subscribe idempotency, H11).
+func (q *Queries) GetPendingCheckout(ctx context.Context, arg GetPendingCheckoutParams) (Payment, error) {
+	row := q.db.QueryRow(ctx, getPendingCheckout, arg.TenantID, arg.PackageID, arg.PaymentMethod)
 	var i Payment
 	err := row.Scan(
 		&i.ID,
@@ -1063,6 +1110,12 @@ SET status         = $1,
     gateway_status = COALESCE($3::text, gateway_status),
     updated_at     = now()
 WHERE id = $4
+  AND (
+      status = 'pending'
+      OR status = $1::text
+      OR (status = 'failed' AND $1::text = 'completed')
+      OR (status = 'completed' AND $1::text = 'refunded')
+  )
 RETURNING id, tenant_id, subscription_id, payment_method, status, amount, currency, gateway_ref, gateway_status, gateway_response, invoice_number, paid_at, recorded_by, created_by, updated_by, created_at, updated_at
 `
 
@@ -1073,6 +1126,8 @@ type UpdatePaymentStatusParams struct {
 	ID            int64   `json:"id"`
 }
 
+// Allowed transitions only (M8): pending -> anything, failed -> completed (a
+// late genuine success), completed -> refunded, or a no-op repeat.
 func (q *Queries) UpdatePaymentStatus(ctx context.Context, arg UpdatePaymentStatusParams) (Payment, error) {
 	row := q.db.QueryRow(ctx, updatePaymentStatus,
 		arg.Status,

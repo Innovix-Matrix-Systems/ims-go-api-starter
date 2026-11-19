@@ -30,59 +30,101 @@ subpackages (see `internal/modules/billing/`). Files:
 
 | File | Holds | Must NOT |
 |---|---|---|
-| `routes.go` | path → handler method registration only | contain logic |
-| `handler.go` | bind, validate, call service, respond | contain SQL or business rules |
+| `routes.go` | path → handler registration, with the route's permission: `r.With(h.can(perm)).Post(...)` | contain logic |
+| `handler.go` | bind (`h.Bind`), call service, respond (`h.Data`/`h.Error`) | contain SQL or business rules |
 | `request.go` | request DTOs + response DTOs + `NewXResponse` mappers | contain logic |
-| `service.go` | business rules, `MustCan`, tenancy, `WithTx` | import `httpx` or `authn` |
+| `service.go` | business rules, invariants, tenancy, `WithTx` | import `httpx` or `authn` |
 | `repository.go` | `Repository` interface + sqlc-backed impl, `database.MapError` | import `httpx`/`authn` |
 | `model.go` | domain structs + row mappers (`dbgen` types never leak out) | — |
 | `commands.go`, `scheduled.go` | optional CLI/scheduled contributions | — |
 
 ## 3. Conventions cheat-sheet
 
+**Handlers** — every handler embeds `httpx.Kit`, so a typical action reads like a Laravel
+controller method:
+
+```go
+func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
+	var req StoreRequest
+	if !h.Bind(w, r, &req) { // decode + validate; the 400/415/422 is already written
+		return
+	}
+	branch, err := h.service.Create(r.Context(), tenancy.From(r), authn.UserID(r), req.toInput())
+	if err != nil {
+		h.Error(w, r, err)
+		return
+	}
+	h.Data(w, r, http.StatusCreated, NewResponse(*branch))
+}
+```
+
+`h.PathID(w, r, "id")` reads a positive id from the route; `authn.UserID(r)` is `auth()->id()`;
+`tenancy.From(r)` is the resolved tenant scope.
+
 **Errors** — services return `*apperr.Error` (`internal/apperr`); handlers call
-`responder.Error(w, r, err)`. Never write raw JSON errors. Map driver errors with
+`h.Error(w, r, err)`. Never write raw JSON errors. Map driver errors with
 `database.MapError("module.op", err)`; turn `pgx.ErrNoRows` into `apperr.ResourceNotFound`.
 
-**Validation** — structural validation is `binder.JSON(w, r, &req)` then `validator.Struct(ctx, &req)`
-(validate tags; messages are human-readable). Business validation (uniqueness, ownership) lives in
+**Validation** — structural validation is `h.Bind(w, r, &req)` (JSON + `validate` tags; messages
+are human-readable; `h.Validate` for query/multipart structs). Business validation (uniqueness, ownership) lives in
 the service and returns `apperr.Validation(map[string][]string{"field": {"message"}})`.
 
-**Tenancy** — read the scope with `tenancy.FromContext(ctx)`; filter with
-`scope.EffectiveTenantID()` (and `EffectiveBranchID()`). `0` means "no filter". Repositories take
-explicit ids — **every tenant-scoped query must filter `tenant_id`**. `scope.AllTenants()` (internal
-or a global impersonation read) is the only case that skips the filter. Writes without acting
-headers on resolved routes are 403 at the middleware.
+**Tenancy** — read the scope with `tenancy.From(r)` (`tenancy.FromContext(ctx)` below the
+handler); pass `scope.Filter()` to single-row repository methods and `scope.EffectiveTenantID()`
+(and `EffectiveBranchID()`) to lists. A zero `tenancy.Filter{}` matches **no** tenant rows (fails
+closed); every-tenant reads are explicit (`scope.AllTenants()` / `tenancy.Unscoped()`, internal or
+global impersonation only). **Every tenant-scoped query must filter `tenant_id`.** Writes without
+acting headers on resolved routes are 403 at the middleware.
 
-**Authorization** — `checker.MustCan(ctx, identity.UserID, "feature.verb")` in the **service**
-(so CLI/jobs are covered too). Permissions live in `internal/authz/catalog.go`; add one there and run
-`ims permission:sync`.
+**Authorization** — permissions are checked at the HTTP edge, like Laravel: declare them on the
+route, `r.With(h.can(authz.PermBranchCreate)).Post("/branch", h.store)` (the `can:` middleware;
+`h.can` wraps `authz.Require`). Only when the permission depends on the payload (e.g. sending
+`roles` needs `user.role.assign`) call `h.checker.MustCan(ctx, authn.UserID(r), perm)` inside the
+handler. CLI commands, queue jobs and scheduled tasks are
+trusted code and do not re-check permissions — exactly like artisan commands and queued jobs.
+Services stay permission-free by default; a service that needs a Gate-style decision (ownership,
+"can this actor touch that record") takes `*authz.Checker` (or a one-method interface) explicitly.
+What services **always** enforce regardless of caller: tenant scoping (`tenant_id` in SQL) and
+business invariants (e.g. Super-Admin cannot be stripped/deleted, no self role escalation) — those
+are data rules, not permissions. Permissions live in `internal/authz/catalog.go`; add one there and
+run `ims permission:sync`. A route-coverage test asserts every protected route returns 403 for a
+token without permissions.
 
 **Pagination** — `page, perPage, offset := httpx.PageParams(r)` (`per_page` default 10, max 100),
 whitelist ordering with `httpx.OrderParams(r, "id", "name", "created_at")`, respond with
-`responder.Paginated(w, r, status, data, meta, links)` where `meta, links := httpx.NewPagination(r, page, perPage, total)`.
+`h.Paginated(w, r, status, data, meta, links)` where `meta, links := httpx.NewPagination(r, page, perPage, total)`.
 
 **Cursor pagination** — the notification feed and developer-dashboard streams (requests, logs,
 exceptions, jobs, sessions, actions, backups). They use `limit` (default 20/25, max 100) + `cursor`,
-not `page`/`per_page`, and respond with `responder.Cursor(w, r, status, data, meta, links)`; links
+not `page`/`per_page`, and respond with `h.Cursor(w, r, status, data, meta, links)`; links
 come from `httpx.CursorURL`. Management lists (users, developers, targets, files) use
 `page`/`per_page`.
+
+**Activity log** — after a change succeeds, a service records it (like spatie/laravel-activitylog):
+`s.activity.Record(ctx, activity.Entry{TenantID: t, Action: "branch.created", Subject: "branch",
+SubjectID: id, Changes: map[string]any{"name": name}})`. Give the service a
+`WithActivity(*activity.Recorder)` option; a nil recorder records nothing, so unit tests need no
+setup. The actor, IP and request id come from the context; secret-looking keys are redacted.
+Tenant admins read it at `GET /api/v1/activity` (`activity.view`); old rows are pruned after
+`ACTIVITY_RETENTION_DAYS`.
 
 **Transactions** — services own them: `s.tx.WithTx(ctx, func(q *dbgen.Queries) error { … })`.
 
 **Related data** — there is no lazy loading; load relations explicitly in bulk (see §4). Never run a
 query per row inside a response loop.
 
-**Cache** — depend on `cache.Store`; build keys with `cachekeys.Key(ctx, store, scope, "ns", args…)`
-and invalidate with `cachekeys.Bump(ctx, store, "ns")`.
+**Cache** — depend on `cache.Store` (like Laravel's `Cache` facade): `cache.Remember(...)` to read
+through, `store.Delete(ctx, key)` in the same service method that changes the data. Put the tenant id
+in every key derived from tenant data (`"settings:tenant:" + id`) and keep key builders next to the
+code that owns them.
 
 **Queue jobs** — declare `queue.Definition{Kind, Queue, Validate, Handle}` in a `queue.Registry`;
 enqueue via the `queue.Engine` (prefer `EnqueueTx` with your write). Jobs re-resolve tenancy from the
 envelope.
 
-**Scheduled tasks** — register `{ID, Spec, Description, Timeout, Overlap, Run}` in
-`internal/app/platform.go`; `Overlap` is `scheduler.OverlapSkip` (default) or
-`scheduler.OverlapAllow`. Tasks run in the `ims schedule` process only.
+**Scheduled tasks** — add `{ID, Spec, Description, Timeout, Run}` to the list in
+`internal/app/schedule.go` (Laravel's `Kernel::schedule`); overlapping runs are skipped unless you
+set `Overlap: scheduler.OverlapAllow`. Tasks run in the `ims schedule` process only.
 
 **Naming** — Go: `PascalCase` exported, package `snake`/single word. DB: `snake_case`, plural tables.
 JSON: `snake_case`. Migrations: `000NN_verb_noun.sql` (goose up/down). Rules listed in the
@@ -169,8 +211,8 @@ Products *product.Handler
 
 // NewDependencies, inside the deps literal:
 Products: product.NewHandler(
-    product.NewService(product.NewRepository(queries), checker),
-    binder, validator, responder,
+    product.NewService(product.NewRepository(queries)),
+    checker, kit,
 ),
 ```
 
@@ -208,10 +250,10 @@ Step 6 — tests:
 
 - The generated `service_test.go` covers tenant scoping with a fake repository; extend it for your
   business rules.
-- Add a `dbtest` repository integration test and a cross-tenant isolation test (model it on
-  `internal/modules/branches/isolation_integration_test.go`). Call `dbtest.Clean(t, pool, "products", ...)`
-  with the tables you own.
-- Add an HTTP flow to `internal/app/*_integration_test.go` for critical routes.
+- Add an integration test with `testkit` (§8a) that covers the happy path **and** cross-tenant
+  isolation: a second tenant's admin gets 404 on read, update and delete.
+- New routes must declare a permission, or `internal/app/route_permissions_integration_test.go`
+  fails; routes open to every authenticated user go in that test's allowlist with a reason.
 
 Step 7 — verify:
 
@@ -233,10 +275,10 @@ If you also touched the dashboard, run `make web-typecheck` and `make web-build`
 ## 6. Recipe — add an endpoint to an existing module
 
 1. `request.go` — add the request/response DTO + mapper.
-2. `service.go` — add the method (`MustCan`, tenancy, rules, `WithTx` if it writes).
-3. `handler.go` — bind → validate → service → respond.
+2. `service.go` — add the method (tenancy, rules, `WithTx` if it writes).
+3. `handler.go` — `h.Bind` → service → `h.Data` / `h.Error` (`h.PathID` for `{id}`).
 4. `repository.go` + `sql/queries/<name>.sql` — add the query (only if it needs new SQL); `make sqlc`.
-5. `routes.go` — register the path.
+5. `routes.go` — register the path with its permission: `r.With(h.can(PermX)).Post(...)`.
 6. `api/openapi.yaml` — document it by hand, or `ims gen openapi --module=<name>` if the module
    follows the scaffold convention (this only refreshes the managed region).
 7. `make openapi` — regenerate `internal/contract` from the spec; `make openapi-check` verifies
@@ -270,16 +312,44 @@ If you also touched the dashboard, run `make web-typecheck` and `make web-build`
 | Permissions catalog + checker | `internal/authz` |
 | Error codes | `internal/apperr` |
 | DB registry, TxManager, migrate | `internal/platform/database` |
-| Cache stores + versioned keys | `internal/platform/cache`, `internal/platform/cachekeys` |
+| Cache stores | `internal/platform/cache` |
 | Queue engines + registry | `internal/platform/queue` |
-| Scheduler + tasks | `internal/platform/scheduler`, `internal/app/platform.go` |
+| Scheduler + tasks | `internal/platform/scheduler`, `internal/app/schedule.go` |
 | Storage disks, mail, i18n, health, metrics | `internal/platform/{storage,mail,i18n,health,metrics}` |
 | Business modules | `internal/modules/<name>` (`backup/` is transport-free) |
 | Developer dashboard SPA | `web/dev` (embedded by `web/dev/embed.go`) |
+| Dashboard API (handlers → services) | `internal/modules/dev` (`services.go`, `inspector.go`, `commands.go`) |
+| Dashboard commands allowlist (add maintenance tasks here) | `internal/app/dev_commands.go` |
+| Dashboard form controls (Select, DatePicker, TimePicker) | `web/dev/src/components/inputs.tsx` |
+| Integration test helpers | `internal/testkit` |
 | Module + OpenAPI generators | `internal/scaffold`, `ims gen` |
 | Generated (never edit) | `internal/dbgen`, `internal/contract` |
 | SQL schema / queries | `migrations/`, `sql/queries/` |
 | Canonical API contract | `api/openapi.yaml` |
+
+## 8a. Integration tests with `testkit`
+
+`internal/testkit` gives a migrated, seeded app with factories, like Laravel feature tests. Tests
+skip unless `DATABASE_TEST_DSN` is set; put them in the module's external test package
+(`package branches_test`).
+
+```go
+func TestBranchCreate(t *testing.T) {
+	app := testkit.New(t)                       // clean schema, seeded, router built
+	admin := app.User(t)                        // Admin of the seeded tenant, signed in
+	app.As(admin).Post("/api/v1/branch", `{"name":"Dhaka"}`).Status(t, http.StatusCreated)
+
+	viewer := app.User(t, testkit.Role(app.Role(t, "Viewer", "branch.view.all")))
+	app.As(viewer).Post("/api/v1/branch", `{"name":"Sylhet"}`).Status(t, http.StatusForbidden)
+
+	other := app.User(t, testkit.InTenant(app.Tenant(t, "Tenant B"))) // second tenant
+	_ = other
+}
+```
+
+`app.SuperAdmin(t)`, `app.As(u).InTenant(tenantID, branchID)` (acting headers),
+`.Get/Post/Patch/Put/Delete`, `.Status(t, code)`, `.JSON(t, &v)` and `.Data(t, &v)` cover most
+tests; `app.Deps` and `app.Pool` are there for anything else.
 
 ## 9. Before you open a PR
 
@@ -292,5 +362,5 @@ If you also touched the dashboard, run `make web-typecheck` and `make web-build`
 - [ ] `make gen-check` green (sqlc/OpenAPI output committed).
 - [ ] `make check` green; `make test-integration` green when a DSN is available.
 - [ ] Dashboard touched → `make web-typecheck` + `make web-build` green.
-- [ ] Spec's implementation notes updated for behavior/scope changes.
+- [ ] Non-obvious decisions recorded in `docs/architecture.md` §11 (and `AGENTS.md`).
 - [ ] No secrets logged; tokens/passwords never appear in logs or payloads.

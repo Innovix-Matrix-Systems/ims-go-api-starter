@@ -261,6 +261,23 @@ func (q *Queries) ListSettingsGroupsPaginated(ctx context.Context, arg ListSetti
 	return items, nil
 }
 
+const setSettingsGroupSortOrder = `-- name: SetSettingsGroupSortOrder :execrows
+UPDATE settings_groups SET sort_order = $1, updated_at = now() WHERE id = $2
+`
+
+type SetSettingsGroupSortOrderParams struct {
+	SortOrder int32 `json:"sort_order"`
+	ID        int64 `json:"id"`
+}
+
+func (q *Queries) SetSettingsGroupSortOrder(ctx context.Context, arg SetSettingsGroupSortOrderParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSettingsGroupSortOrder, arg.SortOrder, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateSettingsGroup = `-- name: UpdateSettingsGroup :one
 UPDATE settings_groups
 SET slug        = $1,

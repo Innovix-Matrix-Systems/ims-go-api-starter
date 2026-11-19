@@ -5,12 +5,15 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
 	webdev "github.com/Innovix-Matrix-Systems/ims-go-api-starter/web/dev"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/auth"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing"
@@ -64,6 +67,7 @@ type Dependencies struct {
 	Users         *identity.Handler
 	Tenants       *tenants.Handler
 	Branches      *branches.Handler
+	Activity      *activity.Handler
 	Roles         *access.RoleHandler
 	Permissions   *access.PermissionHandler
 	Billing       *billing.Handler
@@ -73,7 +77,9 @@ type Dependencies struct {
 	Settings      *settings.Handler
 	Flags         *featureflags.Handler
 	Dev           *dev.Handler
-	DevUI         *webui.Handler
+	// routes is the built router, read by the dashboard's route inspector.
+	routes chi.Routes
+	DevUI  *webui.Handler
 }
 
 // NewDependencies constructs the dependency graph for the HTTP API mode. The
@@ -88,6 +94,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	responder := httpx.NewResponder(cfg.App.URL, cfg.App.Env, cfg.App.Debug)
 	binder := httpx.NewBinder(cfg.HTTP.MaxRequestBodyBytes, cfg.HTTP.StrictJSONFields)
 	validator := httpx.NewValidator()
+	kit := httpx.NewKit(binder, validator, responder)
 	translator, err := i18n.Load()
 	if err != nil {
 		platformCleanup()
@@ -106,9 +113,9 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	healthRegistry.Add(database.MigrationCheck{Pool: platform.DB.Primary().Pool})
 	healthRegistry.Add(cache.HealthCheck{Store: store})
 	healthRegistry.Add(queue.HealthCheck{Pool: platform.DB.Primary().Pool})
-	healthRegistry.Add(scheduler.HealthCheck{Store: store})
+	healthRegistry.AddAdvisory(scheduler.HealthCheck{Store: store})
 	if cfg.Backup.Enabled && platform.Backup != nil {
-		healthRegistry.Add(backup.HealthCheck{Service: platform.Backup})
+		healthRegistry.AddAdvisory(backup.HealthCheck{Service: platform.Backup})
 	}
 	healthHandler := health.NewHandler(healthRegistry, 30*time.Second)
 
@@ -130,9 +137,11 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	tenantRepo := tenants.NewRepository(queries)
 
 	// Services
-	roleService := access.NewRoleService(roleRepo, permissionRepo, checker, platform.Tx)
+	roleService := access.NewRoleService(roleRepo, permissionRepo, checker, platform.Tx).WithActivity(platform.Activity)
 	permissionService := access.NewPermissionService(permissionRepo, checker)
-	branchService := branches.NewService(branchRepo, identityRepo, store, checker, cfg.Tenancy, platform.BillingGuard)
+	branchService := branches.NewService(branchRepo, identityRepo, store, cfg.Tenancy, platform.BillingGuard).
+		WithTx(platform.Tx).
+		WithActivity(platform.Activity)
 	tenantService := tenants.NewService(tenantRepo, branchService, roleService, platform.Tx, store, cfg.Tenancy)
 
 	authenticator := platform.Authenticator
@@ -144,12 +153,11 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	// Handlers and modules
 	systemModule := system.NewModule(
 		system.NewService(cfg.App.Name, cfg.App.Env, version.Version, cfg.App.Timezone),
-		binder,
-		validator,
-		responder,
+		kit,
 	)
 
-	deps := &Dependencies{
+	var deps *Dependencies
+	deps = &Dependencies{
 		Config:        cfg,
 		Logger:        logger,
 		Responder:     responder,
@@ -173,17 +181,18 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 		},
 		Platform:      platform,
 		System:        systemModule,
-		Auth:          auth.NewHandler(authService, userService, checker, binder, validator, responder),
-		Users:         identity.NewHandler(userService, platform.Files, platform.Exchange, checker, binder, validator, responder),
-		Tenants:       tenants.NewHandler(tenantService, checker, binder, validator, responder),
-		Branches:      branches.NewHandler(branchService, checker, binder, validator, responder),
-		Roles:         access.NewRoleHandler(roleService, checker, tenantLookup, binder, validator, responder),
-		Permissions:   access.NewPermissionHandler(permissionService, checker, binder, validator, responder),
-		Files:         files.NewHandler(platform.Files, checker, responder),
-		Notifications: notifications.NewHandler(platform.Notifications, checker, binder, validator, responder),
-		Processing:    dataprocessing.NewHandler(platform.Processing, platform.Settings, checker, binder, validator, responder),
-		Settings:      settings.NewHandler(platform.Settings, checker, binder, validator, responder),
-		Flags:         featureflags.NewHandler(platform.FeatureFlags, checker, binder, validator, responder),
+		Auth:          auth.NewHandler(authService, userService, checker, kit).WithRecovery(platform.Recovery),
+		Users:         identity.NewHandler(userService, platform.Files, platform.Exchange, checker, kit),
+		Tenants:       tenants.NewHandler(tenantService, checker, kit),
+		Branches:      branches.NewHandler(branchService, checker, kit),
+		Activity:      activity.NewHandler(activity.NewService(queries), checker, kit),
+		Roles:         access.NewRoleHandler(roleService, checker, tenantLookup, kit),
+		Permissions:   access.NewPermissionHandler(permissionService, checker, kit),
+		Files:         files.NewHandler(platform.Files, checker, kit),
+		Notifications: notifications.NewHandler(platform.Notifications, checker, kit),
+		Processing:    dataprocessing.NewHandler(platform.Processing, platform.Settings, checker, kit),
+		Settings:      settings.NewHandler(platform.Settings, checker, kit),
+		Flags:         featureflags.NewHandler(platform.FeatureFlags, checker, kit),
 		Dev: dev.NewHandler(dev.Deps{
 			Checker:       checker,
 			Permissions:   permissionService,
@@ -207,9 +216,17 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 			Collector:     platform.Telemetry,
 			Logger:        logger,
 			RetentionDays: cfg.DevDashboard.RetentionDays,
-			Binder:        binder,
-			Validator:     validator,
-			Responder:     responder,
+
+			AuditRetentionDays: cfg.DevDashboard.AuditRetentionDays,
+			Inspector: dev.NewInspectorService(queries, cfg, func() chi.Routes {
+				if deps == nil {
+					return nil
+				}
+				return deps.routes
+			}),
+			Queries:  queries,
+			Commands: dev.NewCommandService(queries, logger, devCommands(platform, permissionService, healthRegistry)...),
+			Kit:      kit,
 		}),
 		DevUI: devUI,
 		Billing: billing.NewHandler(
@@ -218,11 +235,10 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 			platform.BillingPayments,
 			platform.BillingApprovals,
 			checker,
-			binder,
-			validator,
-			responder,
+			kit,
 		),
 	}
+	deps.Auth.WithSignInRecorder(deps.Dev.Auditor())
 	cleanup := func() {
 		limiter.Close()
 		platformCleanup()

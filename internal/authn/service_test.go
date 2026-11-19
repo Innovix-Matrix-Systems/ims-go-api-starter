@@ -65,6 +65,8 @@ func (f *fakeAuthenticator) Revoke(ctx context.Context, userID int64, device str
 	return nil
 }
 
+func (f *fakeAuthenticator) RevokeOthers(context.Context, int64, int64) error { return nil }
+
 func (f *fakeAuthenticator) RevokeAll(ctx context.Context, userID int64) error {
 	return nil
 }
@@ -162,20 +164,47 @@ func TestLoginWrongPasswordIncrementsThrottle(t *testing.T) {
 		t.Error("retry_after not set on lockout")
 	}
 
-	if other, err := service.Login(ctx, "user@example.com", "secret123", "device", "10.0.0.99"); err != nil || other == nil {
-		t.Fatalf("different IP should not be locked: %v", err)
+	// H6: rotating IPs must NOT reset the per-account budget — the account
+	// stays locked even from a fresh source address.
+	if _, err := service.Login(ctx, "user@example.com", "secret123", "device", "10.0.0.99"); !apperr.Is(err, apperr.AccountLocked) {
+		t.Fatalf("rotated-IP login error = %v, want ACCOUNT_LOCKED (per-account counter)", err)
 	}
 
-	_ = store.Delete(ctx, loginThrottleKey("user@example.com", "127.0.0.1"))
+	_ = store.Delete(ctx, accountThrottleKey("user@example.com"))
+	_ = store.Delete(ctx, ipThrottleKey("127.0.0.1"))
 }
 
-func TestLoginUnknownEmailYieldsValidationError(t *testing.T) {
+func TestLoginUnknownEmailIsIndistinguishableFromWrongPassword(t *testing.T) {
 	cfg := testCfg()
 	service, _, _, _ := testService(t, nil, cfg)
 
 	_, err := service.Login(context.Background(), "missing@example.com", "secret123", "device", "127.0.0.1")
-	if !apperr.Is(err, apperr.ValidationFailed) {
-		t.Fatalf("error = %v, want VALIDATION_FAILED", err)
+	if !apperr.Is(err, apperr.InvalidCredentials) {
+		t.Fatalf("error = %v, want INVALID_CREDENTIALS (uniform response)", err)
+	}
+	var appErr *apperr.Error
+	if !errors.As(err, &appErr) {
+		t.Fatal("error is not *apperr.Error")
+	}
+	if appErr.Message != "The provided credentials are incorrect." {
+		t.Errorf("message = %q, want the uniform credentials message", appErr.Message)
+	}
+}
+
+func TestLoginPerIPLockoutCatchesSprayAcrossAccounts(t *testing.T) {
+	cfg := testCfg()
+	service, _, _, _ := testService(t, activeRecord(t), cfg)
+	ctx := context.Background()
+
+	// Spraying many accounts from one source: the per-IP counter locks.
+	for i := 0; i < cfg.LoginMaxAttempts; i++ {
+		email := "victim" + string(rune('a'+i)) + "@example.com"
+		if _, err := service.Login(ctx, email, "wrong", "device", "203.0.113.7"); !apperr.Is(err, apperr.InvalidCredentials) {
+			t.Fatalf("spray attempt %d error = %v", i, err)
+		}
+	}
+	if _, err := service.Login(ctx, "user@example.com", "secret123", "device", "203.0.113.7"); !apperr.Is(err, apperr.AccountLocked) {
+		t.Fatalf("sprayed-IP login error = %v, want ACCOUNT_LOCKED (per-IP counter)", err)
 	}
 }
 

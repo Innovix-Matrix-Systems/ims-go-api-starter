@@ -89,7 +89,7 @@ func TestRiverEngineTransactionalEnqueue(t *testing.T) {
 		t.Fatalf("NewRiverEngine() error = %v", err)
 	}
 
-	ctx := context.Background()
+	ctx := tenancy.WithScope(context.Background(), tenancy.Scope{TenantID: 1, BranchID: 2})
 	var count int64
 	if err := pool.QueryRow(ctx, "SELECT count(*) FROM river_job WHERE kind = 'ims.job'").Scan(&count); err != nil {
 		t.Fatalf("count jobs: %v", err)

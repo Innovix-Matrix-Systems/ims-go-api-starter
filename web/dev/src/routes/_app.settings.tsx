@@ -2,7 +2,9 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useDeferredValue, useEffect, useMemo, useState, type DragEvent } from 'react'
 import { api } from '../api/client'
-import type { DevTarget, Page, SettingsGroup, SettingsItem } from '../api/types'
+import type { DevTarget, DevTenant, Page, SettingsGroup, SettingsItem } from '../api/types'
+import { Select } from '../components/inputs'
+import { SettingsList } from '../components/SettingsList'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -22,10 +24,29 @@ import {
 } from '../components/ui'
 
 export const Route = createFileRoute('/_app/settings')({
+  validateSearch: (search: Record<string, unknown>): { tenant?: number } => ({
+    tenant: typeof search.tenant === 'number' ? search.tenant : undefined,
+  }),
   component: SettingsPage,
 })
 
 type TargetKind = 'global' | 'tenant'
+
+/** Loads the tenant named in ?tenant= (deep link from the Tenants panel). */
+function useLinkedTenant(id: number | undefined) {
+  return useQuery({
+    queryKey: ['tenants', 'detail', id],
+    queryFn: ({ signal }) => api<DevTenant>(`/dev/api/tenants/${id}`, { signal }),
+    enabled: id !== undefined,
+    select: (tenant): DevTarget => ({
+      id: tenant.id,
+      type: 'tenant',
+      name: tenant.name,
+      code: tenant.code,
+      overrides: tenant.overrides,
+    }),
+  })
+}
 
 type DragState = { type: 'setting'; key: string } | { type: 'group'; id: number } | null
 
@@ -72,6 +93,14 @@ function SettingsPage() {
   const { push } = useToast()
   const queryClient = useQueryClient()
   const [targetKind, setTargetKind] = useState<TargetKind>('global')
+  const [view, setView] = useState<'list' | 'board'>('list')
+  const { tenant: linkedTenantID } = Route.useSearch()
+  const linkedTenant = useLinkedTenant(linkedTenantID)
+  useEffect(() => {
+    if (!linkedTenant.data) return
+    setTargetKind('tenant')
+    setTenant(linkedTenant.data)
+  }, [linkedTenant.data])
   const [tenant, setTenant] = useState<DevTarget | null>(null)
   const [tenantSearch, setTenantSearch] = useState('')
   const [groupSearch, setGroupSearch] = useState('')
@@ -204,6 +233,19 @@ function SettingsPage() {
       invalidate()
     },
     onError: (error) => push(error instanceof Error ? error.message : 'Unable to delete the group', 'error'),
+  })
+
+  const placeSettings = useMutation({
+    mutationFn: ({ groupId, keys }: { groupId: number; keys: string[] }) =>
+      api(`/dev/api/settings/groups/${groupId}/keys`, { method: 'PUT', body: { keys } }),
+    onSuccess: () => invalidate(),
+    onError: (error) => push(error instanceof Error ? error.message : 'Unable to move the setting', 'error'),
+  })
+
+  const reorderGroupIds = useMutation({
+    mutationFn: (ids: number[]) => api('/dev/api/settings/groups/order', { method: 'PUT', body: { ids } }),
+    onSuccess: () => invalidate(),
+    onError: (error) => push(error instanceof Error ? error.message : 'Unable to reorder groups', 'error'),
   })
 
   const saveSetting = useMutation({
@@ -421,6 +463,14 @@ function SettingsPage() {
         subtitle="Grouped runtime settings with global and tenant overrides. Drag settings onto a group, or use the editor's group selector."
         actions={
           <>
+            <div className="pill-toggle" role="tablist" aria-label="Layout">
+              <button type="button" className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>
+                All settings
+              </button>
+              <button type="button" className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}>
+                Groups board
+              </button>
+            </div>
             <Button icon="refresh" onClick={() => invalidate()} disabled={effective.isFetching || groups.isFetching}>
               Refresh
             </Button>
@@ -471,25 +521,26 @@ function SettingsPage() {
             </label>
             <label className="field grow">
               <span className="field-label">Tenant</span>
-              <select
-                className="select"
-                value={tenant?.id ?? ''}
-                onChange={(event) => {
-                  const id = Number.parseInt(event.target.value, 10)
+              <Select
+                value={tenant ? String(tenant.id) : ''}
+                placeholder="Select a tenant…"
+                onChange={(value) => {
+                  const id = Number.parseInt(value, 10)
                   setTenant([...(tenants.data?.data ?? []), ...(tenant ? [tenant] : [])].find((item) => item.id === id) ?? null)
                   setEditingKey(null)
                 }}
-              >
-                <option value="">Select a tenant...</option>
-                {tenant && !(tenants.data?.data ?? []).some((item) => item.id === tenant.id) ? (
-                  <option value={tenant.id}>{tenant.name}</option>
-                ) : null}
-                {(tenants.data?.data ?? []).map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name} - {item.code ?? `#${item.id}`}
-                  </option>
-                ))}
-              </select>
+                options={[
+                  ...(tenant && !(tenants.data?.data ?? []).some((item) => item.id === tenant.id)
+                    ? [{ value: String(tenant.id), label: tenant.name }]
+                    : []),
+                  ...(tenants.data?.data ?? []).map((item) => ({
+                    value: String(item.id),
+                    label: item.name,
+                    text: `${item.name} ${item.code ?? ''}`,
+                    hint: item.code ?? `#${item.id}`,
+                  })),
+                ]}
+              />
             </label>
             {tenants.isFetching ? (
               <span className="small dim" style={{ paddingBottom: 9 }}>
@@ -541,6 +592,24 @@ function SettingsPage() {
         <Card className="mt-24">
           <EmptyState title="Choose a tenant" description="Select a tenant above to inspect its overrides." icon="settings" />
         </Card>
+      ) : view === 'list' ? (
+        <SettingsList
+          items={settings}
+          groups={boardGroups}
+          target={targetLabel(targetKind, tenant)}
+          savingKey={
+            saveSetting.isPending
+              ? saveSetting.variables?.item.key ?? null
+              : resetSetting.isPending
+                ? resetSetting.variables?.key ?? null
+                : null
+          }
+          onSave={(item, value) => saveSetting.mutate({ item, value })}
+          onReset={(item) => resetSetting.mutate(item)}
+          onDetails={openEditor}
+          onPlace={(groupId, keys) => placeSettings.mutate({ groupId, keys })}
+          onReorderGroups={(ids) => reorderGroupIds.mutate(ids)}
+        />
       ) : (
         <div className="settings-layout mt-24">
           <Card className="group-pane">
@@ -889,25 +958,19 @@ function SettingsPage() {
             </dl>
             <label className="field">
               <span className="field-label">Move to group</span>
-              <select
-                className="select"
+              <Select
                 value={editing.group.id > 0 ? String(editing.group.id) : ''}
+                placeholder="Unsynced group - run Sync catalog"
                 disabled={assignGroup.isPending}
-                onChange={(event) => {
-                  const id = Number.parseInt(event.target.value, 10)
+                onChange={(value) => {
+                  const id = Number.parseInt(value, 10)
                   if (!id || id === editing.group.id) return
                   assignGroup.mutate({ key: editing.key, groupId: id })
                 }}
-              >
-                {editing.group.id <= 0 ? <option value="">Unsynced group - run Sync catalog</option> : null}
-                {boardGroups
+                options={boardGroups
                   .filter((group) => group.id > 0)
-                  .map((group) => (
-                    <option key={group.id} value={group.id}>
-                      {group.name}
-                    </option>
-                  ))}
-              </select>
+                  .map((group) => ({ value: String(group.id), label: group.name }))}
+              />
             </label>
             {!editing.editable ? (
               <ErrorBox message="This key is global-only; it cannot be overridden per tenant." />
@@ -915,15 +978,15 @@ function SettingsPage() {
             <label className="field">
               <span className="field-label">Value</span>
               {editing.type === 'bool' ? (
-                <select
-                  className="select"
+                <Select
                   value={formValue === 'true' ? 'true' : 'false'}
                   disabled={!editing.editable}
-                  onChange={(event) => setFormValue(event.target.value)}
-                >
-                  <option value="true">Enabled</option>
-                  <option value="false">Disabled</option>
-                </select>
+                  onChange={setFormValue}
+                  options={[
+                    { value: 'true', label: 'Enabled' },
+                    { value: 'false', label: 'Disabled' },
+                  ]}
+                />
               ) : editing.type === 'json' ? (
                 <textarea
                   className="textarea mono"
@@ -993,19 +1056,16 @@ function SettingsPage() {
           <div className="stack">
             <label className="field">
               <span className="field-label">Destination group</span>
-              <select
-                className="select"
+              <Select
                 value={moveTargetId}
-                onChange={(event) => setMoveTargetId(event.target.value)}
-              >
-                {moveTargets.length === 0 ? <option value="">No other groups</option> : null}
-                {moveTargets.map((group) => (
-                  <option key={group.id} value={group.id}>
-                    {group.name}
-                    {group.is_system ? ' (system)' : ''}
-                  </option>
-                ))}
-              </select>
+                placeholder="No other groups"
+                onChange={setMoveTargetId}
+                options={moveTargets.map((group) => ({
+                  value: String(group.id),
+                  label: group.name,
+                  hint: group.is_system ? 'system' : undefined,
+                }))}
+              />
             </label>
             <div className="small dim">
               Currently in <b>{moving.group.name}</b>. You can also drag the row onto a group in the left list.

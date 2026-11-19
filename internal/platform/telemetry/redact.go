@@ -113,6 +113,22 @@ func (r *Redactor) JSON(body []byte) json.RawMessage {
 	return r.AnyJSON(parsed)
 }
 
+func (r *Redactor) mentionsSensitive(sql string) bool {
+	lower := strings.ToLower(sql)
+	for key := range r.keys {
+		if len(key) >= 4 && strings.Contains(lower, key) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeSecret catches bcrypt/argon hashes regardless of the statement.
+func looksLikeSecret(value string) bool {
+	return strings.HasPrefix(value, "$2a$") || strings.HasPrefix(value, "$2b$") ||
+		strings.HasPrefix(value, "$2y$") || strings.HasPrefix(value, "$argon2")
+}
+
 // Headers copies headers with sensitive values replaced.
 func (r *Redactor) Headers(header http.Header) map[string][]string {
 	out := make(map[string][]string, len(header))
@@ -128,12 +144,24 @@ func (r *Redactor) Headers(header http.Header) map[string][]string {
 	return out
 }
 
-// Args redacts SQL argument values (structured maps are filtered by key).
-func (r *Redactor) Args(args []any) json.RawMessage {
+// Args redacts SQL argument values. pgx passes positional scalars, so key
+// names are not available: when the statement mentions a sensitive column
+// (password, token, secret, ...) every string argument is redacted, and
+// anything that looks like a password hash is redacted everywhere (H15).
+func (r *Redactor) Args(sql string, args []any) json.RawMessage {
 	if len(args) == 0 {
 		return nil
 	}
-	encoded, err := json.Marshal(r.Value(args))
+	sensitiveStatement := r.mentionsSensitive(sql)
+	cleaned := make([]any, len(args))
+	for i, arg := range args {
+		if text, ok := arg.(string); ok && (sensitiveStatement || looksLikeSecret(text)) {
+			cleaned[i] = redactedPlaceholder
+			continue
+		}
+		cleaned[i] = r.Value(arg)
+	}
+	encoded, err := json.Marshal(cleaned)
 	if err != nil {
 		return nil
 	}

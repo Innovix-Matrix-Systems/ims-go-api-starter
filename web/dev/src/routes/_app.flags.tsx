@@ -2,7 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { createFileRoute } from '@tanstack/react-router'
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
-import type { DevFlag, DevTarget, DevTargetStats, Page } from '../api/types'
+import type { DevFlag, DevTarget, DevTargetStats, DevTenant, Page } from '../api/types'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -20,10 +20,29 @@ import {
 } from '../components/ui'
 
 export const Route = createFileRoute('/_app/flags')({
+  validateSearch: (search: Record<string, unknown>): { tenant?: number } => ({
+    tenant: typeof search.tenant === 'number' ? search.tenant : undefined,
+  }),
   component: FlagsPage,
 })
 
 type TargetKind = 'global' | 'tenant' | 'user'
+
+/** Loads the tenant named in ?tenant= (deep link from the Tenants panel). */
+function useLinkedTenant(id: number | undefined) {
+  return useQuery({
+    queryKey: ['tenants', 'detail', id],
+    queryFn: ({ signal }) => api<DevTenant>(`/dev/api/tenants/${id}`, { signal }),
+    enabled: id !== undefined,
+    select: (tenant): DevTarget => ({
+      id: tenant.id,
+      type: 'tenant',
+      name: tenant.name,
+      code: tenant.code,
+      overrides: tenant.overrides,
+    }),
+  })
+}
 
 interface SelectedTarget {
   type: TargetKind
@@ -92,6 +111,7 @@ function FlagRow({
           <span className="code-inline">{flag.key}</span>
           <Chip tone={sourceTone(flag.source)}>{flag.source === 'default' ? 'code default' : flag.source}</Chip>
           {flag.overridden ? <Chip tone="green">set here</Chip> : null}
+          {flag.rollout != null ? <Chip tone="orange">{flag.rollout}% rollout</Chip> : null}
           {flag.overridden && flag.value === flag.default ? (
             <span className="small dim">same as default</span>
           ) : null}
@@ -100,7 +120,10 @@ function FlagRow({
         <div className="small dim mt-8">{flag.description}</div>
       </div>
       <div className="flex" style={{ alignItems: 'center', gap: 10 }}>
-        <span className={`small ${flag.value ? 'green' : 'dim'}`}>{flag.value ? 'on' : 'off'}</span>
+        <span className={`small ${flag.value ? 'green' : 'dim'}`}>
+          {flag.value ? 'on' : 'off'}
+          {flag.rollout != null ? ` · ${flag.rollout}%` : ''}
+        </span>
         <button
           type="button"
           className={`switch ${flag.value ? 'on' : ''}`}
@@ -126,11 +149,83 @@ function FlagRow({
   )
 }
 
+const rolloutPresets = [5, 10, 25, 50, 75, 100]
+
+/** Enables the flag for a percentage of users at the selected target. */
+function RolloutEditor({
+  flag,
+  busy,
+  onApply,
+}: {
+  flag: DevFlag
+  busy: boolean
+  onApply: (rollout: number) => void
+}) {
+  const current = flag.rollout ?? (flag.value ? 100 : 0)
+  const [percent, setPercent] = useState(current)
+  return (
+    <div className="stack-tight">
+      <div className="card-title">Rollout</div>
+      <div className="small dim">
+        Turn the flag on for a share of users. Each user keeps the same answer, and raising the percentage
+        only adds users. 100% means everyone.
+      </div>
+      <div className="flex" style={{ alignItems: 'center', gap: 10 }}>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={percent}
+          aria-label={`Rollout percentage for ${flag.key}`}
+          onChange={(event) => setPercent(Number(event.target.value))}
+          style={{ flex: 1 }}
+        />
+        <input
+          className="input"
+          type="number"
+          min={0}
+          max={100}
+          value={percent}
+          aria-label="Rollout percentage"
+          onChange={(event) => setPercent(Math.max(0, Math.min(100, Number(event.target.value) || 0)))}
+          style={{ width: 72 }}
+        />
+        <span className="small">%</span>
+      </div>
+      <div className="flex" style={{ gap: 6, flexWrap: 'wrap' }}>
+        {rolloutPresets.map((preset) => (
+          <Button
+            key={preset}
+            size="sm"
+            variant={preset === percent ? 'primary' : 'ghost'}
+            onClick={() => setPercent(preset)}
+          >
+            {preset}%
+          </Button>
+        ))}
+      </div>
+      <div className="flex">
+        <Button variant="primary" icon="play" disabled={busy || (percent === current && flag.overridden)} onClick={() => onApply(percent)}>
+          {percent === 100 ? 'Enable for everyone' : `Roll out to ${percent}%`}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function FlagsPage() {
   const { push } = useToast()
   const queryClient = useQueryClient()
   const [kind, setKind] = useState<TargetKind>('global')
   const [selected, setSelected] = useState<SelectedTarget>(globalTarget)
+  const { tenant: linkedTenantID } = Route.useSearch()
+  const linkedTenant = useLinkedTenant(linkedTenantID)
+  useEffect(() => {
+    if (!linkedTenant.data) return
+    setKind('tenant')
+    setSelected(targetFromOption(linkedTenant.data))
+  }, [linkedTenant.data])
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [drawerKey, setDrawerKey] = useState<string | null>(null)
@@ -190,14 +285,25 @@ function FlagsPage() {
   }
 
   const setFlag = useMutation({
-    mutationFn: ({ key, value }: { key: string; value: boolean }) =>
+    mutationFn: ({ key, value, rollout }: { key: string; value: boolean; rollout?: number }) =>
       api<DevFlag[]>('/dev/api/flags', {
         method: 'PATCH',
-        body: { target_type: selected.type, target_id: selected.id, flags: { [key]: value } },
+        body: {
+          target_type: selected.type,
+          target_id: selected.id,
+          flags: { [key]: value },
+          ...(value && rollout !== undefined ? { rollout: { [key]: rollout } } : {}),
+        },
       }),
     onSuccess: (items, variables) => {
       queryClient.setQueryData(['flags', selected.type, selected.id ?? 0], items)
-      push(`${variables.key} ${variables.value ? 'enabled' : 'disabled'} for ${selected.name}`, 'success')
+      const what =
+        variables.value && variables.rollout !== undefined && variables.rollout < 100
+          ? `rolled out to ${variables.rollout}%`
+          : variables.value
+            ? 'enabled for everyone'
+            : 'disabled'
+      push(`${variables.key} ${what} at ${selected.name}`, 'success')
       invalidateDirectory()
       invalidateAudit()
     },
@@ -569,6 +675,8 @@ function FlagsPage() {
               <dd>{selected.type === 'global' ? 'global' : `${selected.type} · ${selected.name}`}</dd>
               <dt>Effective value</dt>
               <dd>{drawerFlag.value ? 'true' : 'false'}</dd>
+              <dt>Rollout</dt>
+              <dd>{drawerFlag.rollout != null ? `${drawerFlag.rollout}% of users` : 'everyone'}</dd>
               <dt>Code default</dt>
               <dd>{drawerFlag.default ? 'true' : 'false'}</dd>
               <dt>Matches default</dt>
@@ -585,6 +693,12 @@ function FlagsPage() {
               target, so it counts as “set here” even when it equals the default. Clearing it makes the flag
               inherit the next level again.
             </div>
+            <RolloutEditor
+              key={`${drawerFlag.key}-${drawerFlag.rollout ?? 100}`}
+              flag={drawerFlag}
+              busy={setFlag.isPending}
+              onApply={(rollout) => setFlag.mutate({ key: drawerFlag.key, value: true, rollout })}
+            />
             <div className="flex">
               <Button
                 icon={drawerFlag.value ? 'pause' : 'play'}

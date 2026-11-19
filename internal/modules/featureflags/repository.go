@@ -18,6 +18,7 @@ type FeatureFlag struct {
 	TargetType *string
 	TargetID   *int64
 	Value      bool
+	Rollout    *int16 // percentage of users/tenants enabled; nil = everyone
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -26,8 +27,8 @@ type FeatureFlag struct {
 type Repository interface {
 	ListGlobal(ctx context.Context) ([]FeatureFlag, error)
 	ListByTarget(ctx context.Context, target Target) ([]FeatureFlag, error)
-	UpsertGlobal(ctx context.Context, key string, value bool, actorID *int64) (*FeatureFlag, error)
-	UpsertTarget(ctx context.Context, key string, target Target, value bool, actorID *int64) (*FeatureFlag, error)
+	UpsertGlobal(ctx context.Context, key string, value bool, rollout *int16, actorID *int64) (*FeatureFlag, error)
+	UpsertTarget(ctx context.Context, key string, target Target, value bool, rollout *int16, actorID *int64) (*FeatureFlag, error)
 	InsertGlobalIfAbsent(ctx context.Context, key string, value bool) (*FeatureFlag, bool, error)
 	Delete(ctx context.Context, key string, target Target) (bool, error)
 	TenantExists(ctx context.Context, tenantID int64) (bool, error)
@@ -62,10 +63,11 @@ func (r *repository) ListByTarget(ctx context.Context, target Target) ([]Feature
 	return mapFlags(rows), nil
 }
 
-func (r *repository) UpsertGlobal(ctx context.Context, key string, value bool, actorID *int64) (*FeatureFlag, error) {
+func (r *repository) UpsertGlobal(ctx context.Context, key string, value bool, rollout *int16, actorID *int64) (*FeatureFlag, error) {
 	row, err := r.queries.UpsertGlobalFeatureFlag(ctx, dbgen.UpsertGlobalFeatureFlagParams{
 		Key:     key,
 		Value:   value,
+		Rollout: rollout,
 		ActorID: actorID,
 	})
 	if err != nil {
@@ -75,12 +77,13 @@ func (r *repository) UpsertGlobal(ctx context.Context, key string, value bool, a
 	return &flag, nil
 }
 
-func (r *repository) UpsertTarget(ctx context.Context, key string, target Target, value bool, actorID *int64) (*FeatureFlag, error) {
+func (r *repository) UpsertTarget(ctx context.Context, key string, target Target, value bool, rollout *int16, actorID *int64) (*FeatureFlag, error) {
 	row, err := r.queries.UpsertTargetFeatureFlag(ctx, dbgen.UpsertTargetFeatureFlagParams{
 		Key:        key,
 		TargetType: target.TypePtr(),
 		TargetID:   target.IDPtr(),
 		Value:      value,
+		Rollout:    rollout,
 		ActorID:    actorID,
 	})
 	if err != nil {
@@ -129,7 +132,7 @@ func (r *repository) TenantExists(ctx context.Context, tenantID int64) (bool, er
 }
 
 func (r *repository) UserTenant(ctx context.Context, userID int64) (int64, bool, error) {
-	row, err := r.queries.GetUser(ctx, userID)
+	row, err := r.queries.GetUser(ctx, dbgen.GetUserParams{ID: userID, AllTenants: true})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, false, nil
@@ -149,6 +152,7 @@ func mapFlag(row dbgen.FeatureFlag) FeatureFlag {
 		TargetType: row.TargetType,
 		TargetID:   row.TargetID,
 		Value:      row.Value,
+		Rollout:    row.Rollout,
 		CreatedAt:  row.CreatedAt.Time,
 		UpdatedAt:  row.UpdatedAt.Time,
 	}

@@ -1,7 +1,6 @@
 package access
 
 import (
-	"strconv"
 	"strings"
 	"time"
 )
@@ -96,8 +95,4 @@ func NewPermissionResponse(permission Permission) PermissionResponse {
 
 func trimString(value string) string {
 	return strings.TrimSpace(value)
-}
-
-func parsePathID(raw string) (int64, error) {
-	return strconv.ParseInt(raw, 10, 64)
 }

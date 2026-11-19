@@ -21,6 +21,7 @@ func RegisterJob(registry *queue.Registry, service *Service) error {
 		Queue:       queue.QueueHeavy,
 		MaxRetries:  1,
 		Timeout:     service.cfg.Timeout,
+		SystemJob:   true,
 		Validate:    validateRunPayload,
 		Handle: func(ctx context.Context, payload []byte) error {
 			var job RunPayload

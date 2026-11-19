@@ -115,3 +115,11 @@ func timePtr(ts pgtype.Timestamptz) *time.Time {
 func timestamptz(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t, Valid: true}
 }
+
+// optionalTimestamptz maps the zero time to SQL NULL.
+func optionalTimestamptz(t time.Time) pgtype.Timestamptz {
+	if t.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return timestamptz(t)
+}

@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
@@ -57,18 +60,26 @@ func newPermissionSyncCommand(state *State) *cobra.Command {
 }
 
 func newDBSeedCommand(state *State) *cobra.Command {
-	return &cobra.Command{
+	var force bool
+	cmd := &cobra.Command{
 		Use:   "db:seed",
 		Short: "Seed permissions, tenant/roles/admin, settings groups/globals and feature flags",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			cfg := state.Config()
+
+			seedPassword, err := resolveSeedPassword(cmd, cfg, force)
+			if err != nil {
+				return err
+			}
+			cfg.Auth.DefaultPassword = seedPassword
+
 			registry, cleanup, err := openDatabase(ctx, state)
 			if err != nil {
 				return err
 			}
 			defer cleanup()
 
-			cfg := state.Config()
 			primary := registry.Primary()
 			queries := dbgen.New(primary.Pool)
 			tx := database.NewTxManager(primary)
@@ -91,4 +102,40 @@ func newDBSeedCommand(state *State) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&force, "force", false, "Allow seeding in production (with safeguards)")
+	return cmd
+}
+
+// resolveSeedPassword enforces the production seeding policy:
+//
+//   - production without --force: refused outright — the seed creates
+//     publicly-known accounts (superadmin@ims.com, developer@ims.com).
+//   - production with --force and a configured (non-default) password: the
+//     operator's password is used.
+//   - production with --force and the well-known default: a high-entropy
+//     password is generated and printed once instead.
+func resolveSeedPassword(cmd *cobra.Command, cfg *config.Config, force bool) (string, error) {
+	if !cfg.IsProduction() {
+		return cfg.Auth.DefaultPassword, nil
+	}
+	if cfg.Auth.DefaultPassword != config.DefaultSeedPassword {
+		return cfg.Auth.DefaultPassword, nil
+	}
+	if !force {
+		return "", fmt.Errorf("db:seed refuses to run in production with the default password: it would create publicly-known admin accounts; set AUTH_DEFAULT_PASSWORD first or pass --force to auto-generate a random password (printed once)")
+	}
+	password, err := generateSeedPassword()
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Generated seed password (printed once, store it now): %s\n", password)
+	return password, nil
+}
+
+func generateSeedPassword() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate seed password: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

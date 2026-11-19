@@ -37,6 +37,7 @@ func (s *Service) RegisterJobs(registry *queue.Registry) error {
 			Description: "Fans a notification out to its target users (chunked, idempotent).",
 			Queue:       queue.QueueDefault,
 			Timeout:     5 * time.Minute,
+			SystemJob:   true,
 			Validate:    validatePayload[fanOutPayload],
 			Handle: func(ctx context.Context, payload []byte) error {
 				var input fanOutPayload
@@ -51,6 +52,7 @@ func (s *Service) RegisterJobs(registry *queue.Registry) error {
 			Description: "Marks every addressable notification read for one user.",
 			Queue:       queue.QueueDefault,
 			Timeout:     5 * time.Minute,
+			SystemJob:   true,
 			Validate:    validatePayload[markAllReadPayload],
 			Handle: func(ctx context.Context, payload []byte) error {
 				var input markAllReadPayload
@@ -65,6 +67,7 @@ func (s *Service) RegisterJobs(registry *queue.Registry) error {
 			Description: "Repairs unread counters after a notification is deleted.",
 			Queue:       queue.QueueDefault,
 			Timeout:     time.Minute,
+			SystemJob:   true,
 			Validate:    validatePayload[decrementUnreadPayload],
 			Handle: func(ctx context.Context, payload []byte) error {
 				var input decrementUnreadPayload

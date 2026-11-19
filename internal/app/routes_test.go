@@ -122,10 +122,13 @@ func TestMethodNotAllowedReturnsProblem(t *testing.T) {
 	}
 }
 
+// TestHealthEndpoint runs without a database in CI's build-test job, so the
+// database check may fail: readiness then answers 503 (fail closed). Either
+// way the status must agree with the body.
 func TestHealthEndpoint(t *testing.T) {
 	rec := doRequest(t, newTestRouter(t), http.MethodGet, "/api/health", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d", rec.Code)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 200 or 503", rec.Code)
 	}
 	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
 		t.Errorf("cache-control = %q", cc)
@@ -142,6 +145,13 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if body.FinishedAt == 0 || len(body.CheckResults) == 0 {
 		t.Errorf("body = %s", rec.Body.String())
+	}
+	failed := false
+	for _, check := range body.CheckResults {
+		failed = failed || check.Status == "failed" || check.Status == "crashed"
+	}
+	if rec.Code == http.StatusServiceUnavailable && !failed {
+		t.Errorf("503 without a failed check: %s", rec.Body.String())
 	}
 }
 

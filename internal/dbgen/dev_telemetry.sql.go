@@ -373,14 +373,18 @@ SELECT id, request_id, level, message, attributes, created_at FROM dev_logs
 WHERE ($1::bigint = 0 OR id < $1::bigint)
   AND ($2::text = '' OR level = $2::text)
   AND ($3::text = '' OR request_id = $3::text)
+  AND ($4::text = '' OR message ILIKE '%' || $4::text || '%'
+       OR coalesce(attributes::text, '') ILIKE '%' || $4::text || '%'
+       OR coalesce(request_id, '') ILIKE $4::text || '%')
 ORDER BY id DESC
-LIMIT $4
+LIMIT $5
 `
 
 type ListDevLogsParams struct {
 	BeforeID  int64  `json:"before_id"`
 	Level     string `json:"level"`
 	RequestID string `json:"request_id"`
+	Search    string `json:"search"`
 	RowLimit  int32  `json:"row_limit"`
 }
 
@@ -389,6 +393,7 @@ func (q *Queries) ListDevLogs(ctx context.Context, arg ListDevLogsParams) ([]Dev
 		arg.BeforeID,
 		arg.Level,
 		arg.RequestID,
+		arg.Search,
 		arg.RowLimit,
 	)
 	if err != nil {
