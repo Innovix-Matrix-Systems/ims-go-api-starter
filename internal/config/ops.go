@@ -43,9 +43,11 @@ type DevDashboard struct {
 	Capture       DevCapture
 	SampleRate    float64
 	RetentionDays int
-	MaxBodyBytes  int64
-	RedactKeys    []string
-	Store         string
+	// AuditRetentionDays keeps the dashboard audit log (dev_actions).
+	AuditRetentionDays int
+	MaxBodyBytes       int64
+	RedactKeys         []string
+	Store              string
 }
 
 // DevCapture toggles the telemetry capture categories.
@@ -109,6 +111,13 @@ func (c *Config) loadDevDashboard() error {
 	if retention < 1 {
 		return errors.New("DEV_DASHBOARD_RETENTION_DAYS must be at least 1")
 	}
+	auditRetention, err := getInt("DEV_DASHBOARD_AUDIT_RETENTION_DAYS", 180)
+	if err != nil {
+		return err
+	}
+	if auditRetention < 1 {
+		return errors.New("DEV_DASHBOARD_AUDIT_RETENTION_DAYS must be at least 1")
+	}
 	maxBody, err := getInt64("DEV_DASHBOARD_MAX_BODY_BYTES", 64*1024)
 	if err != nil {
 		return err
@@ -129,8 +138,10 @@ func (c *Config) loadDevDashboard() error {
 		SampleRate:    sample,
 		RetentionDays: retention,
 		MaxBodyBytes:  maxBody,
-		RedactKeys:    splitCSV(getString("DEV_DASHBOARD_REDACT_KEYS", "")),
-		Store:         store,
+
+		AuditRetentionDays: auditRetention,
+		RedactKeys:         splitCSV(getString("DEV_DASHBOARD_REDACT_KEYS", "")),
+		Store:              store,
 	}
 	return nil
 }

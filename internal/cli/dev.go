@@ -38,6 +38,11 @@ func newDevPruneCommand(state *State) *cobra.Command {
 					cfg.DevDashboard.RetentionDays,
 					deleted["requests"], deleted["queries"], deleted["cache_events"],
 					deleted["queue_events"], deleted["logs"], deleted["exceptions"])
+				audit, err := dev.NewActionRepository(platform.Tx.Queries()).Prune(cmd.Context(), cfg.DevDashboard.AuditRetentionDays)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Pruned %d audit row(s) past %d days.\n", audit, cfg.DevDashboard.AuditRetentionDays)
 				return nil
 			})
 		},

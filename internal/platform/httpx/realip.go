@@ -11,7 +11,14 @@ import (
 const (
 	trustedProxyKey contextKey = "trusted_proxy"
 	clientIPKey     contextKey = "client_ip"
+	userAgentKey    contextKey = "user_agent"
 )
+
+// UserAgent returns the caller's User-Agent header ("" outside a request).
+func UserAgent(ctx context.Context) string {
+	agent, _ := ctx.Value(userAgentKey).(string)
+	return agent
+}
 
 // ClientIP returns the caller's IP address resolved by RealIP ("" outside an
 // HTTP request).
@@ -46,9 +53,17 @@ func RealIP(trusted []string) func(http.Handler) http.Handler {
 			}
 			// Services (e.g. the activity log) read the client IP from the
 			// context because they never see the *http.Request.
+			ctx := r.Context()
 			if client := peerAddr(r.RemoteAddr); client.IsValid() {
-				r = r.WithContext(context.WithValue(r.Context(), clientIPKey, client.String()))
+				ctx = context.WithValue(ctx, clientIPKey, client.String())
 			}
+			if agent := r.UserAgent(); agent != "" {
+				if len(agent) > 512 {
+					agent = agent[:512]
+				}
+				ctx = context.WithValue(ctx, userAgentKey, agent)
+			}
+			r = r.WithContext(ctx)
 			next.ServeHTTP(w, r)
 		})
 	}

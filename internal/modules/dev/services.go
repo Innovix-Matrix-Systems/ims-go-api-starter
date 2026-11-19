@@ -11,6 +11,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	filesmod "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/files"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/identity"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
@@ -63,7 +64,45 @@ func (a *Auditor) Record(ctx context.Context, actorID int64, action, target stri
 		Status:       status,
 		ErrorMessage: message,
 		DurationMS:   int32(max(time.Since(started), 0).Milliseconds()),
+		IP:           optionalText(httpx.ClientIP(ctx)),
+		UserAgent:    optionalText(httpx.UserAgent(ctx)),
 	})
+}
+
+// SignIn records a dashboard sign-in attempt (auth.login). Failed attempts
+// keep the e-mail that was tried, never the password.
+func (a *Auditor) SignIn(ctx context.Context, email string, userID int64, err error) {
+	a.Record(ctx, userID, "auth.login", email, map[string]any{"email": email, "method": "password"}, time.Now(), err)
+}
+
+// SignOut records a dashboard sign-out (auth.logout).
+func (a *Auditor) SignOut(ctx context.Context, userID int64) {
+	a.Record(ctx, userID, "auth.logout", "", map[string]any{}, time.Now(), nil)
+}
+
+// Search filters the audit log; it also returns the matching total.
+func (a *Auditor) Search(ctx context.Context, filter ActionFilter) ([]Action, int64, error) {
+	return a.actions.Search(ctx, filter)
+}
+
+// Get returns one audit row.
+func (a *Auditor) Get(ctx context.Context, id int64) (*Action, error) { return a.actions.Get(ctx, id) }
+
+// Facets lists the actions and people that appear in the log (filter menus).
+func (a *Auditor) Facets(ctx context.Context) ([]ActionKind, []ActionActor, error) {
+	kinds, err := a.actions.Kinds(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	actors, err := a.actions.Actors(ctx)
+	return kinds, actors, err
+}
+
+// Stats is the header: actions and failed sign-ins in the last day.
+func (a *Auditor) Stats(ctx context.Context, retentionDays int) (ActionStats, error) {
+	stats, err := a.actions.Stats(ctx)
+	stats.RetentionDays = retentionDays
+	return stats, err
 }
 
 // List returns the audit log, newest first.

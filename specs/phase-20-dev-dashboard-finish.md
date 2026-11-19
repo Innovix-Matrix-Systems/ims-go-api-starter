@@ -71,6 +71,21 @@ that match the theme, and give the dashboard code the same service-layer shape a
       setting by its grip onto another setting (lands before it), onto a group card or a rail
       group (lands at the end), or onto Ungrouped; drag rail groups to reorder them.
 
+### Audit log (`/dev/actions`)
+- [x] Migration `00024_dev_actions_context.sql`: `ip`, `user_agent` on `dev_actions`; every audited
+      action records where it came from (`httpx.ClientIP` / `httpx.UserAgent`).
+- [x] Dashboard sign-ins (`auth.login`, including failures with the e-mail tried, never the
+      password) and sign-outs (`auth.logout`) are recorded through `auth.SignInRecorder`; API
+      logins from other devices are not.
+- [x] Server-side filters: free text (actor e-mail, target, IP prefix, details), action, person,
+      result, date range; `meta.total` count. `GET /actions/{id}`, `/actions/facets` (filter
+      menus), `/actions/stats` (last 24 h, failed sign-ins, retention).
+- [x] `DEV_DASHBOARD_AUDIT_RETENTION_DAYS` (default 180), pruned by `devdashboard.prune` and
+      `dev-dashboard:prune`.
+- [x] UI: stats header ("show them" jumps to failed sign-ins), filter card synced to the URL,
+      readable action names with category tags, CSV export, and a drawer with result, who, IP,
+      browser, details, prev/next (↑/↓) and quick filters (this person, this action, this IP).
+
 ### Command palette (Ctrl+K)
 - [x] Lists every command (opens its run prompt), the inspector tabs and the new pages.
 

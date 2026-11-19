@@ -171,37 +171,6 @@ func (h *Handler) mutateJob(w http.ResponseWriter, r *http.Request, action strin
 	h.responder.Data(w, r, http.StatusOK, job)
 }
 
-func (h *Handler) listActions(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query()
-	limit, err := parseLimit(query.Get("limit"))
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	beforeID := int64(0)
-	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
-		value, parseErr := strconv.ParseInt(raw, 10, 64)
-		if parseErr != nil || value < 0 {
-			h.responder.Error(w, r, apperr.Validation(map[string][]string{
-				"cursor": {"The cursor is invalid."},
-			}))
-			return
-		}
-		beforeID = value
-	}
-	actions, err := h.audit.List(r.Context(), beforeID, int32(limit))
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	nextCursor := ""
-	if len(actions) == limit && len(actions) > 0 {
-		nextCursor = strconv.FormatInt(actions[len(actions)-1].ID, 10)
-	}
-	meta := map[string]any{"next_cursor": nextCursor}
-	h.responder.Cursor(w, r, http.StatusOK, actions, meta, nil)
-}
-
 func validAdminState(state string) bool {
 	for _, candidate := range queue.AdminStates {
 		if candidate == state {

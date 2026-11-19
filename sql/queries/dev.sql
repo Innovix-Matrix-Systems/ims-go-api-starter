@@ -1,6 +1,7 @@
 -- name: InsertDevAction :one
-INSERT INTO dev_actions (actor_user_id, action, target, params, status, error_message, duration_ms)
-VALUES (@actor_user_id, @action, @target, @params, @status, @error_message, @duration_ms)
+INSERT INTO dev_actions (actor_user_id, action, target, params, status, error_message, duration_ms, ip, user_agent)
+VALUES (@actor_user_id, @action, @target, @params, @status, @error_message, @duration_ms,
+        sqlc.narg('ip'), sqlc.narg('user_agent'))
 RETURNING *;
 
 -- name: ListDevActions :many
@@ -230,3 +231,63 @@ LIMIT 20;
 
 -- name: DevPackageFeatures :many
 SELECT feature_key, is_enabled, limit_value FROM package_features WHERE package_id = @package_id;
+
+-- name: SearchDevActions :many
+-- The audit log, newest first, with the actor's e-mail.
+SELECT a.*, u.email AS actor_email, u.name AS actor_name
+FROM dev_actions a
+LEFT JOIN users u ON u.id = a.actor_user_id
+WHERE (@action::text = '' OR a.action = @action::text)
+  AND (@actor_id::bigint = 0 OR a.actor_user_id = @actor_id::bigint)
+  AND (@status::text = '' OR a.status = @status::text)
+  AND (sqlc.narg('from_at')::timestamptz IS NULL OR a.created_at >= sqlc.narg('from_at')::timestamptz)
+  AND (sqlc.narg('to_at')::timestamptz IS NULL OR a.created_at < sqlc.narg('to_at')::timestamptz)
+  AND (@search::text = ''
+       OR coalesce(u.email, '') ILIKE '%' || @search::text || '%'
+       OR coalesce(a.target, '') ILIKE '%' || @search::text || '%'
+       OR coalesce(a.ip, '') ILIKE @search::text || '%'
+       OR a.params::text ILIKE '%' || @search::text || '%')
+  AND (@before_id::bigint = 0 OR a.id < @before_id::bigint)
+ORDER BY a.id DESC
+LIMIT @row_limit;
+
+-- name: CountDevActionsFiltered :one
+SELECT count(*)
+FROM dev_actions a
+LEFT JOIN users u ON u.id = a.actor_user_id
+WHERE (@action::text = '' OR a.action = @action::text)
+  AND (@actor_id::bigint = 0 OR a.actor_user_id = @actor_id::bigint)
+  AND (@status::text = '' OR a.status = @status::text)
+  AND (sqlc.narg('from_at')::timestamptz IS NULL OR a.created_at >= sqlc.narg('from_at')::timestamptz)
+  AND (sqlc.narg('to_at')::timestamptz IS NULL OR a.created_at < sqlc.narg('to_at')::timestamptz)
+  AND (@search::text = ''
+       OR coalesce(u.email, '') ILIKE '%' || @search::text || '%'
+       OR coalesce(a.target, '') ILIKE '%' || @search::text || '%'
+       OR coalesce(a.ip, '') ILIKE @search::text || '%'
+       OR a.params::text ILIKE '%' || @search::text || '%');
+
+-- name: GetDevActionDetail :one
+SELECT a.*, u.email AS actor_email, u.name AS actor_name
+FROM dev_actions a
+LEFT JOIN users u ON u.id = a.actor_user_id
+WHERE a.id = @id;
+
+-- name: DevActionKinds :many
+SELECT action, count(*)::bigint AS total FROM dev_actions GROUP BY action ORDER BY action;
+
+-- name: DevActionActors :many
+SELECT a.actor_user_id, u.email, count(*)::bigint AS total
+FROM dev_actions a
+LEFT JOIN users u ON u.id = a.actor_user_id
+GROUP BY a.actor_user_id, u.email
+ORDER BY total DESC
+LIMIT 100;
+
+-- name: DevActionStats :one
+SELECT
+    (SELECT count(*) FROM dev_actions WHERE created_at > now() - interval '24 hours')::bigint AS last_day,
+    (SELECT count(*) FROM dev_actions
+     WHERE action = 'auth.login' AND status <> 'ok' AND created_at > now() - interval '24 hours')::bigint AS failed_sign_ins;
+
+-- name: PruneDevActions :execrows
+DELETE FROM dev_actions WHERE created_at < now() - make_interval(days => @retention_days::int);

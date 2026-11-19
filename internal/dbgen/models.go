@@ -102,6 +102,8 @@ type DevAction struct {
 	ErrorMessage *string            `json:"error_message"`
 	DurationMs   int32              `json:"duration_ms"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Ip           *string            `json:"ip"`
+	UserAgent    *string            `json:"user_agent"`
 }
 
 type DevCacheEvent struct {

@@ -3018,8 +3018,15 @@ paths:
     get:
       tags: [Dev]
       summary: Developer action audit log
+      description: Every dashboard sign-in and action, newest first. `meta.total` counts all matches.
       operationId: devListActions
       parameters:
+        - {name: search, in: query, schema: {type: string}, description: "Actor e-mail, target, IP prefix or details text."}
+        - {name: action, in: query, schema: {type: string}, example: command.run}
+        - {name: actor_id, in: query, schema: {type: integer, format: int64}}
+        - {name: status, in: query, schema: {type: string, enum: [ok, error]}}
+        - {name: from, in: query, schema: {type: string}, description: "YYYY-MM-DD or RFC 3339 (inclusive)."}
+        - {name: to, in: query, schema: {type: string}, description: "YYYY-MM-DD (whole day included) or RFC 3339."}
         - name: limit
           in: query
           schema: {type: integer, minimum: 1, maximum: 100, default: 25}
@@ -3033,6 +3040,65 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/DevActionListEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/actions/facets:
+    get:
+      tags: [Dev]
+      summary: Actions and people that appear in the audit log (filter menus)
+      operationId: devActionFacets
+      responses:
+        "200":
+          description: Facets.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevActionFacets"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/actions/stats:
+    get:
+      tags: [Dev]
+      summary: Audit log header numbers
+      operationId: devActionStats
+      responses:
+        "200":
+          description: Stats.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevActionStats"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /dev/api/actions/{id}:
+    get:
+      tags: [Dev]
+      summary: One audit row
+      operationId: devGetAction
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        "200":
+          description: The audit row.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevAction"}
         "401": *unauthorized
         "403": *forbidden
         "404": *notFound
@@ -5580,7 +5646,41 @@ components:
         status: {type: string, enum: [ok, error]}
         error_message: {type: string, nullable: true}
         duration_ms: {type: integer}
+        ip: {type: string, nullable: true}
+        user_agent: {type: string, nullable: true}
+        actor_email: {type: string, nullable: true}
+        actor_name: {type: string, nullable: true}
         created_at: {type: string, format: date-time}
+
+    DevActionFacets:
+      type: object
+      required: [actions, actors]
+      properties:
+        actions:
+          type: array
+          items:
+            type: object
+            required: [action, total]
+            properties:
+              action: {type: string}
+              total: {type: integer, format: int64}
+        actors:
+          type: array
+          items:
+            type: object
+            required: [user_id, email, total]
+            properties:
+              user_id: {type: integer, format: int64}
+              email: {type: string, nullable: true}
+              total: {type: integer, format: int64}
+
+    DevActionStats:
+      type: object
+      required: [last_day, failed_sign_ins, retention_days]
+      properties:
+        last_day: {type: integer, format: int64, description: Actions in the last 24 hours.}
+        failed_sign_ins: {type: integer, format: int64, description: Failed dashboard sign-ins in the last 24 hours.}
+        retention_days: {type: integer}
 
     DevTenant:
       type: object
@@ -5774,6 +5874,7 @@ components:
           type: object
           properties:
             next_cursor: {type: string}
+            total: {type: integer, format: int64}
 
     DevQueue:
       type: object

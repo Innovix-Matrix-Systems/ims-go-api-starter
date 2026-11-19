@@ -217,6 +217,8 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 			Collector:     platform.Telemetry,
 			Logger:        logger,
 			RetentionDays: cfg.DevDashboard.RetentionDays,
+
+			AuditRetentionDays: cfg.DevDashboard.AuditRetentionDays,
 			Inspector: dev.NewInspectorService(queries, cfg, func() chi.Routes {
 				if deps == nil {
 					return nil
@@ -241,6 +243,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 			responder,
 		),
 	}
+	deps.Auth.WithSignInRecorder(deps.Dev.Auditor())
 	cleanup := func() {
 		limiter.Close()
 		platformCleanup()

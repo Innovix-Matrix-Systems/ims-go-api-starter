@@ -32,6 +32,8 @@ type Handler struct {
 	collector         *telemetry.Collector
 	inspector         *InspectorService
 	commands          *CommandService
+	// auditRetentionDays is how long dev_actions rows are kept.
+	auditRetentionDays int
 }
 
 // NewHandler creates the developer dashboard handler.
@@ -57,18 +59,23 @@ func NewHandler(deps Deps) *Handler {
 		sessions:          &SessionService{repo: deps.Sessions, audit: audit},
 		developers: &DeveloperService{repo: deps.Developers, roles: deps.Roles, roleService: deps.RoleService,
 			identity: deps.Identity, audit: audit},
-		files:     &FileBrowser{FileRepository: deps.Files, files: deps.FileService, audit: audit},
-		targets:   &TargetService{TargetRepository: deps.Targets},
-		tenants:   &TenantService{queries: deps.Queries},
-		backups:   deps.Backups,
-		flags:     deps.FeatureFlags,
-		settings:  deps.Settings,
-		exchange:  deps.Exchange,
-		collector: deps.Collector,
-		inspector: deps.Inspector,
-		commands:  deps.Commands,
+		files:              &FileBrowser{FileRepository: deps.Files, files: deps.FileService, audit: audit},
+		targets:            &TargetService{TargetRepository: deps.Targets},
+		tenants:            &TenantService{queries: deps.Queries},
+		backups:            deps.Backups,
+		flags:              deps.FeatureFlags,
+		settings:           deps.Settings,
+		exchange:           deps.Exchange,
+		collector:          deps.Collector,
+		inspector:          deps.Inspector,
+		commands:           deps.Commands,
+		auditRetentionDays: deps.AuditRetentionDays,
 	}
 }
+
+// Auditor exposes the audit writer (the auth module records dashboard
+// sign-ins through it).
+func (h *Handler) Auditor() *Auditor { return h.audit }
 
 // MeResponse is the SPA bootstrap payload: the current identity plus the
 // effective permission set (super-admins bypass permission checks, so the

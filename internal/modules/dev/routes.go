@@ -8,6 +8,9 @@ import "github.com/go-chi/chi/v5"
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/me", h.me)
 	r.Get("/actions", h.listActions)
+	r.Get("/actions/facets", h.actionFacets)
+	r.Get("/actions/stats", h.actionStats)
+	r.Get("/actions/{id}", h.getAction)
 	r.With(h.manage).Post("/simulate-events", h.simulateEvents)
 
 	r.Get("/playground", h.playgroundInfoHandler)

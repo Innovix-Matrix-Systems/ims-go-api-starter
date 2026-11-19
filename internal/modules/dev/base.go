@@ -53,12 +53,14 @@ type Deps struct {
 	Collector     *telemetry.Collector
 	Logger        *slog.Logger
 	RetentionDays int
-	Inspector     *InspectorService
-	Queries       *dbgen.Queries
-	Commands      *CommandService
-	Binder        *httpx.Binder
-	Validator     *httpx.Validator
-	Responder     *httpx.Responder
+	// AuditRetentionDays is how long audit rows are kept (shown in the UI).
+	AuditRetentionDays int
+	Inspector          *InspectorService
+	Queries            *dbgen.Queries
+	Commands           *CommandService
+	Binder             *httpx.Binder
+	Validator          *httpx.Validator
+	Responder          *httpx.Responder
 }
 
 // panelBase carries the dependencies and helpers shared by every dashboard

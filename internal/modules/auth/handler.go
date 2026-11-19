@@ -2,6 +2,7 @@
 package auth
 
 import (
+	"context"
 	"net"
 	"net/http"
 
@@ -17,7 +18,25 @@ type Handler struct {
 	recovery *authn.Recovery
 	users    *identity.Service
 	checker  *authz.Checker
+	signIns  SignInRecorder
 	httpx.Kit
+}
+
+// DashboardDevice is the device name the developer dashboard signs in with;
+// its sign-ins and sign-outs are written to the dashboard audit log.
+const DashboardDevice = "dev-dashboard"
+
+// SignInRecorder records dashboard sign-ins (implemented by the dev module's
+// auditor; an interface keeps auth free of dev).
+type SignInRecorder interface {
+	SignIn(ctx context.Context, email string, userID int64, err error)
+	SignOut(ctx context.Context, userID int64)
+}
+
+// WithSignInRecorder audits sign-ins made from the developer dashboard.
+func (h *Handler) WithSignInRecorder(recorder SignInRecorder) *Handler {
+	h.signIns = recorder
+	return h
 }
 
 // NewHandler creates the auth handler.
@@ -145,6 +164,13 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.service.Login(r.Context(), req.Email, req.Password, req.Device, clientIP(r))
+	if h.signIns != nil && req.Device == DashboardDevice {
+		var userID int64
+		if err == nil && result != nil && result.User != nil {
+			userID = result.User.ID
+		}
+		h.signIns.SignIn(r.Context(), req.Email, userID, err)
+	}
 	if err != nil {
 		h.Error(w, r, err)
 		return
@@ -174,6 +200,9 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	if err := h.service.Logout(r.Context(), identity.UserID, req.Device); err != nil {
 		h.Error(w, r, err)
 		return
+	}
+	if h.signIns != nil && req.Device == DashboardDevice {
+		h.signIns.SignOut(r.Context(), identity.UserID)
 	}
 	h.NoContent(w)
 }

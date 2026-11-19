@@ -11,6 +11,45 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countDevActionsFiltered = `-- name: CountDevActionsFiltered :one
+SELECT count(*)
+FROM dev_actions a
+LEFT JOIN users u ON u.id = a.actor_user_id
+WHERE ($1::text = '' OR a.action = $1::text)
+  AND ($2::bigint = 0 OR a.actor_user_id = $2::bigint)
+  AND ($3::text = '' OR a.status = $3::text)
+  AND ($4::timestamptz IS NULL OR a.created_at >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR a.created_at < $5::timestamptz)
+  AND ($6::text = ''
+       OR coalesce(u.email, '') ILIKE '%' || $6::text || '%'
+       OR coalesce(a.target, '') ILIKE '%' || $6::text || '%'
+       OR coalesce(a.ip, '') ILIKE $6::text || '%'
+       OR a.params::text ILIKE '%' || $6::text || '%')
+`
+
+type CountDevActionsFilteredParams struct {
+	Action  string             `json:"action"`
+	ActorID int64              `json:"actor_id"`
+	Status  string             `json:"status"`
+	FromAt  pgtype.Timestamptz `json:"from_at"`
+	ToAt    pgtype.Timestamptz `json:"to_at"`
+	Search  string             `json:"search"`
+}
+
+func (q *Queries) CountDevActionsFiltered(ctx context.Context, arg CountDevActionsFilteredParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countDevActionsFiltered,
+		arg.Action,
+		arg.ActorID,
+		arg.Status,
+		arg.FromAt,
+		arg.ToAt,
+		arg.Search,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countDevDevelopers = `-- name: CountDevDevelopers :one
 SELECT count(*)
 FROM users u
@@ -100,6 +139,89 @@ func (q *Queries) CountDevUserTargetsWithOverrides(ctx context.Context) (int64, 
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const devActionActors = `-- name: DevActionActors :many
+SELECT a.actor_user_id, u.email, count(*)::bigint AS total
+FROM dev_actions a
+LEFT JOIN users u ON u.id = a.actor_user_id
+GROUP BY a.actor_user_id, u.email
+ORDER BY total DESC
+LIMIT 100
+`
+
+type DevActionActorsRow struct {
+	ActorUserID int64   `json:"actor_user_id"`
+	Email       *string `json:"email"`
+	Total       int64   `json:"total"`
+}
+
+func (q *Queries) DevActionActors(ctx context.Context) ([]DevActionActorsRow, error) {
+	rows, err := q.db.Query(ctx, devActionActors)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevActionActorsRow{}
+	for rows.Next() {
+		var i DevActionActorsRow
+		if err := rows.Scan(&i.ActorUserID, &i.Email, &i.Total); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const devActionKinds = `-- name: DevActionKinds :many
+SELECT action, count(*)::bigint AS total FROM dev_actions GROUP BY action ORDER BY action
+`
+
+type DevActionKindsRow struct {
+	Action string `json:"action"`
+	Total  int64  `json:"total"`
+}
+
+func (q *Queries) DevActionKinds(ctx context.Context) ([]DevActionKindsRow, error) {
+	rows, err := q.db.Query(ctx, devActionKinds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevActionKindsRow{}
+	for rows.Next() {
+		var i DevActionKindsRow
+		if err := rows.Scan(&i.Action, &i.Total); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const devActionStats = `-- name: DevActionStats :one
+SELECT
+    (SELECT count(*) FROM dev_actions WHERE created_at > now() - interval '24 hours')::bigint AS last_day,
+    (SELECT count(*) FROM dev_actions
+     WHERE action = 'auth.login' AND status <> 'ok' AND created_at > now() - interval '24 hours')::bigint AS failed_sign_ins
+`
+
+type DevActionStatsRow struct {
+	LastDay       int64 `json:"last_day"`
+	FailedSignIns int64 `json:"failed_sign_ins"`
+}
+
+func (q *Queries) DevActionStats(ctx context.Context) (DevActionStatsRow, error) {
+	row := q.db.QueryRow(ctx, devActionStats)
+	var i DevActionStatsRow
+	err := row.Scan(&i.LastDay, &i.FailedSignIns)
+	return i, err
 }
 
 const devCommandRunSummary = `-- name: DevCommandRunSummary :many
@@ -493,7 +615,7 @@ func (q *Queries) FinishDevAction(ctx context.Context, arg FinishDevActionParams
 }
 
 const getDevAction = `-- name: GetDevAction :one
-SELECT id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at FROM dev_actions WHERE id = $1
+SELECT id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at, ip, user_agent FROM dev_actions WHERE id = $1
 `
 
 func (q *Queries) GetDevAction(ctx context.Context, id int64) (DevAction, error) {
@@ -509,14 +631,61 @@ func (q *Queries) GetDevAction(ctx context.Context, id int64) (DevAction, error)
 		&i.ErrorMessage,
 		&i.DurationMs,
 		&i.CreatedAt,
+		&i.Ip,
+		&i.UserAgent,
+	)
+	return i, err
+}
+
+const getDevActionDetail = `-- name: GetDevActionDetail :one
+SELECT a.id, a.actor_user_id, a.action, a.target, a.params, a.status, a.error_message, a.duration_ms, a.created_at, a.ip, a.user_agent, u.email AS actor_email, u.name AS actor_name
+FROM dev_actions a
+LEFT JOIN users u ON u.id = a.actor_user_id
+WHERE a.id = $1
+`
+
+type GetDevActionDetailRow struct {
+	ID           int64              `json:"id"`
+	ActorUserID  int64              `json:"actor_user_id"`
+	Action       string             `json:"action"`
+	Target       *string            `json:"target"`
+	Params       []byte             `json:"params"`
+	Status       string             `json:"status"`
+	ErrorMessage *string            `json:"error_message"`
+	DurationMs   int32              `json:"duration_ms"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Ip           *string            `json:"ip"`
+	UserAgent    *string            `json:"user_agent"`
+	ActorEmail   *string            `json:"actor_email"`
+	ActorName    *string            `json:"actor_name"`
+}
+
+func (q *Queries) GetDevActionDetail(ctx context.Context, id int64) (GetDevActionDetailRow, error) {
+	row := q.db.QueryRow(ctx, getDevActionDetail, id)
+	var i GetDevActionDetailRow
+	err := row.Scan(
+		&i.ID,
+		&i.ActorUserID,
+		&i.Action,
+		&i.Target,
+		&i.Params,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.DurationMs,
+		&i.CreatedAt,
+		&i.Ip,
+		&i.UserAgent,
+		&i.ActorEmail,
+		&i.ActorName,
 	)
 	return i, err
 }
 
 const insertDevAction = `-- name: InsertDevAction :one
-INSERT INTO dev_actions (actor_user_id, action, target, params, status, error_message, duration_ms)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at
+INSERT INTO dev_actions (actor_user_id, action, target, params, status, error_message, duration_ms, ip, user_agent)
+VALUES ($1, $2, $3, $4, $5, $6, $7,
+        $8, $9)
+RETURNING id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at, ip, user_agent
 `
 
 type InsertDevActionParams struct {
@@ -527,6 +696,8 @@ type InsertDevActionParams struct {
 	Status       string  `json:"status"`
 	ErrorMessage *string `json:"error_message"`
 	DurationMs   int32   `json:"duration_ms"`
+	Ip           *string `json:"ip"`
+	UserAgent    *string `json:"user_agent"`
 }
 
 func (q *Queries) InsertDevAction(ctx context.Context, arg InsertDevActionParams) (DevAction, error) {
@@ -538,6 +709,8 @@ func (q *Queries) InsertDevAction(ctx context.Context, arg InsertDevActionParams
 		arg.Status,
 		arg.ErrorMessage,
 		arg.DurationMs,
+		arg.Ip,
+		arg.UserAgent,
 	)
 	var i DevAction
 	err := row.Scan(
@@ -550,12 +723,14 @@ func (q *Queries) InsertDevAction(ctx context.Context, arg InsertDevActionParams
 		&i.ErrorMessage,
 		&i.DurationMs,
 		&i.CreatedAt,
+		&i.Ip,
+		&i.UserAgent,
 	)
 	return i, err
 }
 
 const listDevActions = `-- name: ListDevActions :many
-SELECT id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at FROM dev_actions
+SELECT id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at, ip, user_agent FROM dev_actions
 WHERE ($1::bigint = 0 OR id < $1::bigint)
 ORDER BY id DESC
 LIMIT $2
@@ -585,6 +760,8 @@ func (q *Queries) ListDevActions(ctx context.Context, arg ListDevActionsParams) 
 			&i.ErrorMessage,
 			&i.DurationMs,
 			&i.CreatedAt,
+			&i.Ip,
+			&i.UserAgent,
 		); err != nil {
 			return nil, err
 		}
@@ -597,7 +774,7 @@ func (q *Queries) ListDevActions(ctx context.Context, arg ListDevActionsParams) 
 }
 
 const listDevCommandRuns = `-- name: ListDevCommandRuns :many
-SELECT id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at FROM dev_actions
+SELECT id, actor_user_id, action, target, params, status, error_message, duration_ms, created_at, ip, user_agent FROM dev_actions
 WHERE action = 'command.run'
   AND ($1::text = '' OR target = $1::text)
   AND ($2::bigint = 0 OR id < $2::bigint)
@@ -631,6 +808,8 @@ func (q *Queries) ListDevCommandRuns(ctx context.Context, arg ListDevCommandRuns
 			&i.ErrorMessage,
 			&i.DurationMs,
 			&i.CreatedAt,
+			&i.Ip,
+			&i.UserAgent,
 		); err != nil {
 			return nil, err
 		}
@@ -836,6 +1015,108 @@ func (q *Queries) ListDevUserTargets(ctx context.Context, arg ListDevUserTargets
 			&i.TenantID,
 			&i.TenantName,
 			&i.Overrides,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pruneDevActions = `-- name: PruneDevActions :execrows
+DELETE FROM dev_actions WHERE created_at < now() - make_interval(days => $1::int)
+`
+
+func (q *Queries) PruneDevActions(ctx context.Context, retentionDays int32) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneDevActions, retentionDays)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const searchDevActions = `-- name: SearchDevActions :many
+SELECT a.id, a.actor_user_id, a.action, a.target, a.params, a.status, a.error_message, a.duration_ms, a.created_at, a.ip, a.user_agent, u.email AS actor_email, u.name AS actor_name
+FROM dev_actions a
+LEFT JOIN users u ON u.id = a.actor_user_id
+WHERE ($1::text = '' OR a.action = $1::text)
+  AND ($2::bigint = 0 OR a.actor_user_id = $2::bigint)
+  AND ($3::text = '' OR a.status = $3::text)
+  AND ($4::timestamptz IS NULL OR a.created_at >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL OR a.created_at < $5::timestamptz)
+  AND ($6::text = ''
+       OR coalesce(u.email, '') ILIKE '%' || $6::text || '%'
+       OR coalesce(a.target, '') ILIKE '%' || $6::text || '%'
+       OR coalesce(a.ip, '') ILIKE $6::text || '%'
+       OR a.params::text ILIKE '%' || $6::text || '%')
+  AND ($7::bigint = 0 OR a.id < $7::bigint)
+ORDER BY a.id DESC
+LIMIT $8
+`
+
+type SearchDevActionsParams struct {
+	Action   string             `json:"action"`
+	ActorID  int64              `json:"actor_id"`
+	Status   string             `json:"status"`
+	FromAt   pgtype.Timestamptz `json:"from_at"`
+	ToAt     pgtype.Timestamptz `json:"to_at"`
+	Search   string             `json:"search"`
+	BeforeID int64              `json:"before_id"`
+	RowLimit int32              `json:"row_limit"`
+}
+
+type SearchDevActionsRow struct {
+	ID           int64              `json:"id"`
+	ActorUserID  int64              `json:"actor_user_id"`
+	Action       string             `json:"action"`
+	Target       *string            `json:"target"`
+	Params       []byte             `json:"params"`
+	Status       string             `json:"status"`
+	ErrorMessage *string            `json:"error_message"`
+	DurationMs   int32              `json:"duration_ms"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	Ip           *string            `json:"ip"`
+	UserAgent    *string            `json:"user_agent"`
+	ActorEmail   *string            `json:"actor_email"`
+	ActorName    *string            `json:"actor_name"`
+}
+
+// The audit log, newest first, with the actor's e-mail.
+func (q *Queries) SearchDevActions(ctx context.Context, arg SearchDevActionsParams) ([]SearchDevActionsRow, error) {
+	rows, err := q.db.Query(ctx, searchDevActions,
+		arg.Action,
+		arg.ActorID,
+		arg.Status,
+		arg.FromAt,
+		arg.ToAt,
+		arg.Search,
+		arg.BeforeID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SearchDevActionsRow{}
+	for rows.Next() {
+		var i SearchDevActionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ActorUserID,
+			&i.Action,
+			&i.Target,
+			&i.Params,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.DurationMs,
+			&i.CreatedAt,
+			&i.Ip,
+			&i.UserAgent,
+			&i.ActorEmail,
+			&i.ActorName,
 		); err != nil {
 			return nil, err
 		}

@@ -388,7 +388,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 		if err := scheduleRegistry.Register(scheduler.Task{
 			ID:          "devdashboard.prune",
 			Spec:        "0 3 * * *",
-			Description: "Deletes developer dashboard telemetry older than the retention window.",
+			Description: "Deletes dashboard telemetry and audit rows older than their retention windows.",
 			Timeout:     10 * time.Minute,
 			Overlap:     scheduler.OverlapSkip,
 			Run: func(ctx context.Context) error {
@@ -397,6 +397,11 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 					return err
 				}
 				logger.Info("dev dashboard telemetry pruned", "deleted", deleted, "retention_days", retentionDays)
+				audit, err := dev.NewActionRepository(txManager.Queries()).Prune(ctx, cfg.DevDashboard.AuditRetentionDays)
+				if err != nil {
+					return err
+				}
+				logger.Info("dev dashboard audit log pruned", "deleted", audit, "retention_days", cfg.DevDashboard.AuditRetentionDays)
 				return nil
 			},
 		}); err != nil {
