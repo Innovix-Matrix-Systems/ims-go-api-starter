@@ -6,15 +6,23 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 )
 
 // RoleService implements role business rules.
 type RoleService struct {
-	roles   RoleRepository
-	perms   PermissionRepository
-	checker *authz.Checker
-	tx      *database.TxManager
+	roles    RoleRepository
+	perms    PermissionRepository
+	checker  *authz.Checker
+	tx       *database.TxManager
+	activity *activity.Recorder
+}
+
+// WithActivity records tenant role changes in the activity log.
+func (s *RoleService) WithActivity(recorder *activity.Recorder) *RoleService {
+	s.activity = recorder
+	return s
 }
 
 // NewRoleService creates the role service.
@@ -43,12 +51,20 @@ func (s *RoleService) Create(ctx context.Context, tenantID, actorID int64, name 
 		return nil, err
 	}
 	tenant := tenantID
-	return s.roles.Create(ctx, CreateRoleInput{
+	role, err := s.roles.Create(ctx, CreateRoleInput{
 		TenantID:    &tenant,
 		Name:        name,
 		Description: description,
 		ActorID:     &actorID,
 	})
+	if err != nil {
+		return nil, err
+	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "role.created",
+		Subject: "role", SubjectID: role.ID, Changes: map[string]any{"name": name, "description": description},
+	})
+	return role, nil
 }
 
 // CreateInternal adds a role from the internal (super-admin) surface.
@@ -148,6 +164,10 @@ func (s *RoleService) Update(ctx context.Context, tenantID, id, actorID int64, n
 		return nil, err
 	}
 	_ = s.checker.InvalidateRole(ctx, id)
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "role.updated",
+		Subject: "role", SubjectID: id, Changes: map[string]any{"name": name, "description": description},
+	})
 	return updated, nil
 }
 
@@ -177,6 +197,10 @@ func (s *RoleService) Delete(ctx context.Context, tenantID, id int64) error {
 	if err := s.roles.DeleteInTenant(ctx, tenantID, id); err != nil {
 		return err
 	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, Action: "role.deleted", Subject: "role", SubjectID: id,
+		Changes: map[string]any{"name": role.Name},
+	})
 	return nil
 }
 
@@ -202,7 +226,14 @@ func (s *RoleService) AssignPermissions(ctx context.Context, tenantID, roleID in
 	if role.IsSystem {
 		return apperr.New(apperr.Forbidden, "System roles cannot be modified.")
 	}
-	return s.replacePermissions(ctx, roleID, permissionIDs, true)
+	if err := s.replacePermissions(ctx, roleID, permissionIDs, true); err != nil {
+		return err
+	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, Action: "role.permissions_assigned", Subject: "role", SubjectID: roleID,
+		Changes: map[string]any{"permissions": permissionIDs},
+	})
+	return nil
 }
 
 // AssignPermissionsInternal replaces permissions including system ones.

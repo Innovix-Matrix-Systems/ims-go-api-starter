@@ -17,7 +17,7 @@ func TestAdminTenantPermissionsComposition(t *testing.T) {
 		PermRoleView, PermRoleViewAll, PermRoleCreate, PermRoleUpdate, PermRoleDelete,
 		PermBranchView, PermBranchViewAll, PermBranchCreate, PermBranchUpdate, PermBranchDelete,
 		PermUserView, PermUserViewAll, PermUserCreate, PermUserUpdate, PermUserDelete,
-		PermUserRoleAssign, PermUserBranchSwitch,
+		PermUserRoleAssign, PermUserBranchSwitch, PermActivityView,
 	}
 	for _, name := range mustHave {
 		if _, ok := byName[name]; !ok {

@@ -95,6 +95,7 @@ func (d *Dependencies) Router() http.Handler {
 				r.Use(tenancy.Resolve(d.TenancyOpts))
 				d.Users.RegisterRoutesResolve(r)
 				d.Branches.RegisterRoutes(r)
+				d.Activity.RegisterRoutes(r)
 				d.Roles.RegisterRoutesResolve(r)
 				d.Billing.RegisterRoutesResolve(r)
 				d.Notifications.RegisterRoutesResolve(r)

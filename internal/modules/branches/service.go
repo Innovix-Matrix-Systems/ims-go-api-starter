@@ -6,6 +6,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/cache"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
@@ -23,12 +24,34 @@ type LimitChecker interface {
 
 // Service implements branch business rules.
 type Service struct {
-	repo   Repository
-	users  UserChecker
-	cache  cache.Store
-	cfg    config.Tenancy
-	limits LimitChecker
-	tx     *database.TxManager
+	repo     Repository
+	users    UserChecker
+	cache    cache.Store
+	cfg      config.Tenancy
+	limits   LimitChecker
+	tx       *database.TxManager
+	activity *activity.Recorder
+}
+
+// WithActivity records branch changes in the activity log.
+func (s *Service) WithActivity(recorder *activity.Recorder) *Service {
+	s.activity = recorder
+	return s
+}
+
+func (input CreateParams) changes() map[string]any {
+	changes := map[string]any{"name": input.Name}
+	for key, value := range map[string]*string{
+		"address": input.Address, "description": input.Description, "phone": input.Phone, "email": input.Email,
+	} {
+		if value != nil {
+			changes[key] = *value
+		}
+	}
+	if input.ManagerID != nil {
+		changes["manager_id"] = *input.ManagerID
+	}
+	return changes
 }
 
 // NewService creates the branch service.
@@ -115,6 +138,10 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 	if err != nil {
 		return nil, err
 	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "branch.created",
+		Subject: "branch", SubjectID: branch.ID, Changes: input.changes(),
+	})
 	return branch, nil
 }
 
@@ -170,6 +197,10 @@ func (s *Service) Update(ctx context.Context, scope tenancy.Scope, actorID, id i
 		return nil, err
 	}
 	tenancy.InvalidateBranchCheck(ctx, s.cache, tenantID, id)
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "branch.updated",
+		Subject: "branch", SubjectID: id, Changes: input.changes(),
+	})
 	return branch, nil
 }
 
@@ -186,6 +217,9 @@ func (s *Service) Delete(ctx context.Context, scope tenancy.Scope, actorID, id i
 		return err
 	}
 	tenancy.InvalidateBranchCheck(ctx, s.cache, tenantID, id)
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "branch.deleted", Subject: "branch", SubjectID: id,
+	})
 	return nil
 }
 

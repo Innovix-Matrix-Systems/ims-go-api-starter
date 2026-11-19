@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/cache"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
@@ -73,8 +74,15 @@ func (s *groupsSnapshot) idFor(key Key) int64 {
 
 // Service resolves and persists typed settings.
 type Service struct {
-	repo  Repository
-	cache cache.Store
+	repo     Repository
+	cache    cache.Store
+	activity *activity.Recorder
+}
+
+// WithActivity records tenant setting changes in the activity log.
+func (s *Service) WithActivity(recorder *activity.Recorder) *Service {
+	s.activity = recorder
+	return s
 }
 
 // NewService creates the settings service.
@@ -140,6 +148,10 @@ func (s *Service) SetTenant(ctx context.Context, scope tenancy.Scope, name strin
 	if err := s.writeTarget(ctx, name, target, value); err != nil {
 		return nil, err
 	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, Action: "setting.updated", Subject: "setting",
+		Changes: map[string]any{name: value},
+	})
 	return s.EffectiveForTargetKey(ctx, target, name)
 }
 

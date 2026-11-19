@@ -12,6 +12,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/branches"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
@@ -33,6 +34,13 @@ type Service struct {
 	limits     LimitChecker
 	tx         *database.TxManager
 	verifier   Verifier
+	activity   *activity.Recorder
+}
+
+// WithActivity records user changes in the activity log.
+func (s *Service) WithActivity(recorder *activity.Recorder) *Service {
+	s.activity = recorder
+	return s
 }
 
 // Verifier sends the e-mail verification link to a newly created user
@@ -194,6 +202,11 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 		// for a new link through POST /email/verification-notification.
 		_ = s.verifier.SendVerificationTo(ctx, user.ID)
 	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: user.TenantIDValue(), ActorID: actorID, Action: "user.created",
+		Subject: "user", SubjectID: user.ID,
+		Changes: map[string]any{"name": user.Name, "email": user.Email, "roles": input.Roles},
+	})
 	return user, nil
 }
 
@@ -297,7 +310,35 @@ func (s *Service) Update(ctx context.Context, scope tenancy.Scope, actorID, id i
 		}
 	}
 	s.checker.InvalidateUser(ctx, target.ID)
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: tenantID, ActorID: actorID, Action: "user.updated",
+		Subject: "user", SubjectID: target.ID, Changes: input.changes(),
+	})
 	return updated, nil
+}
+
+// changes lists the fields an update sent, for the activity log.
+func (input UpdateParams) changes() map[string]any {
+	changes := map[string]any{"name": input.Name}
+	if input.FirstName != nil {
+		changes["first_name"] = *input.FirstName
+	}
+	if input.LastName != nil {
+		changes["last_name"] = *input.LastName
+	}
+	if input.Phone != nil {
+		changes["phone"] = *input.Phone
+	}
+	if input.IsActive != nil {
+		changes["is_active"] = *input.IsActive
+	}
+	if input.BranchID != nil {
+		changes["branch_id"] = *input.BranchID
+	}
+	if input.Roles != nil {
+		changes["roles"] = input.Roles
+	}
+	return changes
 }
 
 // Delete soft-deletes a user, protecting super admins and self-deletion.
@@ -323,6 +364,11 @@ func (s *Service) Delete(ctx context.Context, scope tenancy.Scope, actorID, id i
 		return err
 	}
 	s.checker.InvalidateUser(ctx, target.ID)
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: target.TenantIDValue(), ActorID: actorID, Action: "user.deleted",
+		Subject: "user", SubjectID: target.ID,
+		Changes: map[string]any{"name": target.Name, "email": target.Email},
+	})
 	return nil
 }
 
@@ -357,6 +403,10 @@ func (s *Service) AssignRoles(ctx context.Context, scope tenancy.Scope, actorID,
 		return nil, err
 	}
 	s.checker.InvalidateUser(ctx, target.ID)
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: target.TenantIDValue(), ActorID: actorID, Action: "user.roles_assigned",
+		Subject: "user", SubjectID: target.ID, Changes: map[string]any{"roles": roleIDs},
+	})
 	return target, nil
 }
 
@@ -419,7 +469,14 @@ func (s *Service) ChangePassword(ctx context.Context, scope tenancy.Scope, actor
 	if err := s.repo.UpdatePassword(ctx, scope.Filter(), target.ID, hash, &actorID); err != nil {
 		return err
 	}
-	return s.auth.RevokeAll(ctx, target.ID)
+	if err := s.auth.RevokeAll(ctx, target.ID); err != nil {
+		return err
+	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: target.TenantIDValue(), ActorID: actorID, Action: "user.password_changed",
+		Subject: "user", SubjectID: target.ID,
+	})
+	return nil
 }
 
 // ProfileUpdate updates the authenticated user's own profile.

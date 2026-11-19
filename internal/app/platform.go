@@ -12,6 +12,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing"
 	billingdomain "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
@@ -63,6 +64,7 @@ type Platform struct {
 	Files            *files.Service
 	Backup           *backup.Service
 	Notifications    *notifications.Service
+	Activity         *activity.Recorder
 	Exchange         *identity.ExchangeService
 	BillingPackages  *billingservice.PackageService
 	BillingSubs      *billingservice.SubscriptionService
@@ -108,12 +110,13 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 
 	// Telemetry: the collector's sink writes through the same pools it
 	// observes, so the tracer attaches lazily once the collector exists.
+	redactor := telemetry.NewRedactor(cfg.DevDashboard.RedactKeys)
 	collector := telemetry.NewCollector(telemetry.CaptureConfig{
 		Enabled:      cfg.DevDashboard.Enabled,
 		Capture:      cfg.DevDashboard.Capture,
 		SampleRate:   cfg.DevDashboard.SampleRate,
 		MaxBodyBytes: cfg.DevDashboard.MaxBodyBytes,
-	}, telemetry.NewRedactor(cfg.DevDashboard.RedactKeys), dev.NewTelemetrySink(txManager.Queries()), logger)
+	}, redactor, dev.NewTelemetrySink(txManager.Queries()), logger)
 	closers = append(closers, collector.Close)
 	lazyTracer.Attach(collector)
 	logger = slog.New(telemetry.WrapLogHandler(logger.Handler(), collector))
@@ -121,7 +124,9 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 
 	queueRegistry := queue.NewRegistry()
 	scheduleRegistry := scheduler.NewRegistry()
-	settingsService := settings.NewService(settings.NewRepository(txManager.Queries()), store)
+	activityRecorder := activity.NewRecorder(txManager.Queries(), redactor, logger)
+	settingsService := settings.NewService(settings.NewRepository(txManager.Queries()), store).
+		WithActivity(activityRecorder)
 	featureFlagsService := featureflags.NewService(featureflags.NewRepository(txManager.Queries()), store)
 
 	if cfg.DevDashboard.Enabled && cfg.IsLocal() {
@@ -195,7 +200,8 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	billingPackageService := billingservice.NewPackageService(billingPackages).WithTx(txManager)
 	billingSubscriptionService := billingservice.NewSubscriptionService(billingSubscriptions, billingPackages, billingPayments, billingApprovals, orchestrator).
 		WithNotifier(notificationsService).
-		WithTx(txManager)
+		WithTx(txManager).
+		WithActivity(activityRecorder)
 	billingPaymentService := billingservice.NewPaymentService(billingPayments, cfg.Billing.Currency)
 	billingApprovalService := billingservice.NewApprovalService(billingApprovals, billingPayments, billingSubscriptions, txManager)
 	billingGuard := billingservice.NewGuard(billingSubscriptions, billingPackages)
@@ -209,7 +215,8 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	recovery := authn.NewRecovery(identityRepo, identityRepo, authenticator, store, mail.EngineEnqueuer{Engine: telemetryQueue}, cfg.Auth, logger)
 	identityService := identity.NewService(identityRepo, roleRepo, branches.NewRepository(txManager.Queries()), checker, authenticator, cfg.Auth, billingGuard).
 		WithTx(txManager).
-		WithVerifier(recovery)
+		WithVerifier(recovery).
+		WithActivity(activityRecorder)
 	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, telemetryQueue, cfg, logger)
 	if err := exchangeService.RegisterJobs(queueRegistry); err != nil {
 		return nil, nil, err
@@ -245,6 +252,26 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	}
 
 	// Retention (M30/M31): tables that otherwise grow forever.
+	if days := cfg.Activity.RetentionDays; days > 0 {
+		activityFeed := activity.NewService(txManager.Queries())
+		if err := scheduleRegistry.Register(scheduler.Task{
+			ID:          "activity.prune",
+			Spec:        "45 3 * * *",
+			Description: "Deletes activity-log entries older than ACTIVITY_RETENTION_DAYS.",
+			Timeout:     30 * time.Minute,
+			Overlap:     scheduler.OverlapSkip,
+			Run: func(ctx context.Context) error {
+				deleted, err := activityFeed.Purge(ctx, days)
+				if err != nil {
+					return err
+				}
+				logger.Info("activity log pruned", "deleted", deleted, "retention_days", days)
+				return nil
+			},
+		}); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := scheduleRegistry.Register(scheduler.Task{
 		ID:          "notifications.purge-expired",
 		Spec:        "30 3 * * *",
@@ -378,6 +405,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func()
 	}
 
 	platform := &Platform{
+		Activity:         activityRecorder,
 		Config:           cfg,
 		Logger:           logger,
 		DB:               dbRegistry,

@@ -47,6 +47,7 @@ type Config struct {
 	Ops          Ops
 	Security     Security
 	DevDashboard DevDashboard
+	Activity     Activity
 }
 
 // IsProduction reports whether the application runs in production.
@@ -162,6 +163,9 @@ func Load(envFile string) (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.loadDevDashboard(); err != nil {
+		return nil, err
+	}
+	if err := cfg.loadActivity(); err != nil {
 		return nil, err
 	}
 	if err := cfg.loadSecurity(); err != nil {

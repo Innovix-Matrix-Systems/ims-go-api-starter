@@ -9,6 +9,7 @@ import (
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 )
@@ -23,6 +24,23 @@ type SubscriptionService struct {
 	notifier      Notifier
 	tx            *database.TxManager
 	now           func() time.Time
+	activity      *activity.Recorder
+}
+
+// WithActivity records subscription changes in the tenant's activity log.
+func (s *SubscriptionService) WithActivity(recorder *activity.Recorder) *SubscriptionService {
+	s.activity = recorder
+	return s
+}
+
+func (s *SubscriptionService) record(ctx context.Context, action string, subscription *domain.Subscription, changes map[string]any) {
+	if subscription == nil {
+		return
+	}
+	s.activity.Record(ctx, activity.Entry{
+		TenantID: subscription.TenantID, Action: action,
+		Subject: "subscription", SubjectID: subscription.ID, Changes: changes,
+	})
 }
 
 // WithTx makes payment completion + activation atomic and serializes
@@ -208,6 +226,9 @@ func (s *SubscriptionService) subscribe(ctx context.Context, tenantID, packageID
 		}
 	}
 
+	s.record(ctx, "subscription.created", subscription, map[string]any{
+		"package_id": packageID, "method": method, "status": subscription.Status,
+	})
 	return subscription, payment, nil
 }
 
@@ -224,16 +245,21 @@ func (s *SubscriptionService) Activate(ctx context.Context, subscriptionID int64
 		}
 		return subscriptions.Activate(ctx, subscriptionID, expires)
 	}
-	if s.tx == nil {
-		return steps(s.subscriptions)
-	}
 	var activated *domain.Subscription
-	err = s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
-		var err error
-		activated, err = steps(domain.NewSubscriptionRepository(q))
-		return err
-	})
-	return activated, err
+	if s.tx == nil {
+		activated, err = steps(s.subscriptions)
+	} else {
+		err = s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
+			var err error
+			activated, err = steps(domain.NewSubscriptionRepository(q))
+			return err
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, "subscription.activated", activated, map[string]any{"expires_at": activated.ExpiresAt})
+	return activated, nil
 }
 
 // Cancel ends a subscription immediately: the guard only honours active and
@@ -252,7 +278,12 @@ func (s *SubscriptionService) Cancel(ctx context.Context, subscriptionID int64, 
 		reason = &value
 	}
 	now := s.now()
-	return s.subscriptions.UpdateStatus(ctx, subscriptionID, domain.StatusCancelled, &now, reason)
+	cancelled, err := s.subscriptions.UpdateStatus(ctx, subscriptionID, domain.StatusCancelled, &now, reason)
+	if err != nil {
+		return nil, err
+	}
+	s.record(ctx, "subscription.cancelled", cancelled, map[string]any{"reason": *reason})
+	return cancelled, nil
 }
 
 // ApplyOverrides merges per-tenant feature overrides (super-admin only).

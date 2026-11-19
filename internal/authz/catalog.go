@@ -58,7 +58,9 @@ const (
 	PermNotificationViewAll = "notification.view.all"
 	PermNotificationCreate  = "notification.create"
 	PermNotificationUpdate  = "notification.update"
-	PermNotificationDelete  = "notification.delete"
+
+	PermActivityView       = "activity.view"
+	PermNotificationDelete = "notification.delete"
 
 	PermDataProcessingViewAll = "data_processing_job.view.all"
 	PermDataProcessingView    = "data_processing_job.view"
@@ -172,6 +174,8 @@ var Catalog = []Permission{
 	{Name: PermNotificationViewAll, Group: "notification", IsSystem: true, Description: "Can view all notifications"},
 	{Name: PermNotificationCreate, Group: "notification", IsSystem: true, Description: "Can create new notifications"},
 	{Name: PermNotificationUpdate, Group: "notification", IsSystem: true, Description: "Can modify existing notifications"},
+
+	{Name: PermActivityView, Group: "activity", Description: "Can view the activity log"},
 	{Name: PermNotificationDelete, Group: "notification", IsSystem: true, Description: "Can delete notifications"},
 
 	// ── setting ───────────────────────────────────────────
@@ -223,7 +227,7 @@ func AdminTenantPermissions() []Permission {
 			continue
 		}
 		switch permission.Group {
-		case "role", "branch", "user", "setting":
+		case "role", "branch", "user", "setting", "activity":
 			if _, skip := exclude[permission.Name]; skip {
 				continue
 			}

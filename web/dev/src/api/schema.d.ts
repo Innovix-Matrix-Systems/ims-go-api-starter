@@ -925,6 +925,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/activity": {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Optional super-admin impersonation tenant id. Omit both acting headers for a
+                 *     read-only global view; set them before a write on a tenant-resolved route.
+                 *     Sent only when impersonating — there is no default.
+                 */
+                "X-Acting-Tenant"?: components["parameters"]["ActingTenant"];
+                /**
+                 * @description Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+                 *     only when impersonating — there is no default.
+                 */
+                "X-Acting-Branch"?: components["parameters"]["ActingBranch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The tenant's activity log, newest first
+         * @description Who did what in the resolved tenant (user, role, branch, setting and
+         *     subscription changes). Platform accounts without an acting tenant see
+         *     every tenant. Requires `activity.view`. Secrets in `changes` are redacted.
+         */
+        get: operations["listActivity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/branch": {
         parameters: {
             query?: never;
@@ -3746,6 +3780,41 @@ export interface components {
         };
         BranchEnvelope: {
             data: components["schemas"]["Branch"];
+        };
+        ActivityEntry: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            tenant_id: number | null;
+            actor: {
+                /** Format: int64 */
+                id: number;
+                name: string;
+            } | null;
+            /** @example user.created */
+            action: string;
+            /** @example user */
+            subject_type: string;
+            /** Format: int64 */
+            subject_id: number | null;
+            changes: {
+                [key: string]: unknown;
+            };
+            ip: string | null;
+            request_id: string | null;
+            /** Format: date-time */
+            created_at: string;
+        };
+        ActivityFeedEnvelope: {
+            data: components["schemas"]["ActivityEntry"][];
+            links: {
+                next: string | null;
+            };
+            meta: {
+                path: string;
+                per_page: number;
+                next_cursor: string | null;
+            };
         };
         BranchPageEnvelope: {
             data: components["schemas"]["Branch"][];
@@ -7747,6 +7816,83 @@ export interface operations {
             /** @description A dependency or gateway is unavailable. */
             503: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listActivity: {
+        parameters: {
+            query?: {
+                /** @description Opaque cursor from `meta.next_cursor`. */
+                cursor?: string;
+                per_page?: number;
+                /** @example user */
+                subject_type?: string;
+                subject_id?: number;
+                actor_id?: number;
+            };
+            header?: {
+                /**
+                 * @description Optional super-admin impersonation tenant id. Omit both acting headers for a
+                 *     read-only global view; set them before a write on a tenant-resolved route.
+                 *     Sent only when impersonating — there is no default.
+                 */
+                "X-Acting-Tenant"?: components["parameters"]["ActingTenant"];
+                /**
+                 * @description Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
+                 *     only when impersonating — there is no default.
+                 */
+                "X-Acting-Branch"?: components["parameters"]["ActingBranch"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of activity. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityFeedEnvelope"];
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded; see `retry_after`. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {

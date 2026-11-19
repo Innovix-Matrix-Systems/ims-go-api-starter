@@ -11,6 +11,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/auth"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing"
@@ -64,6 +65,7 @@ type Dependencies struct {
 	Users         *identity.Handler
 	Tenants       *tenants.Handler
 	Branches      *branches.Handler
+	Activity      *activity.Handler
 	Roles         *access.RoleHandler
 	Permissions   *access.PermissionHandler
 	Billing       *billing.Handler
@@ -130,9 +132,11 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	tenantRepo := tenants.NewRepository(queries)
 
 	// Services
-	roleService := access.NewRoleService(roleRepo, permissionRepo, checker, platform.Tx)
+	roleService := access.NewRoleService(roleRepo, permissionRepo, checker, platform.Tx).WithActivity(platform.Activity)
 	permissionService := access.NewPermissionService(permissionRepo, checker)
-	branchService := branches.NewService(branchRepo, identityRepo, store, cfg.Tenancy, platform.BillingGuard).WithTx(platform.Tx)
+	branchService := branches.NewService(branchRepo, identityRepo, store, cfg.Tenancy, platform.BillingGuard).
+		WithTx(platform.Tx).
+		WithActivity(platform.Activity)
 	tenantService := tenants.NewService(tenantRepo, branchService, roleService, platform.Tx, store, cfg.Tenancy)
 
 	authenticator := platform.Authenticator
@@ -177,6 +181,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 		Users:         identity.NewHandler(userService, platform.Files, platform.Exchange, checker, binder, validator, responder),
 		Tenants:       tenants.NewHandler(tenantService, checker, binder, validator, responder),
 		Branches:      branches.NewHandler(branchService, checker, binder, validator, responder),
+		Activity:      activity.NewHandler(activity.NewService(queries), checker, responder),
 		Roles:         access.NewRoleHandler(roleService, checker, tenantLookup, binder, validator, responder),
 		Permissions:   access.NewPermissionHandler(permissionService, checker, binder, validator, responder),
 		Files:         files.NewHandler(platform.Files, checker, responder),
