@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	filesmod "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/files"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 )
@@ -53,7 +54,7 @@ func (h *Handler) listFiles(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		data = append(data, FileResponse{
 			FileItem:    item,
-			URL:         h.fileService.URL(r.Context(), filesDomain(item)),
+			URL:         h.files.URL(r.Context(), item),
 			PreviewKind: previewKind(item.MimeType),
 		})
 	}
@@ -76,16 +77,14 @@ func (h *Handler) fileStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
-	// Downloading tenant documents is an action, not a view (H14).
-	if _, ok := h.requireManage(w, r); !ok {
-		return
-	}
+	// Downloading tenant documents is an action, not a view (H14): the route
+	// needs dev.manage.
 	id, err := pathID(r)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
-	reader, file, err := h.fileService.Open(r.Context(), id)
+	reader, file, err := h.files.Open(r.Context(), id)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return
@@ -117,33 +116,13 @@ func (h *Handler) downloadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
 	id, err := pathID(r)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
-
-	started := time.Now()
-	// The dev dashboard is a system surface: dev.manage holders are tenantless
-	// platform accounts, so the scoped variants run with all_tenants.
-	file, opErr := h.fileService.Get(r.Context(), id, true, 0)
-	if opErr == nil {
-		opErr = h.fileService.Delete(r.Context(), id, true, 0)
-	}
-	params := map[string]any{"file_id": id}
-	if file != nil {
-		params["name"] = file.Name
-		params["disk"] = file.Disk
-		params["path"] = file.Path
-		params["size"] = file.Size
-	}
-	h.recordAction(r.Context(), actorID, "files.delete", formatTarget("file", id), params, started, opErr)
-	if opErr != nil {
-		h.responder.Error(w, r, opErr)
+	if err := h.files.Delete(r.Context(), authn.UserID(r), id); err != nil {
+		h.responder.Error(w, r, err)
 		return
 	}
 	h.responder.NoContent(w)

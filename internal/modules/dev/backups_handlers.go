@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 )
 
@@ -91,10 +92,7 @@ func (h *Handler) backupConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createBackup(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	started := time.Now()
 	run, opErr := h.backups.Enqueue(r.Context(), backup.TriggerDashboard, actorID)
 	params := map[string]any{"trigger": backup.TriggerDashboard}
@@ -103,7 +101,7 @@ func (h *Handler) createBackup(w http.ResponseWriter, r *http.Request) {
 		params["filename"] = run.Filename
 		params["status"] = run.Status
 	}
-	h.recordAction(r.Context(), actorID, "backups.create", "backups", params, started, opErr)
+	h.audit.Record(r.Context(), actorID, "backups.create", "backups", params, started, opErr)
 	if opErr != nil {
 		h.responder.Error(w, r, opErr)
 		return
@@ -127,10 +125,8 @@ func (h *Handler) getBackup(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) downloadBackup(w http.ResponseWriter, r *http.Request) {
 	// A backup is a full copy of every tenant's data: viewing the dashboard
-	// (dev.view) is not enough to take one home (H14).
-	if _, ok := h.requireManage(w, r); !ok {
-		return
-	}
+	// (dev.view) is not enough to take one home (H14); the route needs
+	// dev.manage.
 	id, err := pathID(r)
 	if err != nil {
 		h.responder.Error(w, r, err)
@@ -157,10 +153,7 @@ func (h *Handler) downloadBackup(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteBackup(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	id, err := pathID(r)
 	if err != nil {
 		h.responder.Error(w, r, err)
@@ -179,7 +172,7 @@ func (h *Handler) deleteBackup(w http.ResponseWriter, r *http.Request) {
 		params["filename"] = run.Filename
 		params["size_bytes"] = run.SizeBytes
 	}
-	h.recordAction(r.Context(), actorID, "backups.delete", formatTarget("backup", id), params, started, opErr)
+	h.audit.Record(r.Context(), actorID, "backups.delete", formatTarget("backup", id), params, started, opErr)
 	if opErr != nil {
 		h.responder.Error(w, r, opErr)
 		return
@@ -192,10 +185,7 @@ type cleanBackupsRequest struct {
 }
 
 func (h *Handler) cleanBackups(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	var request cleanBackupsRequest
 	if r.ContentLength != 0 {
 		if err := h.binder.JSON(w, r, &request); err != nil {
@@ -205,7 +195,7 @@ func (h *Handler) cleanBackups(w http.ResponseWriter, r *http.Request) {
 	}
 	started := time.Now()
 	result, opErr := h.backups.Clean(r.Context(), request.DryRun)
-	h.recordAction(r.Context(), actorID, "backups.clean", "backups", map[string]any{
+	h.audit.Record(r.Context(), actorID, "backups.clean", "backups", map[string]any{
 		"dry_run":    result.DryRun,
 		"candidates": result.Candidates,
 		"deleted":    result.Deleted,

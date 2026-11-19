@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 )
@@ -50,17 +51,9 @@ func (h *Handler) listFlags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) updateFlags(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	var request updateFlagsRequest
-	if err := h.binder.JSON(w, r, &request); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &request); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.bind(w, r, &request) {
 		return
 	}
 	target, err := flagTargetFromBody(request)
@@ -88,7 +81,7 @@ func (h *Handler) updateFlags(w http.ResponseWriter, r *http.Request) {
 
 	started := time.Now()
 	items, opErr := h.flags.SetBatch(r.Context(), actorID, target, request.Flags, request.Rollout)
-	h.recordAction(r.Context(), actorID, "flags.set", flagTargetLabel(target), map[string]any{
+	h.audit.Record(r.Context(), actorID, "flags.set", flagTargetLabel(target), map[string]any{
 		"target_type": target.Type,
 		"target_id":   target.ID,
 		"set":         setKeys,
@@ -103,10 +96,7 @@ func (h *Handler) updateFlags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) resetFlag(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	target, err := flagTargetFromQuery(r)
 	if err != nil {
 		h.responder.Error(w, r, err)
@@ -115,7 +105,7 @@ func (h *Handler) resetFlag(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 	started := time.Now()
 	opErr := h.flags.Delete(r.Context(), target, key)
-	h.recordAction(r.Context(), actorID, "flags.reset", key, map[string]any{
+	h.audit.Record(r.Context(), actorID, "flags.reset", key, map[string]any{
 		"target_type": target.Type,
 		"target_id":   target.ID,
 		"key":         key,
@@ -132,13 +122,10 @@ func (h *Handler) resetFlag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) syncFlags(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	started := time.Now()
 	created, opErr := h.flags.Sync(r.Context())
-	h.recordAction(r.Context(), actorID, "flags.sync", "flags", map[string]any{
+	h.audit.Record(r.Context(), actorID, "flags.sync", "flags", map[string]any{
 		"created": created,
 	}, started, opErr)
 	if opErr != nil {

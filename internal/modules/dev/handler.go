@@ -5,10 +5,8 @@ import (
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
-	filesmod "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/files"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/identity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/settings"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/queue"
@@ -21,21 +19,16 @@ type Handler struct {
 	queueAdmin        queue.Admin
 	queue             queue.Engine
 	playgroundEnabled bool
-	telemetry         TelemetryRepository
-	sessions          SessionRepository
-	developers        DeveloperRepository
-	files             FileRepository
-	fileService       *filesmod.Service
+	telemetry         *TelemetryService
+	sessions          *SessionService
+	developers        *DeveloperService
+	files             *FileBrowser
+	targets           *TargetService
 	backups           *backup.Service
-	targets           TargetRepository
 	flags             *featureflags.Service
 	settings          *settings.Service
-	identity          *identity.Service
 	exchange          *identity.ExchangeService
-	roles             access.RoleRepository
-	roleService       *access.RoleService
 	collector         *telemetry.Collector
-	retentionDays     int
 	inspector         *InspectorService
 	commands          *CommandService
 }
@@ -45,11 +38,12 @@ func NewHandler(deps Deps) *Handler {
 	if deps.RetentionDays < 1 {
 		deps.RetentionDays = 7
 	}
+	audit := NewAuditor(deps.Actions)
 	return &Handler{
 		panelBase: panelBase{
 			checker:     deps.Checker,
 			permissions: deps.Permissions,
-			actions:     deps.Actions,
+			audit:       audit,
 			logger:      deps.Logger,
 			binder:      deps.Binder,
 			validator:   deps.Validator,
@@ -58,23 +52,19 @@ func NewHandler(deps Deps) *Handler {
 		queueAdmin:        deps.QueueAdmin,
 		queue:             deps.Queue,
 		playgroundEnabled: deps.Playground,
-		telemetry:         deps.Telemetry,
-		sessions:          deps.Sessions,
-		developers:        deps.Developers,
-		files:             deps.Files,
-		fileService:       deps.FileService,
-		backups:           deps.Backups,
-		targets:           deps.Targets,
-		flags:             deps.FeatureFlags,
-		settings:          deps.Settings,
-		identity:          deps.Identity,
-		exchange:          deps.Exchange,
-		roles:             deps.Roles,
-		roleService:       deps.RoleService,
-		collector:         deps.Collector,
-		retentionDays:     deps.RetentionDays,
-		inspector:         deps.Inspector,
-		commands:          deps.Commands,
+		telemetry:         &TelemetryService{TelemetryRepository: deps.Telemetry, audit: audit, retentionDays: deps.RetentionDays},
+		sessions:          &SessionService{repo: deps.Sessions, audit: audit},
+		developers: &DeveloperService{repo: deps.Developers, roles: deps.Roles, roleService: deps.RoleService,
+			identity: deps.Identity, audit: audit},
+		files:     &FileBrowser{FileRepository: deps.Files, files: deps.FileService, audit: audit},
+		targets:   &TargetService{TargetRepository: deps.Targets},
+		backups:   deps.Backups,
+		flags:     deps.FeatureFlags,
+		settings:  deps.Settings,
+		exchange:  deps.Exchange,
+		collector: deps.Collector,
+		inspector: deps.Inspector,
+		commands:  deps.Commands,
 	}
 }
 

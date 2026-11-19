@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/identity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/mail"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/queue"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
 // Playground: local-only helpers for exercising telemetry, synthetic jobs and
@@ -74,22 +76,14 @@ func (h *Handler) enqueuePlaygroundJobs(w http.ResponseWriter, r *http.Request) 
 	if !h.requirePlayground(w, r) {
 		return
 	}
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	if h.queue == nil {
 		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "The queue engine is unavailable."))
 		return
 	}
 
 	var request playgroundJobRequest
-	if err := h.binder.JSON(w, r, &request); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &request); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.bind(w, r, &request) {
 		return
 	}
 
@@ -127,7 +121,7 @@ func (h *Handler) enqueuePlaygroundJobs(w http.ResponseWriter, r *http.Request) 
 		params["to"] = request.To
 		params["subject"] = request.Subject
 	}
-	h.recordAction(r.Context(), actorID, "playground.jobs", target, params, started, opErr)
+	h.audit.Record(r.Context(), actorID, "playground.jobs", target, params, started, opErr)
 	if opErr != nil {
 		h.responder.Error(w, r, opErr)
 		return
@@ -178,11 +172,7 @@ func (h *Handler) enqueueUserExport(r *http.Request, actorID int64) (playgroundJ
 		return playgroundJobResult{}, "job:" + identity.KindUserExport,
 			apperr.New(apperr.ServiceUnavailable, "User exports are not available.")
 	}
-	scope, err := devScope(r)
-	if err != nil {
-		return playgroundJobResult{}, "job:" + identity.KindUserExport, err
-	}
-	job, err := h.exchange.StartExport(r.Context(), scope, actorID, identity.ExportRequest{})
+	job, err := h.exchange.StartExport(r.Context(), tenancy.From(r), actorID, identity.ExportRequest{})
 	if err != nil {
 		return playgroundJobResult{}, "job:" + identity.KindUserExport, err
 	}

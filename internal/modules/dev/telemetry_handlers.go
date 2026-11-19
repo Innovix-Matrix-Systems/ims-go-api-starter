@@ -4,9 +4,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 )
 
 // Telemetry handlers: request inspector, logs, exceptions and prune.
@@ -175,32 +175,14 @@ type pruneTelemetryRequest struct {
 }
 
 func (h *Handler) pruneTelemetry(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
 	var request pruneTelemetryRequest
-	if err := h.binder.JSON(w, r, &request); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.bind(w, r, &request) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &request); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	days := request.RetentionDays
-	if days == 0 {
-		days = h.retentionDays
-	}
-	started := time.Now()
-	deleted, err := h.telemetry.Prune(r.Context(), days)
-	h.recordAction(r.Context(), actorID, "telemetry.prune", "", map[string]any{"retention_days": days}, started, err)
+	days, deleted, err := h.telemetry.Prune(r.Context(), authn.UserID(r), request.RetentionDays)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, map[string]any{
-		"retention_days": days,
-		"deleted":        deleted,
-	})
+	h.responder.Data(w, r, http.StatusOK, map[string]any{"retention_days": days, "deleted": deleted})
 }

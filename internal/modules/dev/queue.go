@@ -12,6 +12,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/queue"
 )
 
@@ -50,10 +51,7 @@ func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) pauseQueue(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	if !h.requireQueueAdmin(w, r) {
 		return
 	}
@@ -64,7 +62,7 @@ func (h *Handler) pauseQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	started := time.Now()
 	err := h.queueAdmin.PauseQueue(r.Context(), name)
-	h.recordAction(r.Context(), actorID, "queue.pause", name, map[string]any{"queue": name}, started, err)
+	h.audit.Record(r.Context(), actorID, "queue.pause", name, map[string]any{"queue": name}, started, err)
 	if err != nil {
 		h.respondQueueError(w, r, err)
 		return
@@ -73,10 +71,7 @@ func (h *Handler) pauseQueue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) resumeQueue(w http.ResponseWriter, r *http.Request) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	if !h.requireQueueAdmin(w, r) {
 		return
 	}
@@ -87,7 +82,7 @@ func (h *Handler) resumeQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	started := time.Now()
 	err := h.queueAdmin.ResumeQueue(r.Context(), name)
-	h.recordAction(r.Context(), actorID, "queue.resume", name, map[string]any{"queue": name}, started, err)
+	h.audit.Record(r.Context(), actorID, "queue.resume", name, map[string]any{"queue": name}, started, err)
 	if err != nil {
 		h.respondQueueError(w, r, err)
 		return
@@ -157,10 +152,7 @@ func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) mutateJob(w http.ResponseWriter, r *http.Request, action string, op func(ctx context.Context, id int64) (*queue.AdminJob, error)) {
-	actorID, ok := h.requireManage(w, r)
-	if !ok {
-		return
-	}
+	actorID := authn.UserID(r)
 	if !h.requireQueueAdmin(w, r) {
 		return
 	}
@@ -171,7 +163,7 @@ func (h *Handler) mutateJob(w http.ResponseWriter, r *http.Request, action strin
 	}
 	started := time.Now()
 	job, err := op(r.Context(), id)
-	h.recordAction(r.Context(), actorID, action, "job:"+strconv.FormatInt(id, 10), map[string]any{"job_id": id}, started, err)
+	h.audit.Record(r.Context(), actorID, action, "job:"+strconv.FormatInt(id, 10), map[string]any{"job_id": id}, started, err)
 	if err != nil {
 		h.respondQueueError(w, r, err)
 		return
@@ -197,7 +189,7 @@ func (h *Handler) listActions(w http.ResponseWriter, r *http.Request) {
 		}
 		beforeID = value
 	}
-	actions, err := h.actions.List(r.Context(), beforeID, int32(limit))
+	actions, err := h.audit.List(r.Context(), beforeID, int32(limit))
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return

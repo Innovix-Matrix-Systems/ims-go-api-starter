@@ -9,7 +9,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
@@ -66,7 +65,7 @@ type Deps struct {
 type panelBase struct {
 	checker     *authz.Checker
 	permissions *access.PermissionService
-	actions     ActionRepository
+	audit       *Auditor
 	logger      *slog.Logger
 	binder      *httpx.Binder
 	validator   *httpx.Validator
@@ -78,18 +77,17 @@ func (h *Handler) manage(next http.Handler) http.Handler {
 	return authz.Require(h.checker, authz.PermDevManage, h.responder)(next)
 }
 
-// requireManage resolves the caller and enforces dev.manage for mutations.
-func (h *Handler) requireManage(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	identity, ok := authn.IdentityFromContext(r.Context())
-	if !ok {
-		h.responder.Error(w, r, apperr.New(apperr.Unauthorized, "Authentication is required."))
-		return 0, false
-	}
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermDevManage); err != nil {
+// bind decodes and validates a JSON body, writing the 4xx on failure.
+func (h *Handler) bind(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := h.binder.JSON(w, r, dst); err != nil {
 		h.responder.Error(w, r, err)
-		return 0, false
+		return false
 	}
-	return identity.UserID, true
+	if err := h.validator.Struct(r.Context(), dst); err != nil {
+		h.responder.Error(w, r, err)
+		return false
+	}
+	return true
 }
 
 func parseLimit(raw string) (int, error) {
