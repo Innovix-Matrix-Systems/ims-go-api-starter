@@ -36,8 +36,10 @@ jobs:
           go install github.com/zricethezav/gitleaks/v8@v8.21.2
           "$(go env GOPATH)/bin/gitleaks" detect --source . --no-banner --redact
 
+      # GitHub only offers dependency review on public repositories (or private
+      # ones with GitHub Advanced Security); govulncheck above covers Go deps.
       - name: dependency review (new vulnerable or disallowed dependencies)
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && !github.event.repository.private
         uses: actions/dependency-review-action@v4
 
   build-test:
