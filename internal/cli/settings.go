@@ -26,22 +26,14 @@ func newSettingsSyncCommand(state *State) *cobra.Command {
 		Use:   "settings:sync",
 		Short: "Upsert settings groups and insert missing global settings",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := state.Config()
-			if err := cfg.Validate(); err != nil {
-				return err
-			}
-			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			created, err := platform.Settings.Sync(cmd.Context())
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created %d setting(s).\n", created)
-			return nil
+			return withPlatform(state, func(platform *app.Platform) error {
+				created, err := platform.Settings.Sync(cmd.Context())
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Created %d setting(s).\n", created)
+				return nil
+			})
 		},
 	}
 }
@@ -51,22 +43,14 @@ func newFeatureFlagsSyncCommand(state *State) *cobra.Command {
 		Use:   "feature-flags:sync",
 		Short: "Insert missing global feature flags with their catalog defaults",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := state.Config()
-			if err := cfg.Validate(); err != nil {
-				return err
-			}
-			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			created, err := platform.FeatureFlags.Sync(cmd.Context())
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Created %d feature flag(s).\n", created)
-			return nil
+			return withPlatform(state, func(platform *app.Platform) error {
+				created, err := platform.FeatureFlags.Sync(cmd.Context())
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Created %d feature flag(s).\n", created)
+				return nil
+			})
 		},
 	}
 }

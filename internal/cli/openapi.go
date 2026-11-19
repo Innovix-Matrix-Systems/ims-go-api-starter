@@ -18,7 +18,8 @@ func newOpenAPICheckCommand(state *State) *cobra.Command {
 			"built from the full dependency graph), like health:check.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Force the config-gated operational routes on so the route table
-			// matches the full contract regardless of the runtime flags.
+			// matches the full contract regardless of the runtime flags. No
+			// cfg.Validate(): CI runs this without a deployment .env (M46).
 			cfg := state.Config()
 			cfg.Ops.DocsEnabled = true
 			cfg.Ops.MetricsEnabled = true

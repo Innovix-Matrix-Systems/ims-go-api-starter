@@ -34,30 +34,22 @@ func newBackupRunCommand(state *State) *cobra.Command {
 		Use:   "backup:run",
 		Short: "Create a database backup archive",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := state.Config()
-			if err := cfg.Validate(); err != nil {
-				return err
-			}
-			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			opts := backup.RunOptions{Filename: filename}
-			if cmd.Flags().Changed("with-files") {
-				opts.IncludeFiles = &withFiles
-			}
-			if destinations != "" {
-				for _, value := range strings.Split(destinations, ",") {
-					opts.Destinations = append(opts.Destinations, strings.TrimSpace(value))
+			return withPlatform(state, func(platform *app.Platform) error {
+				opts := backup.RunOptions{Filename: filename}
+				if cmd.Flags().Changed("with-files") {
+					opts.IncludeFiles = &withFiles
 				}
-			}
-			run, err := platform.Backup.RunNow(cmd.Context(), backup.TriggerCLI, 0, opts)
-			if run != nil {
-				printBackupRun(cmd, run)
-			}
-			return err
+				if destinations != "" {
+					for _, value := range strings.Split(destinations, ",") {
+						opts.Destinations = append(opts.Destinations, strings.TrimSpace(value))
+					}
+				}
+				run, err := platform.Backup.RunNow(cmd.Context(), backup.TriggerCLI, 0, opts)
+				if run != nil {
+					printBackupRun(cmd, run)
+				}
+				return err
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&withFiles, "with-files", false, "include BACKUP_FILES_PATHS in the archive")
@@ -72,36 +64,28 @@ func newBackupListCommand(state *State) *cobra.Command {
 		Use:   "backup:list",
 		Short: "List recent backup runs",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := state.Config()
-			if err := cfg.Validate(); err != nil {
-				return err
-			}
-			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			runs, err := platform.Backup.List(cmd.Context(), backup.ListFilter{Limit: int32(limit)})
-			if err != nil {
-				return err
-			}
-			writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(writer, "ID\tCREATED\tSTATUS\tTRIGGER\tFILENAME\tSIZE\tDESTINATIONS")
-			if len(runs) == 0 {
-				fmt.Fprintln(writer, "-\t-\t-\t-\t(no backups)\t0\t-")
-			}
-			for _, run := range runs {
-				destinations := make([]string, 0, len(run.Destinations))
-				for _, destination := range run.Destinations {
-					value := destination.Destination + ":" + destination.Status
-					destinations = append(destinations, value)
+			return withPlatform(state, func(platform *app.Platform) error {
+				runs, err := platform.Backup.List(cmd.Context(), backup.ListFilter{Limit: int32(limit)})
+				if err != nil {
+					return err
 				}
-				fmt.Fprintf(writer, "%d\t%s\t%s\t%s\t%s\t%d\t%s\n",
-					run.ID, run.CreatedAt.Format("2006-01-02 15:04:05"), run.Status,
-					run.Trigger, run.Filename, run.SizeBytes, strings.Join(destinations, ","))
-			}
-			return writer.Flush()
+				writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+				fmt.Fprintln(writer, "ID\tCREATED\tSTATUS\tTRIGGER\tFILENAME\tSIZE\tDESTINATIONS")
+				if len(runs) == 0 {
+					fmt.Fprintln(writer, "-\t-\t-\t-\t(no backups)\t0\t-")
+				}
+				for _, run := range runs {
+					destinations := make([]string, 0, len(run.Destinations))
+					for _, destination := range run.Destinations {
+						value := destination.Destination + ":" + destination.Status
+						destinations = append(destinations, value)
+					}
+					fmt.Fprintf(writer, "%d\t%s\t%s\t%s\t%s\t%d\t%s\n",
+						run.ID, run.CreatedAt.Format("2006-01-02 15:04:05"), run.Status,
+						run.Trigger, run.Filename, run.SizeBytes, strings.Join(destinations, ","))
+				}
+				return writer.Flush()
+			})
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum runs to list")
@@ -114,23 +98,15 @@ func newBackupCleanCommand(state *State) *cobra.Command {
 		Use:   "backup:clean",
 		Short: "Apply the retention policy to stored backups",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := state.Config()
-			if err := cfg.Validate(); err != nil {
-				return err
-			}
-			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			result, err := platform.Backup.Clean(cmd.Context(), dryRun)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "candidates=%d deleted=%d failed=%d dry_run=%t ids=%v\n",
-				result.Candidates, result.Deleted, result.Failed, result.DryRun, result.IDs)
-			return nil
+			return withPlatform(state, func(platform *app.Platform) error {
+				result, err := platform.Backup.Clean(cmd.Context(), dryRun)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "candidates=%d deleted=%d failed=%d dry_run=%t ids=%v\n",
+					result.Candidates, result.Deleted, result.Failed, result.DryRun, result.IDs)
+				return nil
+			})
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be deleted without deleting")
@@ -142,26 +118,18 @@ func newBackupMonitorCommand(state *State) *cobra.Command {
 		Use:   "backup:monitor",
 		Short: "Check backup freshness and storage usage",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := state.Config()
-			if err := cfg.Validate(); err != nil {
-				return err
-			}
-			platform, cleanup, err := app.NewPlatform(cfg, state.Logger())
-			if err != nil {
-				return err
-			}
-			defer cleanup()
-
-			result, err := platform.Backup.Monitor(cmd.Context())
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "status=%s age_hours=%.1f total_size=%d successful_runs=%d\n%s\n",
-				result.Status, result.AgeHours, result.TotalSize, result.SuccessfulRuns, result.Summary)
-			if result.Status != "ok" {
-				return fmt.Errorf("backup monitor status is %s", result.Status)
-			}
-			return nil
+			return withPlatform(state, func(platform *app.Platform) error {
+				result, err := platform.Backup.Monitor(cmd.Context())
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "status=%s age_hours=%.1f total_size=%d successful_runs=%d\n%s\n",
+					result.Status, result.AgeHours, result.TotalSize, result.SuccessfulRuns, result.Summary)
+				if result.Status != "ok" {
+					return fmt.Errorf("backup monitor status is %s", result.Status)
+				}
+				return nil
+			})
 		},
 	}
 }

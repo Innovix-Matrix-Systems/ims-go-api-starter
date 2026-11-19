@@ -87,6 +87,8 @@ func newHealthCheckCommand(state *State) *cobra.Command {
 		Use:   "health:check",
 		Short: "Run application health checks",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// No cfg.Validate(): reporting what is wrong with a broken install
+			// is the point of this command, so it must start anyway (M46).
 			deps, cleanup, err := app.NewDependencies(state.Config(), state.Logger())
 			if err != nil {
 				return err

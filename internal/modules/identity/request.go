@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"strings"
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
@@ -125,5 +126,23 @@ func NewResponse(user User, roles []authz.RoleRef, photo *string) Response {
 		Roles:           slim,
 		CreatedAt:       user.CreatedAt,
 		UpdatedAt:       user.UpdatedAt,
+	}
+}
+func (req InsertUpdateRequest) toCreateInput() CreateParams {
+	var password string
+	if req.Password != nil {
+		password = *req.Password
+	}
+	return CreateParams{
+		BranchID:  req.BranchID,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		UserName:  req.UserName,
+		Name:      strings.TrimSpace(req.Name),
+		Email:     strings.TrimSpace(req.Email),
+		Password:  password,
+		Phone:     req.Phone,
+		IsActive:  req.IsActive,
+		Roles:     req.Roles,
 	}
 }

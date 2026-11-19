@@ -73,19 +73,34 @@ type Platform struct {
 
 // NewPlatform constructs the platform dependencies. Pools connect lazily, so
 // this succeeds even when the database is temporarily unavailable.
-func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), error) {
+func NewPlatform(cfg *config.Config, logger *slog.Logger) (_ *Platform, _ func(), err error) {
+	// One cleanup owner: every resource registers its closer as soon as it
+	// exists, and any error return closes them all (newest first).
+	var closers []func()
+	closeAll := func() {
+		for i := len(closers) - 1; i >= 0; i-- {
+			closers[i]()
+		}
+	}
+	defer func() {
+		if err != nil {
+			closeAll()
+		}
+	}()
+
 	lazyTracer := telemetry.NewLazyTracer()
 	dbRegistry, err := database.Open(context.Background(), cfg.Database, database.WithTracer(lazyTracer))
 	if err != nil {
 		return nil, nil, err
 	}
+	closers = append(closers, dbRegistry.Close)
 	txManager := database.NewTxManager(dbRegistry.Primary())
 
 	store, cacheCleanup, err := cachefactory.New(*cfg, txManager.Queries())
 	if err != nil {
-		dbRegistry.Close()
 		return nil, nil, err
 	}
+	closers = append(closers, cacheCleanup)
 	if !cfg.IsLocal() && (cfg.Cache.Driver == "memory" || cfg.Cache.Driver == "file") {
 		logger.Warn("per-process cache driver outside local development: permission/tenancy caches, rate limits and the scheduler heartbeat are not shared between the API, worker and scheduler processes; use CACHE_DRIVER=database or redis",
 			"driver", cfg.Cache.Driver, "env", cfg.App.Env)
@@ -99,6 +114,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		SampleRate:   cfg.DevDashboard.SampleRate,
 		MaxBodyBytes: cfg.DevDashboard.MaxBodyBytes,
 	}, telemetry.NewRedactor(cfg.DevDashboard.RedactKeys), dev.NewTelemetrySink(txManager.Queries()), logger)
+	closers = append(closers, collector.Close)
 	lazyTracer.Attach(collector)
 	logger = slog.New(telemetry.WrapLogHandler(logger.Handler(), collector))
 	store = telemetry.WrapCache(store, collector)
@@ -110,16 +126,12 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 
 	if cfg.DevDashboard.Enabled && cfg.IsLocal() {
 		if err := dev.RegisterPlaygroundJob(queueRegistry); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
 			return nil, nil, err
 		}
 	}
 
 	queueEngine, err := newQueueEngine(cfg, dbRegistry.Primary().Pool, queueRegistry, logger)
 	if err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 	// Queues are observed through RiverEngine's JobObserver (which carries the
@@ -128,13 +140,9 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 
 	mailDriver, err := mail.New(cfg.Mail, logger, cfg.IsDebug())
 	if err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 	if err := mail.RegisterJob(queueRegistry, mailDriver); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
@@ -146,15 +154,11 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		logger,
 	)
 	if err := notificationsService.RegisterJobs(queueRegistry); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
 	storageRegistry, err := storage.New(cfg, logger)
 	if err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 	filesService := files.NewService(files.NewRepository(txManager.Queries()), storageRegistry, cfg.Files.Disk, txManager, logger).
@@ -174,8 +178,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 	})
 	if cfg.Backup.Enabled {
 		if err := backup.RegisterJob(queueRegistry, backupService); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
 			return nil, nil, err
 		}
 	}
@@ -210,15 +212,11 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		WithVerifier(recovery)
 	exchangeService := identity.NewExchangeService(identityService, identityRepo, roleRepo, processingService, storageRegistry, telemetryQueue, cfg, logger)
 	if err := exchangeService.RegisterJobs(queueRegistry); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
 	runner, err := scheduler.NewRunner(scheduleRegistry, logger, store, cfg.Schedule.Timezone)
 	if err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
@@ -232,8 +230,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 			return nil
 		},
 	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
@@ -245,8 +241,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		Overlap:     scheduler.OverlapSkip,
 		Run:         dataprocessing.CleanupTask(processingService, settingsService, logger),
 	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
@@ -266,8 +260,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 			return nil
 		},
 	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 	if cfg.Cache.Driver == "database" {
@@ -286,8 +278,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 				return nil
 			},
 		}); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
 			return nil, nil, err
 		}
 	}
@@ -307,8 +297,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 			return nil
 		},
 	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
@@ -327,8 +315,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 			return nil
 		},
 	}); err != nil {
-		cacheCleanup()
-		dbRegistry.Close()
 		return nil, nil, err
 	}
 
@@ -348,8 +334,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 				return nil
 			},
 		}); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
 			return nil, nil, err
 		}
 		if err := scheduleRegistry.Register(scheduler.Task{
@@ -367,8 +351,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 				return nil
 			},
 		}); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
 			return nil, nil, err
 		}
 	}
@@ -391,8 +373,6 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 				return nil
 			},
 		}); err != nil {
-			cacheCleanup()
-			dbRegistry.Close()
 			return nil, nil, err
 		}
 	}
@@ -432,12 +412,7 @@ func NewPlatform(cfg *config.Config, logger *slog.Logger) (*Platform, func(), er
 		riverEngine.SetObserver(collector)
 		platform.QueueAdmin = riverEngine.Admin()
 	}
-	cleanup := func() {
-		collector.Close()
-		cacheCleanup()
-		dbRegistry.Close()
-	}
-	return platform, cleanup, nil
+	return platform, closeAll, nil
 }
 
 // NewQueueEngine selects the configured queue engine.
