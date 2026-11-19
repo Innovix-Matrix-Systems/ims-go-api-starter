@@ -102,11 +102,15 @@ type ConfigInfo struct {
 }
 
 func mapRun(row dbgen.BackupRun) (Run, error) {
-	destinations := make([]DestinationResult, 0)
+	var destinations []DestinationResult
 	if len(row.Destinations) > 0 {
 		if err := json.Unmarshal(row.Destinations, &destinations); err != nil {
 			return Run{}, err
 		}
+	}
+	if destinations == nil {
+		// Rows written before encodeDestinations hold JSON null.
+		destinations = []DestinationResult{}
 	}
 	run := Run{
 		ID:           row.ID,

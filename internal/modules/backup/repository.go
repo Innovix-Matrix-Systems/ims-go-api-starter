@@ -151,7 +151,7 @@ func (r *repository) SetRunning(ctx context.Context, id int64) (*Run, error) {
 }
 
 func (r *repository) Complete(ctx context.Context, id int64, input CompleteInput) (*Run, error) {
-	payload, err := json.Marshal(input.Destinations)
+	payload, err := encodeDestinations(input.Destinations)
 	if err != nil {
 		return nil, apperr.Wrap(apperr.InternalServerError, "encode backup destinations", err)
 	}
@@ -190,7 +190,7 @@ func (r *repository) Complete(ctx context.Context, id int64, input CompleteInput
 }
 
 func (r *repository) Fail(ctx context.Context, id int64, message string, destinations []DestinationResult) (*Run, error) {
-	payload, err := json.Marshal(destinations)
+	payload, err := encodeDestinations(destinations)
 	if err != nil {
 		return nil, apperr.Wrap(apperr.InternalServerError, "encode backup destinations", err)
 	}
@@ -262,4 +262,13 @@ func optionalText(value string) *string {
 		return nil
 	}
 	return &value
+}
+
+// encodeDestinations stores a run's destinations as a JSON array, never
+// null: a run that fails before copying anywhere has no results.
+func encodeDestinations(destinations []DestinationResult) ([]byte, error) {
+	if destinations == nil {
+		destinations = []DestinationResult{}
+	}
+	return json.Marshal(destinations)
 }
