@@ -29,6 +29,7 @@ func newGenCommand() *cobra.Command {
 	}
 	gen.AddCommand(newGenModuleCommand())
 	gen.AddCommand(newGenOpenAPICommand())
+	gen.AddCommand(newGenDocsCommand())
 	return gen
 }
 
