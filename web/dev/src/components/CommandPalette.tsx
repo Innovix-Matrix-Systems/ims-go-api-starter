@@ -18,7 +18,6 @@ const pages = [
   { to: '/commands', label: 'Commands', icon: 'terminal' },
   { to: '/inspector', label: 'Inspector', icon: 'inspector' },
   { to: '/actions', label: 'Audit log', icon: 'actions' },
-  { to: '/system', label: 'System health', icon: 'system' },
   { to: '/tenants', label: 'Tenants', icon: 'tenants' },
   { to: '/sessions', label: 'Sessions', icon: 'sessions' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
@@ -29,6 +28,7 @@ const pages = [
 ] as const satisfies ReadonlyArray<{ to: string; label: string; icon: IconName; localOnly?: boolean }>
 
 const inspectorTabs = [
+  { tab: 'system', label: 'Inspector — System health', icon: 'system' },
   { tab: 'routes', label: 'Inspector — Routes', icon: 'route' },
   { tab: 'access', label: 'Inspector — Roles & permissions', icon: 'shield' },
   { tab: 'config', label: 'Inspector — Config', icon: 'settings' },

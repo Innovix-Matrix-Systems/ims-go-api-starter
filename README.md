@@ -23,7 +23,7 @@ embeds a Telescope-style **developer dashboard** — no containers required.
   activity log · notifications · files on local/S3/R2/MinIO · import/export · backups ·
   River queue · cron scheduler · RFC 9457 errors · OpenAPI.
 - **A dashboard you will actually use.** Requests, logs, exceptions, queue, one-click commands,
-  routes/roles/config inspector, tenants, settings, flags, files, sessions and an audit log —
+  an inspector (health, routes, roles, config), tenants, settings, flags, files, sessions and an audit log —
   Ctrl+K to anything.
 - **Fast feedback.** Type-safe SQL (sqlc), integration tests in ~10 lines (`testkit`), hot reload,
   and AI-agent skills (`.agents/skills`) that know the codebase.

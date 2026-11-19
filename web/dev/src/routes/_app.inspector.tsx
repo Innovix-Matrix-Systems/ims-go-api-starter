@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { api } from '../api/client'
 import type { DevAccessReport, DevConfigSection, DevPackagesReport, DevRouteReport } from '../api/types'
 import { Select } from '../components/inputs'
+import { SystemTab } from '../components/SystemTab'
 import {
   Card,
   CardHeader,
@@ -18,18 +19,19 @@ import {
   Tabs,
 } from '../components/ui'
 
-type InspectorTab = 'routes' | 'access' | 'config' | 'packages'
-const tabIds: InspectorTab[] = ['routes', 'access', 'config', 'packages']
+type InspectorTab = 'system' | 'routes' | 'access' | 'config' | 'packages'
+const tabIds: InspectorTab[] = ['system', 'routes', 'access', 'config', 'packages']
 
 export const Route = createFileRoute('/_app/inspector')({
   validateSearch: (search: Record<string, unknown>): { tab: InspectorTab; q?: string } => ({
-    tab: tabIds.includes(search.tab as InspectorTab) ? (search.tab as InspectorTab) : 'routes',
+    tab: tabIds.includes(search.tab as InspectorTab) ? (search.tab as InspectorTab) : 'system',
     q: typeof search.q === 'string' && search.q ? search.q : undefined,
   }),
   component: InspectorPage,
 })
 
 const placeholders: Record<InspectorTab, string> = {
+  system: 'Search health checks',
   routes: 'Search path, handler, permission or middleware',
   access: 'Search roles and permissions',
   config: 'Search config keys and values',
@@ -57,11 +59,12 @@ function InspectorPage() {
       <PageHeader
         eyebrow="Operations"
         title="Inspector"
-        subtitle="Routes, roles and permissions, configuration (secrets masked) and installed packages."
+        subtitle="System health, routes, roles and permissions, configuration (secrets masked) and installed packages."
       />
       <div className="inspector-bar">
         <Tabs
           tabs={[
+            { id: 'system', label: 'System' },
             { id: 'routes', label: 'Routes' },
             { id: 'access', label: 'Roles & permissions' },
             { id: 'config', label: 'Config' },
@@ -80,6 +83,7 @@ function InspectorPage() {
           />
         </label>
       </div>
+      {tab === 'system' ? <SystemTab needle={needle} /> : null}
       {tab === 'routes' ? <RoutesTab needle={needle} /> : null}
       {tab === 'access' ? <AccessTab needle={needle} /> : null}
       {tab === 'config' ? <ConfigTab needle={needle} /> : null}

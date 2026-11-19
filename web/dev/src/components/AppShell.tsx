@@ -36,7 +36,6 @@ const navigation: NavGroup[] = [
       { to: '/backups', label: 'Backups', icon: 'backup' },
       { to: '/commands', label: 'Commands', icon: 'terminal' },
       { to: '/inspector', label: 'Inspector', icon: 'inspector' },
-      { to: '/system', label: 'System', icon: 'system' },
       { to: '/actions', label: 'Audit log', icon: 'actions' },
     ],
   },

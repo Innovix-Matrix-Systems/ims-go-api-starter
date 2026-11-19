@@ -22,8 +22,8 @@ developer guide is [`docs/developer-guide.md`](docs/developer-guide.md). Task re
   queue, cron scheduler, Cobra CLI — all in **one binary** (`cmd/app`), deployed with systemd
   (no containers).
 - **Developer dashboard** (`/dev`, React SPA embedded via `go:embed`): Telescope-style requests,
-  logs, exceptions, queue, backups, commands, inspector (routes, roles, config, packages),
-  system, audit log, tenants, sessions, settings, feature flags, files, developers, playground;
+  logs, exceptions, queue, backups, commands, inspector (system health, routes, roles, config,
+  packages), audit log, tenants, sessions, settings, feature flags, files, developers, playground;
   Ctrl+K command palette.
 - **Known gaps** (do not assume they exist): `tenants.is_active` is not enforced at request time,
   the dashboard has no frontend test suite, golangci-lint is still v1.
