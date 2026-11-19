@@ -4,6 +4,7 @@ import { useDeferredValue, useEffect, useMemo, useState, type DragEvent } from '
 import { api } from '../api/client'
 import type { DevTarget, Page, SettingsGroup, SettingsItem } from '../api/types'
 import { Select } from '../components/inputs'
+import { SettingsList } from '../components/SettingsList'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -73,6 +74,7 @@ function SettingsPage() {
   const { push } = useToast()
   const queryClient = useQueryClient()
   const [targetKind, setTargetKind] = useState<TargetKind>('global')
+  const [view, setView] = useState<'list' | 'board'>('list')
   const [tenant, setTenant] = useState<DevTarget | null>(null)
   const [tenantSearch, setTenantSearch] = useState('')
   const [groupSearch, setGroupSearch] = useState('')
@@ -422,6 +424,14 @@ function SettingsPage() {
         subtitle="Grouped runtime settings with global and tenant overrides. Drag settings onto a group, or use the editor's group selector."
         actions={
           <>
+            <div className="pill-toggle" role="tablist" aria-label="Layout">
+              <button type="button" className={view === 'list' ? 'active' : ''} onClick={() => setView('list')}>
+                All settings
+              </button>
+              <button type="button" className={view === 'board' ? 'active' : ''} onClick={() => setView('board')}>
+                Groups board
+              </button>
+            </div>
             <Button icon="refresh" onClick={() => invalidate()} disabled={effective.isFetching || groups.isFetching}>
               Refresh
             </Button>
@@ -543,6 +553,22 @@ function SettingsPage() {
         <Card className="mt-24">
           <EmptyState title="Choose a tenant" description="Select a tenant above to inspect its overrides." icon="settings" />
         </Card>
+      ) : view === 'list' ? (
+        <SettingsList
+          items={settings}
+          groups={boardGroups.filter((group) => settings.some((item) => item.group.slug === group.slug))}
+          target={targetLabel(targetKind, tenant)}
+          savingKey={
+            saveSetting.isPending
+              ? saveSetting.variables?.item.key ?? null
+              : resetSetting.isPending
+                ? resetSetting.variables?.key ?? null
+                : null
+          }
+          onSave={(item, value) => saveSetting.mutate({ item, value })}
+          onReset={(item) => resetSetting.mutate(item)}
+          onDetails={openEditor}
+        />
       ) : (
         <div className="settings-layout mt-24">
           <Card className="group-pane">
