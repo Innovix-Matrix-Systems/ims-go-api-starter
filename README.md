@@ -25,23 +25,32 @@ jobs.
   SQL, cache/queue, log and exception tabs.
 - **Queue + Sessions** — retry/cancel/delete, pause/resume, River job deep links; device/token
   directory, force logout and idle pruning.
-- **Settings + Feature flags** — grouped typed catalog with drag-and-drop and global/tenant
-  overrides; global/tenant/user flags with source badges and resolution drawer.
+- **Settings + Feature flags** — every setting inline-editable, drag to sort and regroup,
+  global/tenant overrides; global/tenant/user flags with percentage rollout.
+- **Tenants** — subscription, plan features with usage against limits, override counts.
+- **Commands + Inspector** — run allowlisted maintenance commands (sync, cache, migrations,
+  backups, …) with output and history; inspect routes with their permissions, roles, config
+  (secrets masked) and packages.
+- **Audit log** — every dashboard sign-in and action with who, IP and browser; filters and CSV.
 - **Files + Backups** — grid/list file manager with previews and tenant filters; local-first
   `pg_dump` archives with optional S3/R2 copies, retention, download and cleanup.
-- **Developers + Playground + Command center** — create/repair developer accounts, local-only
-  synthetic/real job triggers, and `Ctrl/Cmd+K` navigation/actions.
+- **Developers + Playground + `Ctrl/Cmd+K`** — developer accounts, local job triggers, and a
+  palette that reaches every page and command.
 
 **Developer experience**
 - `ims gen module` scaffolds a tenant-scoped CRUD module (migration, sqlc queries, repository,
   service, handler, routes, tests, OpenAPI region); `ims gen openapi` documents existing modules.
 - One binary and one CLI: `serve`, `migrate`, `queue:work`, `schedule`, `gen`, `backup:*`, `db:seed`.
-- Embedded goose migrations, sqlc-generated queries, per-package Postgres test schemas (`dbtest`),
-  cache-driver contract tests, and OpenAPI route-drift/freshness checks.
+- Laravel-style handlers (`h.Bind`, `h.Data`, `r.With(h.can(perm))`) and config split per section.
+- `internal/testkit`: an integration test is ~10 lines (`testkit.New`, factories, `app.As(user)`).
+- Embedded goose migrations, sqlc-generated queries, per-package Postgres test schemas, a
+  route-permission coverage test, cache-driver contract tests, and OpenAPI route-drift checks.
+- Agent skills for AI coding assistants in `.agents/skills` (mirrored to `.claude/skills`).
 - systemd deployment units plus install/release scripts.
 
 **Identity, tenancy & API**
-- Opaque bearer tokens (`id|secret`, SHA-256 at rest, per-device), OTP login and login throttling.
+- Opaque bearer tokens (`id|secret`, SHA-256 at rest, per-device), OTP login, login throttling,
+  password reset and e-mail verification (single-use tokens, no account enumeration).
 - Multi-tenant + branch isolation with **explicit** scoping (no RLS), super-admin impersonation.
 - Permission catalog, cached RBAC checker, seeded Super-Admin/Admin/User and hidden Developer roles.
 - Typed request binding, strict JSON, validation messages, pagination and cursor feeds.
@@ -52,10 +61,12 @@ jobs.
 - Cache: `memory | file | redis | database`, versioned scope-aware keys.
 - Queue: `sync` and River (`critical/default/heavy`), typed job registry, retries, health.
 - Scheduler: validated cron tasks with overlap/timeout policies and heartbeat.
-- Mail (`log`/`smtp`), storage (local private/public + S3-compatible), rate limiting, i18n `en`/`bn`.
+- Storage disks like Laravel's `filesystems.php`: local, S3, Cloudflare R2, MinIO — switch with `.env`.
+- Mail (`log`/`smtp`), rate limiting, i18n `en`/`bn`.
 
 **Product modules**
-- Settings (typed/grouped, global + tenant), feature flags (global/tenant/user), notifications
+- Activity log (who did what, per tenant), settings (typed/grouped, global + tenant), feature
+  flags (global/tenant/user, percentage rollout), notifications
   (feed, queue fan-out, mail), files/uploads, import/export jobs, billing (packages, subscriptions,
   bKash/Nagad/cash/bank, feature limits), system info, and PostgreSQL backups.
 
@@ -164,10 +175,12 @@ cmd/app/            single-binary entry point
 internal/app/       composition root: platform, wiring, routes, lifecycle
 internal/modules/   feature modules (identity, access, tenancy, billing, settings, files, backup, ...)
 internal/platform/  database, cache, queue, scheduler, httpx, storage, mail, i18n, health, metrics
+internal/testkit/   integration-test app, factories and request builder
 internal/scaffold/  module + OpenAPI generators
 internal/dbgen/     sqlc code (generated)
 internal/contract/  OpenAPI code (generated)
 web/dev/            embedded TanStack Start developer dashboard
+.agents/skills/     agent skills (canonical; `make skills-sync` mirrors them to .claude/skills)
 migrations/         embedded goose migrations (also sqlc's schema source)
 sql/queries/        sqlc queries
 api/openapi.yaml    canonical HTTP contract

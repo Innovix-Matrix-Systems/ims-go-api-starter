@@ -69,11 +69,12 @@ func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
 are human-readable; `h.Validate` for query/multipart structs). Business validation (uniqueness, ownership) lives in
 the service and returns `apperr.Validation(map[string][]string{"field": {"message"}})`.
 
-**Tenancy** — read the scope with `tenancy.FromContext(ctx)`; filter with
-`scope.EffectiveTenantID()` (and `EffectiveBranchID()`). `0` means "no filter". Repositories take
-explicit ids — **every tenant-scoped query must filter `tenant_id`**. `scope.AllTenants()` (internal
-or a global impersonation read) is the only case that skips the filter. Writes without acting
-headers on resolved routes are 403 at the middleware.
+**Tenancy** — read the scope with `tenancy.From(r)` (`tenancy.FromContext(ctx)` below the
+handler); pass `scope.Filter()` to single-row repository methods and `scope.EffectiveTenantID()`
+(and `EffectiveBranchID()`) to lists. A zero `tenancy.Filter{}` matches **no** tenant rows (fails
+closed); every-tenant reads are explicit (`scope.AllTenants()` / `tenancy.Unscoped()`, internal or
+global impersonation only). **Every tenant-scoped query must filter `tenant_id`.** Writes without
+acting headers on resolved routes are 403 at the middleware.
 
 **Authorization** — permissions are checked at the HTTP edge, like Laravel: declare them on the
 route, `r.With(h.can(authz.PermBranchCreate)).Post("/branch", h.store)` (the `can:` middleware;

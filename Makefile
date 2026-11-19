@@ -35,7 +35,7 @@ endif
 .DEFAULT_GOAL := help
 .PHONY: help tools env build build-all dev dev-api run serve queue schedule test test-race test-cover test-integration \
         vet format format-check lint lint-fix tidy check \
-        sqlc openapi openapi-gen openapi-check generate gen-check \
+        sqlc openapi openapi-gen openapi-check generate gen-check skills-sync skills-check \
         db-up db-down migrate migrate-status migrate-rollback seed fresh \
         health config version web-build web-typecheck dev-web clean clean-all
 
@@ -184,10 +184,18 @@ openapi-check: ## Validate the spec + route drift and fail if the generated regi
 
 generate: sqlc openapi openapi-gen ## Regenerate all generated code.
 
-gen-check: ## Verify generated code is current; fails on drift.
+gen-check: skills-check ## Verify generated code and skill copies are current; fails on drift.
 	$(MAKE) sqlc openapi
 	git diff --exit-code -- internal/dbgen internal/contract
 	go run ./cmd/app gen openapi --all --check
+
+skills-sync: ## Copy the agent skills (.agents/skills, canonical) to .claude/skills for Claude Code.
+	rm -rf .claude/skills
+	mkdir -p .claude
+	cp -r .agents/skills .claude/skills
+
+skills-check: ## Fail when .claude/skills differs from .agents/skills (run `make skills-sync`).
+	diff -r .agents/skills .claude/skills
 
 # ── Database ─────────────────────────────────────────────────────────────────
 db-up: ## Start the local Postgres via docker compose.

@@ -74,6 +74,9 @@ jobs:
       - name: generated OpenAPI regions are current (no DB)
         run: go run ./cmd/app gen openapi --all --check
 
+      - name: agent skills are in sync (.agents/skills = .claude/skills)
+        run: diff -r .agents/skills .claude/skills
+
       - name: test (race)
         run: go test -race ./...
 

@@ -181,7 +181,7 @@ plus `error_code`, `timestamp`, `trace_id` (5xx only) and extension members:
 `errors` (422 field maps with dot paths), `meta` (e.g. feature limits), `retry_after`.
 Success envelopes are `{"data": ...}`; lists add `links` and `meta`. `debug` is added outside
 production when `APP_DEBUG=true`.
-Validation is structural in the transport (`binder.JSON` + validator with humanized messages);
+Validation is structural in the transport (`h.Bind`: strict JSON + validator with humanized messages);
 business validation lives in services.
 
 ## 9. CLI surface

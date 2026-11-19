@@ -1,6 +1,6 @@
 ---
 name: verify-changes
-description: Use when finishing any coding task in this repo — run format, vet, lint, unit and integration tests (DATABASE_TEST_DSN), race checks, and a live smoke test with the built binary before reporting done.
+description: Use when finishing any coding task in this repo — run format, vet, lint, unit and integration tests (DATABASE_TEST_DSN), generated-code and OpenAPI checks, the dashboard typecheck/build, and a live check against the running app before reporting done.
 ---
 
 # Verifying changes
@@ -10,7 +10,7 @@ Run every gate that applies; report exact results. Do not claim success without 
 ## Gates (in order)
 
 ```bash
-gofmt -l .                       # must print nothing
+gofmt -l .                       # must print nothing (or: make format-check)
 go vet ./...
 golangci-lint run ./...          # exit 0
 
@@ -18,27 +18,52 @@ golangci-lint run ./...          # exit 0
 $env:DATABASE_TEST_DSN = "postgres://postgres:postgres@127.0.0.1:5432/ims_go_api_test?sslmode=disable"
 go test -count=1 ./...
 go test -count=1 -race -p 2 ./...   # -p 2 locally: race builds are memory-hungry
+
+make gen-check                   # sqlc, oapi-codegen, OpenAPI regions and skills are current
+make openapi-check               # spec valid + "no route drift"
 ```
 
-## Live smoke (for HTTP/CLI changes)
+Dashboard (`web/dev`) when the SPA, `api/openapi.yaml` or `/dev/api` changed:
 
 ```bash
-make migrate || go run ./cmd/app migrate
-go build -o bin/ims.exe ./cmd/app
-# start: $p = Start-Process .\bin\ims.exe serve -PassThru -NoNewWindow
-# health: curl http://127.0.0.1:8080/api/health
-# login:  POST /api/v1/login {"email":"superadmin@ims.com","password":"123456","device":"smoke"}
-#        then use -H "Authorization: Bearer <token>"
-#        impersonation: -H "X-Acting-Tenant: 1" -H "X-Acting-Branch: 1"
-# stop: Stop-Process -Id $p.Id -Force
+cd web/dev
+npm run openapi:gen              # refresh src/api/schema.d.ts after spec changes
+npx tsc --noEmit
+npm run build                    # what the release embeds
 ```
 
-PowerShell quirk: pass JSON bodies via `--data-binary "@file.json"` — inline quoting with
-`curl.exe` mangles double quotes.
+Tests that skip without `DATABASE_TEST_DSN` are not "passing" — say so when no DSN is available.
+`go test -v -run Name` confirms a new test actually ran.
+
+## Live check (HTTP, CLI and dashboard changes)
+
+`make dev` runs the SPA on `http://localhost:8080/dev` and the API on `:8081` (air). Apply new
+migrations first (`go run ./cmd/app migrate`). Check new endpoints with curl or in the browser:
+
+```bash
+# login (seed password: AUTH_DEFAULT_PASSWORD, default 123456)
+curl -s -X POST localhost:8081/api/v1/login -H "Content-Type: application/json" \
+  -d '{"email":"superadmin@ims.com","password":"123456","device":"smoke"}'
+# then -H "Authorization: Bearer <token>"; impersonation: -H "X-Acting-Tenant: 1" -H "X-Acting-Branch: 1"
+```
+
+**Air on Windows** sometimes leaves the old API running, so the rebuilt binary cannot bind :8081
+("Only one usage of each socket address") and new routes answer 404/405. Check
+`Get-Process ims | Select Id, StartTime`; if it predates your change, stop that process and make
+a real content change to a Go file (air skips unchanged files), or restart `make dev`. Queue and
+scheduler processes (`make queue`, `make schedule`) never hot-reload — restart them after changes
+that affect jobs or tasks.
+
+Without `make dev`: `go build -o bin/ims.exe ./cmd/app`, start `bin/ims.exe serve`
+(listens on `APP_LISTEN_ADDR`, default `:8080`), test, stop it. PowerShell `curl.exe` mangles
+inline JSON quotes — pass bodies with `--data-binary "@file.json"`.
 
 ## Also check
 
-- New tables/columns: `migrate:status` shows goose + `River schema: vN (0 pending)`.
-- Seeding: `db:seed` twice must report no duplicates (idempotent).
-- Specs: tick the phase checklist and record implementation notes for anything you deviated on.
-- Never commit; the user commits.
+- New tables/columns: `migrate:status` shows every goose migration applied and
+  `River schema: vN (0 pending)`.
+- Seeding: `db:seed` twice reports no duplicates.
+- New routes are protected (`route_permissions_integration_test.go`) and documented
+  (`openapi-check`).
+- Specs: tick the phase checklist; record implementation notes, decisions and deferred items.
+- Commit only when the user asks: one commit per phase/feature, message says what and why.
