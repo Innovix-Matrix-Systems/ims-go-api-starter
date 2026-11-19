@@ -3,7 +3,10 @@
 // the bearer middleware.
 package authn
 
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 // Identity is the authenticated caller established by the bearer middleware.
 type Identity struct {
@@ -60,4 +63,13 @@ func WithIdentity(ctx context.Context, identity *Identity) context.Context {
 func IdentityFromContext(ctx context.Context) (*Identity, bool) {
 	identity, ok := ctx.Value(identityKey).(*Identity)
 	return identity, ok
+}
+
+// UserID returns the authenticated user's id, or 0 for a guest (Laravel's
+// auth()->id()).
+func UserID(r *http.Request) int64 {
+	if identity, ok := IdentityFromContext(r.Context()); ok && identity != nil {
+		return identity.UserID
+	}
+	return 0
 }

@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
@@ -16,30 +14,28 @@ import (
 
 // Handler serves notification HTTP endpoints.
 type Handler struct {
-	service   *Service
-	checker   *authz.Checker
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
+	service *Service
+	checker *authz.Checker
+	httpx.Kit
 }
 
 // NewHandler creates the notification handler.
 func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, binder: binder, validator: validator, responder: responder}
+	return &Handler{service: service, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
 }
 
 func (h *Handler) feed(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 
 	filter, err := feedFilter(r)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	page, err := h.service.Feed(r.Context(), scope, identity.UserID, filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 
@@ -58,7 +54,7 @@ func (h *Handler) feed(w http.ResponseWriter, r *http.Request) {
 		Prev: httpx.CursorURL(r, page.PrevCursor),
 		Next: httpx.CursorURL(r, page.NextCursor),
 	}
-	h.responder.Cursor(w, r, http.StatusOK, data, meta, links)
+	h.Cursor(w, r, http.StatusOK, data, meta, links)
 }
 
 func feedFilter(r *http.Request) (FeedFilter, error) {
@@ -99,36 +95,30 @@ func feedFilter(r *http.Request) (FeedFilter, error) {
 
 func (h *Handler) markRead(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
-	id, err := notificationPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	scope := tenancy.From(r)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	if err := h.service.MarkRead(r.Context(), scope, identity.UserID, id); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 func (h *Handler) markAllRead(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	if err := h.service.MarkAllRead(r.Context(), scope, identity.UserID); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermNotificationViewAll); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	page, perPage, offset := httpx.PageParams(r)
 	orderBy, orderDir := httpx.OrderParams(r, "created_at", "created_at", "title", "priority")
 	filter := ListFilter{
@@ -141,7 +131,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 	}
 	if filter.Priority != "" {
 		if _, ok := Priorities[filter.Priority]; !ok {
-			h.responder.Error(w, r, apperr.Validation(map[string][]string{
+			h.Error(w, r, apperr.Validation(map[string][]string{
 				"priority": {"The selected priority is invalid."},
 			}))
 			return
@@ -150,117 +140,84 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 
 	items, total, err := h.service.List(r.Context(), scope, filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	data := make([]Response, 0, len(items))
 	for _, item := range items {
 		targets, err := h.service.Targets(r.Context(), item.ID)
 		if err != nil {
-			h.responder.Error(w, r, err)
+			h.Error(w, r, err)
 			return
 		}
 		data = append(data, NewResponse(item, targets))
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
+	h.Paginated(w, r, http.StatusOK, data, meta, links)
 }
 
 func (h *Handler) show(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermNotificationView); err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	id, err := notificationPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	notification, err := h.service.Get(r.Context(), scope, id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	targets, err := h.service.Targets(r.Context(), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*notification, targets))
+	h.Data(w, r, http.StatusOK, NewResponse(*notification, targets))
 }
 
 func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermNotificationCreate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	notification, targets, err := h.service.Create(r.Context(), scope, identity.UserID, req.toCreateInput())
+	scope := tenancy.From(r)
+	notification, targets, err := h.service.Create(r.Context(), scope, authn.UserID(r), req.toCreateInput())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusCreated, NewResponse(*notification, targets))
+	h.Data(w, r, http.StatusCreated, NewResponse(*notification, targets))
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermNotificationUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	id, err := notificationPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	notification, targets, err := h.service.Update(r.Context(), scope, identity.UserID, id, req.toUpdateInput())
+	scope := tenancy.From(r)
+	notification, targets, err := h.service.Update(r.Context(), scope, authn.UserID(r), id, req.toUpdateInput())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*notification, targets))
+	h.Data(w, r, http.StatusOK, NewResponse(*notification, targets))
 }
 
 func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermNotificationDelete); err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	id, err := notificationPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	if err := h.service.Delete(r.Context(), scope, id); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 func (req InsertUpdateRequest) toCreateInput() CreateInput {
@@ -309,11 +266,7 @@ func dataJSON(value map[string]any) []byte {
 	return encoded
 }
 
-func notificationPathID(r *http.Request) (int64, error) {
-	raw := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 1 {
-		return 0, apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-	}
-	return id, nil
+// can is route middleware requiring a permission (Laravel's can:...).
+func (h *Handler) can(permission string) func(http.Handler) http.Handler {
+	return authz.Require(h.checker, permission, h.Responder)
 }

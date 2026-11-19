@@ -18,32 +18,25 @@ import (
 
 // Handler serves processing-job HTTP endpoints.
 type Handler struct {
-	service   *Service
-	settings  *settings.Service
-	checker   *authz.Checker
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
+	service  *Service
+	settings *settings.Service
+	checker  *authz.Checker
+	httpx.Kit
 }
 
 // NewHandler creates the processing-job handler.
 func NewHandler(service *Service, settingsService *settings.Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, settings: settingsService, checker: checker, binder: binder, validator: validator, responder: responder}
+	return &Handler{service: service, settings: settingsService, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermDataProcessingViewAll); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	h.list(w, r, scope, 0)
 }
 
 func (h *Handler) userJobs(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	h.list(w, r, scope, identity.UserID)
 }
 
@@ -59,7 +52,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, scope tenancy.Sco
 	}
 	items, total, err := h.service.List(r.Context(), scope, filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	data := make([]Response, 0, len(items))
@@ -67,29 +60,29 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, scope tenancy.Sco
 		data = append(data, NewResponse(item))
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
+	h.Paginated(w, r, http.StatusOK, data, meta, links)
 }
 
 func (h *Handler) show(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	job, _ := h.ownedJob(w, r, scope, identity.UserID)
 	if job == nil {
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*job))
+	h.Data(w, r, http.StatusOK, NewResponse(*job))
 }
 
 func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	job, _ := h.ownedJob(w, r, scope, identity.UserID)
 	if job == nil {
 		return
 	}
 	download, err := h.service.OpenDownload(r.Context(), scope, *job.QueueJobID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	defer download.Reader.Close()
@@ -108,37 +101,22 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) cleanupSettings(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermDataProcessingViewAll); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	days := CleanupSetting(r.Context(), h.settings, scope)
-	h.responder.Data(w, r, http.StatusOK, CleanupSettingsResponse{Days: days})
+	h.Data(w, r, http.StatusOK, CleanupSettingsResponse{Days: days})
 }
 
 func (h *Handler) updateCleanupSettings(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermDataProcessingViewAll); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req CleanupSettingsRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	if err := h.settings.Set(r.Context(), scope, CleanupSettingKey, req.Days); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, CleanupSettingsResponse{Days: req.Days})
+	h.Data(w, r, http.StatusOK, CleanupSettingsResponse{Days: req.Days})
 }
 
 // ownedJob loads a job by its public id and enforces ownership or the
@@ -147,17 +125,17 @@ func (h *Handler) ownedJob(w http.ResponseWriter, r *http.Request, scope tenancy
 	jobID := chi.URLParam(r, "jobId")
 	if jobID == "" {
 		err := apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return nil, err
 	}
 	job, err := h.service.GetByJobID(r.Context(), scope, jobID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return nil, err
 	}
 	if job.TenantID == nil {
 		if err := h.checker.MustCan(r.Context(), userID, authz.PermDataProcessingViewAll); err != nil {
-			h.responder.Error(w, r, err)
+			h.Error(w, r, err)
 			return nil, err
 		}
 		return job, nil
@@ -166,12 +144,17 @@ func (h *Handler) ownedJob(w http.ResponseWriter, r *http.Request, scope tenancy
 		return job, nil
 	}
 	if can, err := h.checker.Can(r.Context(), userID, authz.PermDataProcessingViewAll); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return nil, err
 	} else if can {
 		return job, nil
 	}
 	forbidden := apperr.New(apperr.Forbidden, "You are not allowed to access this job.")
-	h.responder.Error(w, r, forbidden)
+	h.Error(w, r, forbidden)
 	return nil, forbidden
+}
+
+// can is route middleware requiring a permission (Laravel's can:...).
+func (h *Handler) can(permission string) func(http.Handler) http.Handler {
+	return authz.Require(h.checker, permission, h.Responder)
 }

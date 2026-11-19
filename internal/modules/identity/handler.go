@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
@@ -31,27 +29,20 @@ type PhotoManager interface {
 
 // Handler serves user HTTP endpoints.
 type Handler struct {
-	service   *Service
-	photo     PhotoManager
-	exchange  *ExchangeService
-	checker   *authz.Checker
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
+	service  *Service
+	photo    PhotoManager
+	exchange *ExchangeService
+	checker  *authz.Checker
+	httpx.Kit
 }
 
 // NewHandler creates the user handler.
 func NewHandler(service *Service, photo PhotoManager, exchange *ExchangeService, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, photo: photo, exchange: exchange, checker: checker, binder: binder, validator: validator, responder: responder}
+	return &Handler{service: service, photo: photo, exchange: exchange, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserViewAll); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 
 	page, perPage, offset := httpx.PageParams(r)
 	orderBy, orderDir := httpx.OrderParams(r, "id", "name", "email", "created_at")
@@ -71,7 +62,7 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 
 	users, total, err := h.service.List(r.Context(), scope, filter)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	photos := map[int64]string{}
@@ -97,106 +88,75 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		data = append(data, NewResponse(user, roles[user.ID], stringPtr(photos[user.ID])))
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
+	h.Paginated(w, r, http.StatusOK, data, meta, links)
 }
 
 func (h *Handler) profile(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
 	user, err := h.service.GetRecord(r.Context(), identity.UserID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
 }
 
 func (h *Handler) show(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	id, err := userPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	if id != identity.UserID {
 		if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserView); err != nil {
-			h.responder.Error(w, r, err)
+			h.Error(w, r, err)
 			return
 		}
 	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	user, err := h.service.Get(r.Context(), scope, id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
 }
 
 func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserCreate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	user, err := h.service.Create(r.Context(), scope, identity.UserID, req.toCreateInput())
+	scope := tenancy.From(r)
+	user, err := h.service.Create(r.Context(), scope, authn.UserID(r), req.toCreateInput())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusCreated, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusCreated, h.responseFor(r.Context(), *user))
 }
 
 func (h *Handler) storeInternal(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalCreate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req InternalInsertRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	input := req.InsertUpdateRequest.toCreateInput()
 	input.TenantID = req.TenantID
-	user, err := h.service.Create(r.Context(), scope, identity.UserID, input)
+	user, err := h.service.Create(r.Context(), scope, authn.UserID(r), input)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusCreated, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusCreated, h.responseFor(r.Context(), *user))
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	h.updateTarget(w, r, authz.PermUserRoleAssign)
 }
 
 func (h *Handler) updateInternal(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	h.updateTarget(w, r, authz.PermUserInternalRoleAssign)
 }
 
@@ -204,27 +164,21 @@ func (h *Handler) updateInternal(w http.ResponseWriter, r *http.Request) {
 // payload needs the role-assign permission too, not just update.
 func (h *Handler) updateTarget(w http.ResponseWriter, r *http.Request, rolePerm string) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	id, err := userPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	if req.Roles != nil {
 		if err := h.checker.MustCan(r.Context(), identity.UserID, rolePerm); err != nil {
-			h.responder.Error(w, r, err)
+			h.Error(w, r, err)
 			return
 		}
 	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	user, err := h.service.Update(r.Context(), scope, identity.UserID, id, UpdateParams{
 		FirstName: req.FirstName,
 		LastName:  req.LastName,
@@ -237,92 +191,61 @@ func (h *Handler) updateTarget(w http.ResponseWriter, r *http.Request, rolePerm 
 		ExpectedUpdatedAt: req.UpdatedAt,
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
 }
 
 func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserDelete); err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	id, err := userPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	scope := tenancy.From(r)
+	if err := h.service.Delete(r.Context(), scope, authn.UserID(r), id); err != nil {
+		h.Error(w, r, err)
 		return
 	}
-	scope, _ := tenancy.FromContext(r.Context())
-	if err := h.service.Delete(r.Context(), scope, identity.UserID, id); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 func (h *Handler) assignRole(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserRoleAssign); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req AssignRoleRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	user, err := h.service.AssignRoles(r.Context(), scope, identity.UserID, req.UserID, req.Roles)
+	scope := tenancy.From(r)
+	user, err := h.service.AssignRoles(r.Context(), scope, authn.UserID(r), req.UserID, req.Roles)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
 }
 
 func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req ChangePasswordRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	scope := tenancy.From(r)
+	if err := h.service.ChangePassword(r.Context(), scope, authn.UserID(r), req.UserID, req.Password); err != nil {
+		h.Error(w, r, err)
 		return
 	}
-	scope, _ := tenancy.FromContext(r.Context())
-	if err := h.service.ChangePassword(r.Context(), scope, identity.UserID, req.UserID, req.Password); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.Message(w, r, http.StatusOK, "Password changed successfully.")
+	h.Message(w, r, http.StatusOK, "Password changed successfully.")
 }
 
 func (h *Handler) profileUpdate(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
 	var req ProfileUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	current, err := h.service.GetRecord(r.Context(), identity.UserID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	name := current.Name
@@ -336,48 +259,37 @@ func (h *Handler) profileUpdate(w http.ResponseWriter, r *http.Request) {
 		Phone:     req.Phone,
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
 }
 
 func (h *Handler) profileChangePassword(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
 	var req ProfileChangePasswordRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	if err := h.service.ProfileChangePassword(r.Context(), identity.UserID, identity.TokenID, req.CurrentPassword, req.Password); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Message(w, r, http.StatusOK, "Password changed successfully.")
+	h.Message(w, r, http.StatusOK, "Password changed successfully.")
 }
 
 func (h *Handler) switchBranch(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserBranchSwitch); err != nil {
-		h.responder.Error(w, r, err)
+	branchID, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	branchID, err := userPathID(r)
+	scope := tenancy.From(r)
+	user, err := h.service.SwitchBranch(r.Context(), scope, authn.UserID(r), branchID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	scope, _ := tenancy.FromContext(r.Context())
-	user, err := h.service.SwitchBranch(r.Context(), scope, identity.UserID, branchID)
-	if err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
 }
 
 func (h *Handler) responseFor(ctx context.Context, user User) Response {
@@ -392,41 +304,41 @@ func (h *Handler) responseFor(ctx context.Context, user User) Response {
 func (h *Handler) updateAvatar(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
 	if h.photo == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "Avatar uploads are not available."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "Avatar uploads are not available."))
 		return
 	}
 	form, err := httpx.Multipart(w, r, avatarMaxBytes+avatarMultipartSlack)
 	if err != nil {
-		h.responder.Error(w, r, avatarUploadError(err))
+		h.Error(w, r, avatarUploadError(err))
 		return
 	}
 	targetID, err := avatarTargetID(form.Value["id"])
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if targetID != identity.UserID {
 		if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserUpdate); err != nil {
-			h.responder.Error(w, r, err)
+			h.Error(w, r, err)
 			return
 		}
 	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	target, err := h.service.Get(r.Context(), scope, targetID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	header, err := httpx.FormFile(form, "avatar")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, targetID, target.TenantIDValue(), header); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *target))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *target))
 }
 
 // avatarMultipartSlack leaves room for multipart framing.
@@ -479,35 +391,35 @@ const importMultipartSlack = 64 << 10
 // importUsersBackground queues a background user import (multipart upload).
 func (h *Handler) importUsersBackground(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	permission := authz.PermUserImport
 	if scope.Internal {
 		permission = authz.PermUserInternalImport
 	}
 	if err := h.checker.MustCan(r.Context(), identity.UserID, permission); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if h.exchange == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User imports are not available."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User imports are not available."))
 		return
 	}
 	form, err := httpx.Multipart(w, r, maxImportBytes+importMultipartSlack)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	header, err := httpx.FormFile(form, "file")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	job, err := h.exchange.StartImport(r.Context(), scope, identity.UserID, header)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, BackgroundJobResponse{
+	h.Data(w, r, http.StatusOK, BackgroundJobResponse{
 		JobID:   derefString(job.QueueJobID),
 		Status:  job.Status,
 		Message: "Job queued successfully.",
@@ -517,26 +429,21 @@ func (h *Handler) importUsersBackground(w http.ResponseWriter, r *http.Request) 
 // exportUsersBackground queues a background user export.
 func (h *Handler) exportUsersBackground(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	permission := authz.PermUserExport
 	if scope.Internal {
 		permission = authz.PermUserInternalExport
 	}
 	if err := h.checker.MustCan(r.Context(), identity.UserID, permission); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if h.exchange == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User exports are not available."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User exports are not available."))
 		return
 	}
 	var req ExportFiltersRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	job, err := h.exchange.StartExport(r.Context(), scope, identity.UserID, ExportRequest{
@@ -547,10 +454,10 @@ func (h *Handler) exportUsersBackground(w http.ResponseWriter, r *http.Request) 
 		OrderDir: req.OrderDirection,
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, BackgroundJobResponse{
+	h.Data(w, r, http.StatusOK, BackgroundJobResponse{
 		JobID:   derefString(job.QueueJobID),
 		Status:  job.Status,
 		Message: "Job queued successfully.",
@@ -559,13 +466,8 @@ func (h *Handler) exportUsersBackground(w http.ResponseWriter, r *http.Request) 
 
 // importTemplate downloads the CSV import template (heading + sample rows).
 func (h *Handler) importTemplate(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserImport); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	if h.exchange == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User imports are not available."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User imports are not available."))
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
@@ -578,162 +480,120 @@ func (h *Handler) importTemplate(w http.ResponseWriter, r *http.Request) {
 
 // changePasswordInternal sets another user's password across tenants.
 func (h *Handler) changePasswordInternal(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req ChangePasswordRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	scope := tenancy.From(r)
+	if err := h.service.ChangePassword(r.Context(), scope, authn.UserID(r), req.UserID, req.Password); err != nil {
+		h.Error(w, r, err)
 		return
 	}
-	scope, _ := tenancy.FromContext(r.Context())
-	if err := h.service.ChangePassword(r.Context(), scope, identity.UserID, req.UserID, req.Password); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.Message(w, r, http.StatusOK, "Password changed successfully.")
+	h.Message(w, r, http.StatusOK, "Password changed successfully.")
 }
 
 // destroyInternal soft-deletes a user across tenants.
 func (h *Handler) destroyInternal(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalDelete); err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	id, err := userPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	scope := tenancy.From(r)
+	if err := h.service.Delete(r.Context(), scope, authn.UserID(r), id); err != nil {
+		h.Error(w, r, err)
 		return
 	}
-	scope, _ := tenancy.FromContext(r.Context())
-	if err := h.service.Delete(r.Context(), scope, identity.UserID, id); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 // assignRoleInternal replaces a user's roles across tenants.
 func (h *Handler) assignRoleInternal(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalRoleAssign); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	var req AssignRoleRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
-	user, err := h.service.AssignRoles(r.Context(), scope, identity.UserID, req.UserID, req.Roles)
+	scope := tenancy.From(r)
+	user, err := h.service.AssignRoles(r.Context(), scope, authn.UserID(r), req.UserID, req.Roles)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *user))
 }
 
 // updateUserAvatarInternal replaces any user's avatar (path id) across tenants.
 func (h *Handler) updateUserAvatarInternal(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalUpdate); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	if h.photo == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "Avatar uploads are not available."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "Avatar uploads are not available."))
 		return
 	}
-	id, err := userPathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	target, err := h.service.Get(r.Context(), scope, id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	form, err := httpx.Multipart(w, r, avatarMaxBytes+avatarMultipartSlack)
 	if err != nil {
-		h.responder.Error(w, r, avatarUploadError(err))
+		h.Error(w, r, avatarUploadError(err))
 		return
 	}
 	header, err := httpx.FormFile(form, "avatar")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, id, target.TenantIDValue(), header); err != nil {
-		h.responder.Error(w, r, err)
+	if err := h.photo.UpdateAvatar(r.Context(), authn.UserID(r), id, target.TenantIDValue(), header); err != nil {
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *target))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *target))
 }
 
 // updateProfileAvatarInternal replaces the caller's own avatar.
 func (h *Handler) updateProfileAvatarInternal(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
 	if h.photo == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "Avatar uploads are not available."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "Avatar uploads are not available."))
 		return
 	}
 	form, err := httpx.Multipart(w, r, avatarMaxBytes+avatarMultipartSlack)
 	if err != nil {
-		h.responder.Error(w, r, avatarUploadError(err))
+		h.Error(w, r, avatarUploadError(err))
 		return
 	}
 	header, err := httpx.FormFile(form, "avatar")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	if err := h.photo.UpdateAvatar(r.Context(), identity.UserID, identity.UserID, identity.TenantID, header); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	target, err := h.service.GetRecord(r.Context(), identity.UserID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *target))
+	h.Data(w, r, http.StatusOK, h.responseFor(r.Context(), *target))
 }
 
 // exportUsersInternal streams an xlsx export across tenants.
 func (h *Handler) exportUsersInternal(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalExport); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	if h.exchange == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User exports are not available."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User exports are not available."))
 		return
 	}
 	var req ExportFiltersRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	scope, _ := tenancy.FromContext(r.Context())
+	scope := tenancy.From(r)
 	data, err := h.exchange.ExportUsers(r.Context(), scope, ExportRequest{
 		Search:   req.Search,
 		IsActive: req.IsActive,
@@ -742,7 +602,7 @@ func (h *Handler) exportUsersInternal(w http.ResponseWriter, r *http.Request) {
 		OrderDir: req.OrderDirection,
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	fileName := fmt.Sprintf("internal_user_data_%s.xlsx", time.Now().Format("2006-01-02_H-04-05"))
@@ -754,32 +614,27 @@ func (h *Handler) exportUsersInternal(w http.ResponseWriter, r *http.Request) {
 
 // importUsersInternal imports a spreadsheet synchronously across tenants.
 func (h *Handler) importUsersInternal(w http.ResponseWriter, r *http.Request) {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if err := h.checker.MustCan(r.Context(), identity.UserID, authz.PermUserInternalImport); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
 	if h.exchange == nil {
-		h.responder.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User imports are not available."))
+		h.Error(w, r, apperr.New(apperr.ServiceUnavailable, "User imports are not available."))
 		return
 	}
 	form, err := httpx.Multipart(w, r, maxImportBytes+importMultipartSlack)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	header, err := httpx.FormFile(form, "file")
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	scope, _ := tenancy.FromContext(r.Context())
-	result, err := h.exchange.ImportUsers(r.Context(), scope, identity.UserID, header)
+	scope := tenancy.From(r)
+	result, err := h.exchange.ImportUsers(r.Context(), scope, authn.UserID(r), header)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, result)
+	h.Data(w, r, http.StatusOK, result)
 }
 
 func (req InsertUpdateRequest) toCreateInput() CreateParams {
@@ -801,11 +656,7 @@ func (req InsertUpdateRequest) toCreateInput() CreateParams {
 	}
 }
 
-func userPathID(r *http.Request) (int64, error) {
-	raw := chi.URLParam(r, "id")
-	id, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || id < 1 {
-		return 0, apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-	}
-	return id, nil
+// can is route middleware requiring a permission (Laravel's can:...).
+func (h *Handler) can(permission string) func(http.Handler) http.Handler {
+	return authz.Require(h.checker, permission, h.Responder)
 }

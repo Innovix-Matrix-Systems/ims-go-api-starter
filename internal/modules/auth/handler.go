@@ -13,18 +13,16 @@ import (
 
 // Handler serves authentication endpoints.
 type Handler struct {
-	service   *authn.Service
-	recovery  *authn.Recovery
-	users     *identity.Service
-	checker   *authz.Checker
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
+	service  *authn.Service
+	recovery *authn.Recovery
+	users    *identity.Service
+	checker  *authz.Checker
+	httpx.Kit
 }
 
 // NewHandler creates the auth handler.
 func NewHandler(service *authn.Service, users *identity.Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, users: users, checker: checker, binder: binder, validator: validator, responder: responder}
+	return &Handler{service: service, users: users, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
 }
 
 // WithRecovery enables the forgot-password and e-mail verification routes.
@@ -60,10 +58,10 @@ func (h *Handler) forgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.recovery.SendPasswordResetLink(r.Context(), req.Email); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Message(w, r, http.StatusOK, sentMessage)
+	h.Message(w, r, http.StatusOK, sentMessage)
 }
 
 func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
@@ -72,10 +70,10 @@ func (h *Handler) resetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.recovery.ResetPassword(r.Context(), req.Email, req.Token, req.Password); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Message(w, r, http.StatusOK, "Your password has been reset. Please sign in again.")
+	h.Message(w, r, http.StatusOK, "Your password has been reset. Please sign in again.")
 }
 
 func (h *Handler) resendVerification(w http.ResponseWriter, r *http.Request) {
@@ -84,10 +82,10 @@ func (h *Handler) resendVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.recovery.SendVerificationLink(r.Context(), req.Email); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Message(w, r, http.StatusOK, sentMessage)
+	h.Message(w, r, http.StatusOK, sentMessage)
 }
 
 func (h *Handler) verifyEmail(w http.ResponseWriter, r *http.Request) {
@@ -96,20 +94,20 @@ func (h *Handler) verifyEmail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.recovery.VerifyEmail(r.Context(), req.Token); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Message(w, r, http.StatusOK, "Your e-mail address has been verified.")
+	h.Message(w, r, http.StatusOK, "Your e-mail address has been verified.")
 }
 
 // bind decodes and validates a JSON body, writing the problem on failure.
 func (h *Handler) bind(w http.ResponseWriter, r *http.Request, dst any) bool {
-	if err := h.binder.JSON(w, r, dst); err != nil {
-		h.responder.Error(w, r, err)
+	if err := h.Binder().JSON(w, r, dst); err != nil {
+		h.Error(w, r, err)
 		return false
 	}
-	if err := h.validator.Struct(r.Context(), dst); err != nil {
-		h.responder.Error(w, r, err)
+	if err := h.Validator().Struct(r.Context(), dst); err != nil {
+		h.Error(w, r, err)
 		return false
 	}
 	return true
@@ -143,17 +141,12 @@ type loginData struct {
 
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	result, err := h.service.Login(r.Context(), req.Email, req.Password, req.Device, clientIP(r))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	h.respondLogin(w, r, result)
@@ -161,17 +154,12 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) verifyOTP(w http.ResponseWriter, r *http.Request) {
 	var req VerifyOTPRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	result, err := h.service.VerifyOTP(r.Context(), req.Email, req.OTP, req.Device, clientIP(r))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	h.respondLogin(w, r, result)
@@ -180,37 +168,32 @@ func (h *Handler) verifyOTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	identity, _ := authn.IdentityFromContext(r.Context())
 	var req LogoutRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
 	if err := h.service.Logout(r.Context(), identity.UserID, req.Device); err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.NoContent(w)
+	h.NoContent(w)
 }
 
 func (h *Handler) respondLogin(w http.ResponseWriter, r *http.Request, result *authn.LoginResult) {
 	user, err := h.users.GetRecord(r.Context(), result.User.ID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	roles, err := h.checker.RoleRefs(r.Context(), user.ID)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	var token *string
 	if result.Token != nil {
 		token = &result.Token.PlainText
 	}
-	h.responder.Data(w, r, http.StatusOK, loginData{
+	h.Data(w, r, http.StatusOK, loginData{
 		User:    identity.NewResponse(*user, roles, nil),
 		Status:  result.Status,
 		Message: result.Message,

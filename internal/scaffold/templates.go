@@ -424,11 +424,7 @@ const handlerTmpl = `package {{.Pkg}}
 
 import (
 	"net/http"
-	"strconv"
 
-	"github.com/go-chi/chi/v5"
-
-	"{{.ModulePath}}/internal/apperr"
 	"{{.ModulePath}}/internal/authn"
 	"{{.ModulePath}}/internal/authz"
 	"{{.ModulePath}}/internal/platform/httpx"
@@ -444,43 +440,33 @@ const (
 	PermDelete = "{{.NameLower}}.delete"
 )
 
-// Handler serves {{.NameLower}} endpoints.
+// Handler serves {{.NameLower}} endpoints. httpx.Kit adds Bind, PathID and
+// the response helpers (Data, Error, NoContent, Paginated).
 type Handler struct {
-	service   *Service
-	checker   *authz.Checker
-	binder    *httpx.Binder
-	validator *httpx.Validator
-	responder *httpx.Responder
+	service *Service
+	checker *authz.Checker
+	httpx.Kit
 }
 
 // NewHandler creates the {{.NameLower}} handler.
 func NewHandler(service *Service, checker *authz.Checker, binder *httpx.Binder, validator *httpx.Validator, responder *httpx.Responder) *Handler {
-	return &Handler{service: service, checker: checker, binder: binder, validator: validator, responder: responder}
+	return &Handler{service: service, checker: checker, Kit: httpx.NewKit(binder, validator, responder)}
 }
 
 // can is route middleware requiring a permission (Laravel's can:...).
 func (h *Handler) can(permission string) func(http.Handler) http.Handler {
-	return authz.Require(h.checker, permission, h.responder)
-}
-
-func actorID(r *http.Request) int64 {
-	identity, _ := authn.IdentityFromContext(r.Context())
-	if identity == nil {
-		return 0
-	}
-	return identity.UserID
+	return authz.Require(h.checker, permission, h.Responder)
 }
 
 func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
-	scope, _ := tenancy.FromContext(r.Context())
 	page, perPage, offset := httpx.PageParams(r)
-	items, total, err := h.service.List(r.Context(), scope, ListFilter{
+	items, total, err := h.service.List(r.Context(), tenancy.From(r), ListFilter{
 		Search: r.URL.Query().Get("search"),
 		Limit:  int32(perPage),
 		Offset: int32(offset),
 	})
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
 	data := make([]Response, 0, len(items))
@@ -488,87 +474,62 @@ func (h *Handler) index(w http.ResponseWriter, r *http.Request) {
 		data = append(data, NewResponse(item))
 	}
 	meta, links := httpx.NewPagination(r, page, perPage, total)
-	h.responder.Paginated(w, r, http.StatusOK, data, meta, links)
+	h.Paginated(w, r, http.StatusOK, data, meta, links)
 }
 
 func (h *Handler) show(w http.ResponseWriter, r *http.Request) {
-	scope, _ := tenancy.FromContext(r.Context())
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	item, err := h.service.Get(r.Context(), scope, id)
+	item, err := h.service.Get(r.Context(), tenancy.From(r), id)
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*item))
+	h.Data(w, r, http.StatusOK, NewResponse(*item))
 }
 
 func (h *Handler) store(w http.ResponseWriter, r *http.Request) {
-	scope, _ := tenancy.FromContext(r.Context())
 	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	item, err := h.service.Create(r.Context(), scope, actorID(r), req.toCreateInput())
+	item, err := h.service.Create(r.Context(), tenancy.From(r), authn.UserID(r), req.toCreateInput())
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusCreated, NewResponse(*item))
+	h.Data(w, r, http.StatusCreated, NewResponse(*item))
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
-	scope, _ := tenancy.FromContext(r.Context())
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
 	var req InsertUpdateRequest
-	if err := h.binder.JSON(w, r, &req); err != nil {
-		h.responder.Error(w, r, err)
+	if !h.Bind(w, r, &req) {
 		return
 	}
-	if err := h.validator.Struct(r.Context(), &req); err != nil {
-		h.responder.Error(w, r, err)
-		return
-	}
-	item, err := h.service.Update(r.Context(), scope, actorID(r), id, req.toUpdateInput(id))
+	item, err := h.service.Update(r.Context(), tenancy.From(r), authn.UserID(r), id, req.toUpdateInput(id))
 	if err != nil {
-		h.responder.Error(w, r, err)
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.Data(w, r, http.StatusOK, NewResponse(*item))
+	h.Data(w, r, http.StatusOK, NewResponse(*item))
 }
 
 func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
-	scope, _ := tenancy.FromContext(r.Context())
-	id, err := pathID(r)
-	if err != nil {
-		h.responder.Error(w, r, err)
+	id, ok := h.PathID(w, r, "id")
+	if !ok {
 		return
 	}
-	if err := h.service.Delete(r.Context(), scope, actorID(r), id); err != nil {
-		h.responder.Error(w, r, err)
+	if err := h.service.Delete(r.Context(), tenancy.From(r), authn.UserID(r), id); err != nil {
+		h.Error(w, r, err)
 		return
 	}
-	h.responder.NoContent(w)
-}
-
-func pathID(r *http.Request) (int64, error) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil || id < 1 {
-		return 0, apperr.New(apperr.InvalidInput, "The provided identifier is invalid.")
-	}
-	return id, nil
+	h.NoContent(w)
 }
 `
 
