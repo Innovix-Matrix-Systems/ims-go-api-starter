@@ -24,6 +24,7 @@ type Handler struct {
 	developers        *DeveloperService
 	files             *FileBrowser
 	targets           *TargetService
+	tenants           *TenantService
 	backups           *backup.Service
 	flags             *featureflags.Service
 	settings          *settings.Service
@@ -58,6 +59,7 @@ func NewHandler(deps Deps) *Handler {
 			identity: deps.Identity, audit: audit},
 		files:     &FileBrowser{FileRepository: deps.Files, files: deps.FileService, audit: audit},
 		targets:   &TargetService{TargetRepository: deps.Targets},
+		tenants:   &TenantService{queries: deps.Queries},
 		backups:   deps.Backups,
 		flags:     deps.FeatureFlags,
 		settings:  deps.Settings,

@@ -43,12 +43,14 @@ export type IconName =
   | 'download'
   | 'backup'
   | 'calendar'
+  | 'tenants'
   | 'inspector'
   | 'shield'
   | 'package'
   | 'route'
 
 const paths: Record<IconName, ReactNode> = {
+  tenants: <><path d="M3 21h18M5 21V7l7-4 7 4v14" /><path d="M9 21v-5h6v5M9 10h.01M15 10h.01M9 13h.01M15 13h.01" /></>,
   calendar: <><rect x="3.5" y="5" width="17" height="15" rx="2" /><path d="M3.5 10h17M8 3v4M16 3v4" /></>,
   inspector: <><circle cx="10.5" cy="10.5" r="6" /><path d="m20 20-5-5M8 10.5h5M10.5 8v5" /></>,
   shield: <><path d="M12 3 4.5 6v6c0 4.4 3.2 7.8 7.5 9 4.3-1.2 7.5-4.6 7.5-9V6z" /><path d="m9 12 2 2 4-4" /></>,

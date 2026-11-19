@@ -19,6 +19,7 @@ const pages = [
   { to: '/inspector', label: 'Inspector', icon: 'inspector' },
   { to: '/actions', label: 'Audit log', icon: 'actions' },
   { to: '/system', label: 'System health', icon: 'system' },
+  { to: '/tenants', label: 'Tenants', icon: 'tenants' },
   { to: '/sessions', label: 'Sessions', icon: 'sessions' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
   { to: '/flags', label: 'Feature flags', icon: 'flags' },

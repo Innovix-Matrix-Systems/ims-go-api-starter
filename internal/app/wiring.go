@@ -223,6 +223,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 				}
 				return deps.routes
 			}),
+			Queries:   queries,
 			Commands:  dev.NewCommandService(queries, logger, devCommands(platform, permissionService, healthRegistry)...),
 			Binder:    binder,
 			Validator: validator,

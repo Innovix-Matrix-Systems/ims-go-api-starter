@@ -2703,6 +2703,125 @@ paths:
         "403": *forbidden
         "404": *notFound
 
+  /dev/api/settings/groups/order:
+    put:
+      tags: [Dev]
+      summary: Reorder settings groups (dev.manage)
+      operationId: devReorderSettingGroups
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: {type: array, items: {type: integer, format: int64}, description: Group ids in the new order.}
+      responses:
+        "200":
+          description: Saved order.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      ids: {type: array, items: {type: integer, format: int64}}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /dev/api/settings/groups/{id}/keys:
+    put:
+      tags: [Dev]
+      summary: Put settings into a group in the given order (dev.manage)
+      description: Moves each key into the group and stores its position (drag and drop). Keys need their global row (settings:sync).
+      operationId: devPlaceSettings
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [keys]
+              properties:
+                keys: {type: array, items: {type: string}, description: Setting keys in their new order.}
+      responses:
+        "200":
+          description: Saved placement.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      group_id: {type: integer, format: int64}
+                      keys: {type: array, items: {type: string}}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /dev/api/tenants:
+    get:
+      tags: [Dev]
+      summary: Tenants with subscription, usage and override counts
+      operationId: devListTenants
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - {name: search, in: query, schema: {type: string}, description: "Name, code, email, phone or domain."}
+        - {name: active, in: query, schema: {type: string, enum: [active, inactive]}}
+        - {name: subscription, in: query, schema: {type: string, enum: [none, trial, active, pending, past_due, cancelled, expired]}}
+      responses:
+        "200":
+          description: Paginated tenants.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta, links]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/DevTenant"}
+                  meta: {$ref: "#/components/schemas/PaginationMeta"}
+                  links: {$ref: "#/components/schemas/PaginationLinks"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+
+  /dev/api/tenants/{id}:
+    get:
+      tags: [Dev]
+      summary: One tenant with plan features, usage against limits and subscription history
+      operationId: devGetTenant
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        "200":
+          description: Tenant detail.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: {$ref: "#/components/schemas/DevTenantDetail"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
   /dev/api/inspector/routes:
     get:
       tags: [Dev]
@@ -3195,6 +3314,10 @@ paths:
       parameters:
         - name: level
           in: query
+          schema: {type: string}
+        - name: search
+          in: query
+          description: Text in the message or attributes, or a request id prefix.
           schema: {type: string}
         - name: request_id
           in: query
@@ -5458,6 +5581,60 @@ components:
         error_message: {type: string, nullable: true}
         duration_ms: {type: integer}
         created_at: {type: string, format: date-time}
+
+    DevTenant:
+      type: object
+      required: [id, name, code, domain, email, phone, is_active, subscription_status, package_name, expires_at, users, branches, overrides, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        code: {type: string}
+        domain: {type: string, nullable: true}
+        email: {type: string, nullable: true}
+        phone: {type: string, nullable: true}
+        is_active: {type: boolean}
+        subscription_status: {type: string, nullable: true}
+        package_name: {type: string, nullable: true}
+        expires_at: {type: string, format: date-time, nullable: true}
+        users: {type: integer, format: int64}
+        branches: {type: integer, format: int64}
+        overrides: {type: integer, format: int64, description: Tenant setting and feature-flag overrides.}
+        created_at: {type: string, format: date-time}
+
+    DevTenantDetail:
+      allOf:
+        - $ref: "#/components/schemas/DevTenant"
+        - type: object
+          required: [storage_bytes, features, subscriptions]
+          properties:
+            storage_bytes: {type: integer, format: int64}
+            features:
+              type: array
+              items:
+                type: object
+                required: [key, description, is_limit, enabled, limit, used, overridden]
+                properties:
+                  key: {type: string}
+                  description: {type: string}
+                  is_limit: {type: boolean}
+                  enabled: {type: boolean}
+                  limit: {type: integer, format: int64, nullable: true, description: "null = unlimited."}
+                  used: {type: integer, format: int64, nullable: true}
+                  overridden: {type: boolean}
+            subscriptions:
+              type: array
+              items:
+                type: object
+                required: [id, status, package_name, starts_at, expires_at, trial_ends_at, cancelled_at, created_at]
+                properties:
+                  id: {type: integer, format: int64}
+                  status: {type: string}
+                  package_name: {type: string}
+                  starts_at: {type: string, format: date-time, nullable: true}
+                  expires_at: {type: string, format: date-time, nullable: true}
+                  trial_ends_at: {type: string, format: date-time, nullable: true}
+                  cancelled_at: {type: string, format: date-time, nullable: true}
+                  created_at: {type: string, format: date-time}
 
     DevRouteReport:
       type: object

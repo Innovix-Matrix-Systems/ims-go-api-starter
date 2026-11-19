@@ -97,7 +97,8 @@ func (h *Handler) listLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := h.telemetry.ListLogs(r.Context(), beforeID, int32(limit),
 		strings.ToLower(strings.TrimSpace(query.Get("level"))),
-		strings.TrimSpace(query.Get("request_id")))
+		strings.TrimSpace(query.Get("request_id")),
+		strings.TrimSpace(query.Get("search")))
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return

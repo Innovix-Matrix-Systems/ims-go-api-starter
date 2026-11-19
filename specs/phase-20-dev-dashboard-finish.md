@@ -48,6 +48,29 @@ that match the theme, and give the dashboard code the same service-layer shape a
       inputs that save on Enter/blur, JSON preview, units from the key, default + Reset + Details,
       search/group/type filters. The drag-and-drop board remains as "Groups board".
 
+### Tenants (`/dev/tenants`)
+- [x] Every tenant with its current subscription (an active/trial one when present, otherwise the
+      latest), plan, expiry, users, branches and override counts; search plus tenant-status and
+      subscription filters.
+- [x] Drawer: usage cards (users, branches, overrides, storage), every plan feature with
+      on/off or usage against its limit (subscription overrides applied and marked), and the
+      subscription history. "Open setting overrides" / "Open feature flags" deep-link to those
+      pages with the tenant selected (`?tenant=<id>`).
+- [x] Read-only on purpose: `tenants.is_active` is not enforced at request time yet, so a toggle
+      here would promise more than it does.
+
+### Logs
+- [x] Search box: matches the message, the attributes and the start of the request id;
+      "No logs match" state with Clear filters; "Generate sample logs" calls the simulator.
+
+### Settings drag and drop
+- [x] Migration `00023_setting_sort_order.sql`: hand-picked position per setting (global row).
+- [x] `PUT /dev/api/settings/groups/{id}/keys` (place keys in a group, in order) and
+      `PUT /dev/api/settings/groups/order` (reorder groups), audited, `dev.manage`.
+- [x] All-settings view: a left rail with **Ungrouped** settings and the group list. Drag a
+      setting by its grip onto another setting (lands before it), onto a group card or a rail
+      group (lands at the end), or onto Ungrouped; drag rail groups to reorder them.
+
 ### Command palette (Ctrl+K)
 - [x] Lists every command (opens its run prompt), the inspector tabs and the new pages.
 

@@ -54,3 +54,9 @@ DELETE FROM settings
 WHERE key = @key
   AND target_type IS NOT DISTINCT FROM sqlc.narg('target_type')::text
   AND target_id IS NOT DISTINCT FROM sqlc.narg('target_id')::bigint;
+
+-- name: PlaceSetting :execrows
+-- Moves a key into a group at a position (global row only).
+UPDATE settings
+SET group_id = sqlc.narg('group_id'), sort_order = @sort_order, updated_at = now()
+WHERE key = @key AND target_type IS NULL AND target_id IS NULL;

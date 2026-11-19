@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import type { SettingsGroup, SettingsItem } from '../api/types'
 import { Select } from './inputs'
 import { Button, Card, Chip, EmptyState, Icon, type Tone } from './ui'
@@ -25,10 +25,18 @@ function show(value: unknown): string {
 const typeLabel: Record<SettingsItem['type'], string> = { string: 'string', int: 'integer', bool: 'boolean', json: 'json' }
 const sourceTone: Record<SettingsItem['source'], Tone> = { default: 'gray', global: 'orange', tenant: 'blue' }
 
+type Drag = { type: 'setting'; key: string } | { type: 'group'; id: number } | null
+
+const UNGROUPED = 'ungrouped'
+
 /**
  * Every setting on one page, grouped, with inline editors (like a Laravel
  * settings screen): switches for booleans, inputs that save on Enter/blur,
  * the code default and a reset link under each control.
+ *
+ * Drag and drop: drag a setting by its grip onto another setting (it lands
+ * before it) or onto a group (it lands at the end). Ungrouped settings wait
+ * in the left rail; drag groups in the rail to reorder them.
  */
 export function SettingsList({
   items,
@@ -38,6 +46,8 @@ export function SettingsList({
   onSave,
   onReset,
   onDetails,
+  onPlace,
+  onReorderGroups,
 }: {
   items: SettingsItem[]
   groups: SettingsGroup[]
@@ -46,88 +56,232 @@ export function SettingsList({
   onSave: (item: SettingsItem, value: unknown) => void
   onReset: (item: SettingsItem) => void
   onDetails: (item: SettingsItem) => void
+  onPlace: (groupId: number, keys: string[]) => void
+  onReorderGroups: (ids: number[]) => void
 }) {
   const [search, setSearch] = useState('')
   const [group, setGroup] = useState('')
   const [type, setType] = useState('')
+  const [drag, setDrag] = useState<Drag>(null)
+  const [over, setOver] = useState<string | null>(null)
 
-  const sections = useMemo(() => {
-    const needle = search.trim().toLowerCase()
-    const byGroup = new Map<string, { group: SettingsGroup; items: SettingsItem[] }>()
-    for (const item of items) {
-      if (group && item.group.slug !== group) continue
-      if (type && item.type !== type) continue
-      if (needle && !`${item.key} ${humanize(item.key)} ${item.description}`.toLowerCase().includes(needle)) continue
-      const entry = byGroup.get(item.group.slug) ?? { group: item.group, items: [] }
-      entry.items.push(item)
-      byGroup.set(item.group.slug, entry)
+  // Full (unfiltered) order per group: drops are computed against it.
+  const keysByGroup = useMemo(() => {
+    const map = new Map<string, SettingsItem[]>()
+    for (const item of [...items].sort((a, b) => a.sort_order - b.sort_order)) {
+      const list = map.get(item.group.slug) ?? []
+      list.push(item)
+      map.set(item.group.slug, list)
     }
-    return [...byGroup.values()].sort((a, b) => a.group.sort_order - b.group.sort_order || a.group.name.localeCompare(b.group.name))
-  }, [items, search, group, type])
+    return map
+  }, [items])
+
+  const orderedGroups = useMemo(
+    () => [...groups].sort((a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)),
+    [groups],
+  )
+  const ungroupedGroup = orderedGroups.find((item) => item.slug === UNGROUPED)
+  const ungrouped = keysByGroup.get(UNGROUPED) ?? []
+  const filtering = search.trim() !== '' || group !== '' || type !== ''
+
+  const visible = (item: SettingsItem) => {
+    const needle = search.trim().toLowerCase()
+    if (type && item.type !== type) return false
+    return !needle || `${item.key} ${humanize(item.key)} ${item.description}`.toLowerCase().includes(needle)
+  }
+  const sections = orderedGroups
+    .filter((item) => item.slug !== UNGROUPED && (!group || item.slug === group))
+    .map((item) => ({ group: item, items: (keysByGroup.get(item.slug) ?? []).filter(visible) }))
+    .filter((section) => !filtering || section.items.length > 0)
+
+  const dropSetting = (targetGroup: SettingsGroup, beforeKey?: string) => {
+    if (drag?.type !== 'setting' || targetGroup.id <= 0) return
+    const keys = (keysByGroup.get(targetGroup.slug) ?? []).map((item) => item.key).filter((key) => key !== drag.key)
+    const index = beforeKey ? keys.indexOf(beforeKey) : -1
+    keys.splice(index >= 0 ? index : keys.length, 0, drag.key)
+    onPlace(targetGroup.id, keys)
+  }
+
+  const dropGroup = (targetId: number) => {
+    if (drag?.type !== 'group' || drag.id === targetId) return
+    const ids = orderedGroups.filter((item) => item.id > 0).map((item) => item.id).filter((id) => id !== drag.id)
+    ids.splice(ids.indexOf(targetId), 0, drag.id)
+    onReorderGroups(ids)
+  }
+
+  const zone = (id: string, onDrop: () => void, accepts: 'setting' | 'group' | 'any' = 'setting') => ({
+    onDragOver: (event: DragEvent) => {
+      if (!drag || (accepts !== 'any' && drag.type !== accepts)) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (over !== id) setOver(id)
+    },
+    onDragLeave: () => setOver((current) => (current === id ? null : current)),
+    onDrop: (event: DragEvent) => {
+      event.preventDefault()
+      event.stopPropagation()
+      onDrop()
+      setDrag(null)
+      setOver(null)
+    },
+  })
+
+  const startSetting = (key: string) => (event: DragEvent) => {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', key)
+    const row = (event.currentTarget as HTMLElement).closest('.dnd-row') as HTMLElement | null
+    if (row) event.dataTransfer.setDragImage(row, 20, 20)
+    setDrag({ type: 'setting', key })
+  }
+  const end = () => {
+    setDrag(null)
+    setOver(null)
+  }
 
   return (
-    <div className="mt-24">
-      <div className="filters">
-        <label className="field grow">
-          <span className="field-label">Search</span>
-          <input
-            className="input"
-            placeholder="Key, label or description"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-        </label>
-        <label className="field" style={{ minWidth: 180 }}>
-          <span className="field-label">Group</span>
-          <Select
-            value={group}
-            onChange={setGroup}
-            options={[{ value: '', label: 'All groups' }, ...groups.map((item) => ({ value: item.slug, label: item.name }))]}
-          />
-        </label>
-        <label className="field" style={{ minWidth: 150 }}>
-          <span className="field-label">Type</span>
-          <Select
-            value={type}
-            onChange={setType}
-            options={[
-              { value: '', label: 'All types' },
-              { value: 'string', label: 'String' },
-              { value: 'int', label: 'Integer' },
-              { value: 'bool', label: 'Boolean' },
-              { value: 'json', label: 'JSON' },
-            ]}
-          />
-        </label>
-      </div>
-      {sections.length === 0 ? (
-        <Card>
-          <EmptyState title="No settings match" description="Try another search or filter." icon="settings" />
+    <div className="settings-dnd mt-24">
+      <aside className="settings-rail">
+        <Card tight>
+          <div
+            className={`rail-drop ${over === 'ungrouped' ? 'over' : ''}`}
+            {...zone('ungrouped', () => ungroupedGroup && dropSetting(ungroupedGroup))}
+          >
+            <div className="rail-title">
+              Ungrouped <span className="count-pill">{ungrouped.length}</span>
+            </div>
+            {ungrouped.length === 0 ? (
+              <div className="small dim">Drag a setting here to park it outside a group.</div>
+            ) : (
+              ungrouped.map((item) => (
+                <div key={item.key} className="rail-item dnd-row" draggable onDragStart={startSetting(item.key)} onDragEnd={end}>
+                  <Icon name="grip" />
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontWeight: 600 }}>{humanize(item.key)}</span>
+                    <span className="mono small dim">{item.key}</span>
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
         </Card>
-      ) : (
-        <div className="stack">
-          {sections.map((section) => (
-            <Card key={section.group.slug} tight>
-              <div className="setting-group-head">
-                <b>{section.group.name}</b>
-                <span className="count-pill">{section.items.length}</span>
-                {section.group.description ? <span className="small dim">{section.group.description}</span> : null}
+        <Card tight className="mt-16">
+          <div className="rail-title">Groups</div>
+          <div className="small dim" style={{ marginBottom: 8 }}>
+            Drag to reorder. Drop a setting on a group to move it there.
+          </div>
+          {orderedGroups
+            .filter((item) => item.slug !== UNGROUPED)
+            .map((item) => (
+              <div
+                key={item.slug}
+                className={`rail-group ${over === `rail:${item.slug}` ? 'over' : ''} ${item.id <= 0 ? 'unsynced' : ''}`}
+                draggable={item.id > 0}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.setData('text/plain', item.slug)
+                  setDrag({ type: 'group', id: item.id })
+                }}
+                onDragEnd={end}
+                {...zone(`rail:${item.slug}`, () => (drag?.type === 'group' ? dropGroup(item.id) : dropSetting(item)), 'any')}
+              >
+                <Icon name="grip" />
+                <span style={{ flex: 1 }}>{item.name}</span>
+                <span className="count-pill">{keysByGroup.get(item.slug)?.length ?? 0}</span>
               </div>
-              {section.items.map((item) => (
-                <SettingRow
-                  key={item.key}
-                  item={item}
-                  target={target}
-                  saving={savingKey === item.key}
-                  onSave={(value) => onSave(item, value)}
-                  onReset={() => onReset(item)}
-                  onDetails={() => onDetails(item)}
-                />
-              ))}
-            </Card>
-          ))}
+            ))}
+        </Card>
+      </aside>
+
+      <div style={{ minWidth: 0 }}>
+        <div className="filters">
+          <label className="field grow">
+            <span className="field-label">Search</span>
+            <input
+              className="input"
+              placeholder="Key, label or description"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+          <label className="field" style={{ minWidth: 180 }}>
+            <span className="field-label">Group</span>
+            <Select
+              value={group}
+              onChange={setGroup}
+              options={[
+                { value: '', label: 'All groups' },
+                ...orderedGroups.filter((item) => item.slug !== UNGROUPED).map((item) => ({ value: item.slug, label: item.name })),
+              ]}
+            />
+          </label>
+          <label className="field" style={{ minWidth: 150 }}>
+            <span className="field-label">Type</span>
+            <Select
+              value={type}
+              onChange={setType}
+              options={[
+                { value: '', label: 'All types' },
+                { value: 'string', label: 'String' },
+                { value: 'int', label: 'Integer' },
+                { value: 'bool', label: 'Boolean' },
+                { value: 'json', label: 'JSON' },
+              ]}
+            />
+          </label>
         </div>
-      )}
+        {sections.length === 0 ? (
+          <Card>
+            <EmptyState title="No settings match" description="Try another search or filter." icon="settings" />
+          </Card>
+        ) : (
+          <div className="stack">
+            {sections.map((section) => (
+              <Card key={section.group.slug} tight>
+                <div
+                  className={`setting-group-drop ${over === `group:${section.group.slug}` ? 'over' : ''}`}
+                  {...zone(`group:${section.group.slug}`, () => dropSetting(section.group))}
+                >
+                  <div className="setting-group-head">
+                    <b>{section.group.name}</b>
+                    <span className="count-pill">{section.items.length}</span>
+                    {section.group.description ? <span className="small dim">{section.group.description}</span> : null}
+                  </div>
+                  {section.items.length === 0 ? (
+                    <div className="drop-hint">Drag settings here</div>
+                  ) : null}
+                  {section.items.map((item) => (
+                    <div
+                      key={item.key}
+                      className={`dnd-row ${over === `row:${item.key}` ? 'over' : ''} ${
+                        drag?.type === 'setting' && drag.key === item.key ? 'dragging' : ''
+                      }`}
+                      {...zone(`row:${item.key}`, () => dropSetting(section.group, item.key))}
+                    >
+                      <span
+                        className="drag-grip"
+                        draggable
+                        title="Drag to reorder or move to another group"
+                        onDragStart={startSetting(item.key)}
+                        onDragEnd={end}
+                      >
+                        <Icon name="grip" />
+                      </span>
+                      <SettingRow
+                        item={item}
+                        target={target}
+                        saving={savingKey === item.key}
+                        onSave={(value) => onSave(item, value)}
+                        onReset={() => onReset(item)}
+                        onDetails={() => onDetails(item)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

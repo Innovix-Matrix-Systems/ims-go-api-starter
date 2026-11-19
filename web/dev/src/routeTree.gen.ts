@@ -24,6 +24,7 @@ import { Route as AppQueueRouteImport } from './routes/_app.queue'
 import { Route as AppSessionsRouteImport } from './routes/_app.sessions'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppSystemRouteImport } from './routes/_app.system'
+import { Route as AppTenantsRouteImport } from './routes/_app.tenants'
 import { Route as AppExceptionsIndexRouteImport } from './routes/_app.exceptions.index'
 import { Route as AppExceptionsIdRouteImport } from './routes/_app.exceptions.$id'
 import { Route as AppJobsIdRouteImport } from './routes/_app.jobs.$id'
@@ -106,6 +107,11 @@ const AppSystemRoute = AppSystemRouteImport.update({
   path: '/system',
   getParentRoute: () => AppRoute,
 } as any)
+const AppTenantsRoute = AppTenantsRouteImport.update({
+  id: '/tenants',
+  path: '/tenants',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppExceptionsIndexRoute = AppExceptionsIndexRouteImport.update({
   id: '/exceptions/',
   path: '/exceptions/',
@@ -157,6 +163,7 @@ export interface FileRoutesByFullPath {
   '/sessions': typeof AppSessionsRoute
   '/settings': typeof AppSettingsRoute
   '/system': typeof AppSystemRoute
+  '/tenants': typeof AppTenantsRoute
   '/exceptions/$id': typeof AppExceptionsIdRoute
   '/jobs/$id': typeof AppJobsIdRoute
   '/logs/$id': typeof AppLogsIdRoute
@@ -179,6 +186,7 @@ export interface FileRoutesByTo {
   '/sessions': typeof AppSessionsRoute
   '/settings': typeof AppSettingsRoute
   '/system': typeof AppSystemRoute
+  '/tenants': typeof AppTenantsRoute
   '/': typeof AppIndexRoute
   '/exceptions/$id': typeof AppExceptionsIdRoute
   '/jobs/$id': typeof AppJobsIdRoute
@@ -204,6 +212,7 @@ export interface FileRoutesById {
   '/_app/sessions': typeof AppSessionsRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/system': typeof AppSystemRoute
+  '/_app/tenants': typeof AppTenantsRoute
   '/_app/': typeof AppIndexRoute
   '/_app/exceptions/$id': typeof AppExceptionsIdRoute
   '/_app/jobs/$id': typeof AppJobsIdRoute
@@ -230,6 +239,7 @@ export interface FileRouteTypes {
     | '/sessions'
     | '/settings'
     | '/system'
+    | '/tenants'
     | '/exceptions/$id'
     | '/jobs/$id'
     | '/logs/$id'
@@ -252,6 +262,7 @@ export interface FileRouteTypes {
     | '/sessions'
     | '/settings'
     | '/system'
+    | '/tenants'
     | '/'
     | '/exceptions/$id'
     | '/jobs/$id'
@@ -276,6 +287,7 @@ export interface FileRouteTypes {
     | '/_app/sessions'
     | '/_app/settings'
     | '/_app/system'
+    | '/_app/tenants'
     | '/_app/'
     | '/_app/exceptions/$id'
     | '/_app/jobs/$id'
@@ -398,6 +410,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSystemRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/tenants': {
+      id: '/_app/tenants'
+      path: '/tenants'
+      fullPath: '/tenants'
+      preLoaderRoute: typeof AppTenantsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/exceptions/': {
       id: '/_app/exceptions/'
       path: '/exceptions'
@@ -463,6 +482,7 @@ interface AppRouteChildren {
   AppSessionsRoute: typeof AppSessionsRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSystemRoute: typeof AppSystemRoute
+  AppTenantsRoute: typeof AppTenantsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppExceptionsIdRoute: typeof AppExceptionsIdRoute
   AppJobsIdRoute: typeof AppJobsIdRoute
@@ -486,6 +506,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSessionsRoute: AppSessionsRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSystemRoute: AppSystemRoute,
+  AppTenantsRoute: AppTenantsRoute,
   AppIndexRoute: AppIndexRoute,
   AppExceptionsIdRoute: AppExceptionsIdRoute,
   AppJobsIdRoute: AppJobsIdRoute,

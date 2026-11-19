@@ -10,6 +10,7 @@ import (
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
+	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/backup"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
@@ -53,6 +54,7 @@ type Deps struct {
 	Logger        *slog.Logger
 	RetentionDays int
 	Inspector     *InspectorService
+	Queries       *dbgen.Queries
 	Commands      *CommandService
 	Binder        *httpx.Binder
 	Validator     *httpx.Validator

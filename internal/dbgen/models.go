@@ -376,6 +376,7 @@ type Setting struct {
 	TargetType *string            `json:"target_type"`
 	TargetID   *int64             `json:"target_id"`
 	GroupID    *int64             `json:"group_id"`
+	SortOrder  *int32             `json:"sort_order"`
 }
 
 type SettingsGroup struct {

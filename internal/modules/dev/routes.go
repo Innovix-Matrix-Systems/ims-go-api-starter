@@ -2,7 +2,8 @@ package dev
 
 import "github.com/go-chi/chi/v5"
 
-// RegisterRoutes mounts the developer dashboard JSON API. The caller provides
+// RegisterRoutes mounts the developer dashboard JSON API (mutations declare
+// dev.manage with r.With(h.manage)). The caller provides
 // the authentication, tenancy-exempt and dev.view middleware chain.
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/me", h.me)
@@ -63,6 +64,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Get("/targets/stats", h.targetStats)
 
 	r.Get("/settings/groups", h.listDevSettingGroups)
+	r.With(h.manage).Put("/settings/groups/order", h.reorderSettingGroups)
+	r.With(h.manage).Put("/settings/groups/{id}/keys", h.placeSettings)
 	r.With(h.manage).Post("/settings/groups", h.createDevSettingGroup)
 	r.With(h.manage).Patch("/settings/groups/{id}", h.updateDevSettingGroup)
 	r.With(h.manage).Delete("/settings/groups/{id}", h.deleteDevSettingGroup)
@@ -71,6 +74,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.With(h.manage).Patch("/settings/{key}", h.setDevSetting)
 	r.With(h.manage).Delete("/settings/{key}", h.resetDevSetting)
 	r.With(h.manage).Patch("/settings/{key}/group", h.assignDevSettingGroup)
+
+	r.Get("/tenants", h.listTenants)
+	r.Get("/tenants/{id}", h.getTenant)
 
 	r.Get("/inspector/routes", h.inspectorRoutes)
 	r.Get("/inspector/access", h.inspectorAccess)

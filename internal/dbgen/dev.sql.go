@@ -143,6 +143,38 @@ func (q *Queries) DevCommandRunSummary(ctx context.Context) ([]DevCommandRunSumm
 	return items, nil
 }
 
+const devCountTenants = `-- name: DevCountTenants :one
+SELECT count(*)
+FROM tenants t
+LEFT JOIN LATERAL (
+    SELECT id, tenant_id, package_id, status, starts_at, trial_ends_at, expires_at, cancelled_at, cancellation_reason, overrides, created_at, updated_at FROM subscriptions sub
+    WHERE sub.tenant_id = t.id
+    ORDER BY (sub.status IN ('active', 'trial')) DESC, sub.id DESC
+    LIMIT 1
+) s ON true
+WHERE t.deleted_at IS NULL
+  AND ($1::text = '' OR t.name ILIKE '%' || $1::text || '%' OR t.code ILIKE '%' || $1::text || '%'
+       OR coalesce(t.email, '') ILIKE '%' || $1::text || '%' OR coalesce(t.phone, '') ILIKE '%' || $1::text || '%'
+       OR coalesce(t.domain, '') ILIKE '%' || $1::text || '%')
+  AND ($2::text = '' OR ($2::text = 'active' AND t.is_active) OR ($2::text = 'inactive' AND NOT t.is_active))
+  AND ($3::text = ''
+       OR ($3::text = 'none' AND s.id IS NULL)
+       OR s.status = $3::text)
+`
+
+type DevCountTenantsParams struct {
+	Search       string `json:"search"`
+	Active       string `json:"active"`
+	Subscription string `json:"subscription"`
+}
+
+func (q *Queries) DevCountTenants(ctx context.Context, arg DevCountTenantsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, devCountTenants, arg.Search, arg.Active, arg.Subscription)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const devInspectorPermissions = `-- name: DevInspectorPermissions :many
 SELECT name, "group", description, is_system FROM permissions ORDER BY "group", name
 `
@@ -234,6 +266,205 @@ func (q *Queries) DevInspectorTenantRoleCount(ctx context.Context) (int64, error
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const devListTenants = `-- name: DevListTenants :many
+SELECT t.id, t.name, t.code, t.domain, t.email, t.phone, t.is_active, t.created_at,
+       coalesce(s.id, 0)::bigint AS subscription_id, coalesce(s.status, '')::text AS subscription_status,
+       s.expires_at, s.trial_ends_at,
+       p.name AS package_name,
+       (SELECT count(*) FROM users u WHERE u.tenant_id = t.id AND u.deleted_at IS NULL)::bigint AS user_count,
+       (SELECT count(*) FROM branches b WHERE b.tenant_id = t.id AND b.deleted_at IS NULL)::bigint AS branch_count,
+       ((SELECT count(*) FROM settings st WHERE st.target_type = 'tenant' AND st.target_id = t.id)
+        + (SELECT count(*) FROM feature_flags ff WHERE ff.target_type = 'tenant' AND ff.target_id = t.id))::bigint AS override_count
+FROM tenants t
+LEFT JOIN LATERAL (
+    SELECT id, tenant_id, package_id, status, starts_at, trial_ends_at, expires_at, cancelled_at, cancellation_reason, overrides, created_at, updated_at FROM subscriptions sub
+    WHERE sub.tenant_id = t.id
+    ORDER BY (sub.status IN ('active', 'trial')) DESC, sub.id DESC
+    LIMIT 1
+) s ON true
+LEFT JOIN packages p ON p.id = s.package_id
+WHERE t.deleted_at IS NULL
+  AND ($1::text = '' OR t.name ILIKE '%' || $1::text || '%' OR t.code ILIKE '%' || $1::text || '%'
+       OR coalesce(t.email, '') ILIKE '%' || $1::text || '%' OR coalesce(t.phone, '') ILIKE '%' || $1::text || '%'
+       OR coalesce(t.domain, '') ILIKE '%' || $1::text || '%')
+  AND ($2::text = '' OR ($2::text = 'active' AND t.is_active) OR ($2::text = 'inactive' AND NOT t.is_active))
+  AND ($3::text = ''
+       OR ($3::text = 'none' AND s.id IS NULL)
+       OR s.status = $3::text)
+  AND ($4::bigint = 0 OR t.id = $4::bigint)
+ORDER BY t.id
+LIMIT $6 OFFSET $5
+`
+
+type DevListTenantsParams struct {
+	Search       string `json:"search"`
+	Active       string `json:"active"`
+	Subscription string `json:"subscription"`
+	TenantID     int64  `json:"tenant_id"`
+	PageOffset   int32  `json:"page_offset"`
+	PageLimit    int32  `json:"page_limit"`
+}
+
+type DevListTenantsRow struct {
+	ID                 int64              `json:"id"`
+	Name               string             `json:"name"`
+	Code               string             `json:"code"`
+	Domain             *string            `json:"domain"`
+	Email              *string            `json:"email"`
+	Phone              *string            `json:"phone"`
+	IsActive           bool               `json:"is_active"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	SubscriptionID     int64              `json:"subscription_id"`
+	SubscriptionStatus string             `json:"subscription_status"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	TrialEndsAt        pgtype.Timestamptz `json:"trial_ends_at"`
+	PackageName        *string            `json:"package_name"`
+	UserCount          int64              `json:"user_count"`
+	BranchCount        int64              `json:"branch_count"`
+	OverrideCount      int64              `json:"override_count"`
+}
+
+// Tenants with their current subscription (an active/trial one when present,
+// otherwise the latest) and usage counts.
+func (q *Queries) DevListTenants(ctx context.Context, arg DevListTenantsParams) ([]DevListTenantsRow, error) {
+	rows, err := q.db.Query(ctx, devListTenants,
+		arg.Search,
+		arg.Active,
+		arg.Subscription,
+		arg.TenantID,
+		arg.PageOffset,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevListTenantsRow{}
+	for rows.Next() {
+		var i DevListTenantsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Code,
+			&i.Domain,
+			&i.Email,
+			&i.Phone,
+			&i.IsActive,
+			&i.CreatedAt,
+			&i.SubscriptionID,
+			&i.SubscriptionStatus,
+			&i.ExpiresAt,
+			&i.TrialEndsAt,
+			&i.PackageName,
+			&i.UserCount,
+			&i.BranchCount,
+			&i.OverrideCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const devPackageFeatures = `-- name: DevPackageFeatures :many
+SELECT feature_key, is_enabled, limit_value FROM package_features WHERE package_id = $1
+`
+
+type DevPackageFeaturesRow struct {
+	FeatureKey string `json:"feature_key"`
+	IsEnabled  bool   `json:"is_enabled"`
+	LimitValue int64  `json:"limit_value"`
+}
+
+func (q *Queries) DevPackageFeatures(ctx context.Context, packageID int64) ([]DevPackageFeaturesRow, error) {
+	rows, err := q.db.Query(ctx, devPackageFeatures, packageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevPackageFeaturesRow{}
+	for rows.Next() {
+		var i DevPackageFeaturesRow
+		if err := rows.Scan(&i.FeatureKey, &i.IsEnabled, &i.LimitValue); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const devTenantStorageBytes = `-- name: DevTenantStorageBytes :one
+SELECT coalesce(sum(size), 0)::bigint FROM files WHERE tenant_id = $1
+`
+
+func (q *Queries) DevTenantStorageBytes(ctx context.Context, tenantID *int64) (int64, error) {
+	row := q.db.QueryRow(ctx, devTenantStorageBytes, tenantID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const devTenantSubscriptions = `-- name: DevTenantSubscriptions :many
+SELECT s.id, s.status, s.starts_at, s.trial_ends_at, s.expires_at, s.cancelled_at, s.overrides, s.created_at,
+       p.id AS package_id, p.name AS package_name
+FROM subscriptions s
+JOIN packages p ON p.id = s.package_id
+WHERE s.tenant_id = $1
+ORDER BY s.id DESC
+LIMIT 20
+`
+
+type DevTenantSubscriptionsRow struct {
+	ID          int64              `json:"id"`
+	Status      string             `json:"status"`
+	StartsAt    pgtype.Timestamptz `json:"starts_at"`
+	TrialEndsAt pgtype.Timestamptz `json:"trial_ends_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CancelledAt pgtype.Timestamptz `json:"cancelled_at"`
+	Overrides   []byte             `json:"overrides"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	PackageID   int64              `json:"package_id"`
+	PackageName string             `json:"package_name"`
+}
+
+func (q *Queries) DevTenantSubscriptions(ctx context.Context, tenantID int64) ([]DevTenantSubscriptionsRow, error) {
+	rows, err := q.db.Query(ctx, devTenantSubscriptions, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DevTenantSubscriptionsRow{}
+	for rows.Next() {
+		var i DevTenantSubscriptionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Status,
+			&i.StartsAt,
+			&i.TrialEndsAt,
+			&i.ExpiresAt,
+			&i.CancelledAt,
+			&i.Overrides,
+			&i.CreatedAt,
+			&i.PackageID,
+			&i.PackageName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const finishDevAction = `-- name: FinishDevAction :exec

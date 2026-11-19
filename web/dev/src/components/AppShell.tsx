@@ -43,6 +43,7 @@ const navigation: NavGroup[] = [
   {
     section: 'Management',
     items: [
+      { to: '/tenants', label: 'Tenants', icon: 'tenants' },
       { to: '/sessions', label: 'Sessions', icon: 'sessions' },
       { to: '/settings', label: 'Settings', icon: 'settings' },
       { to: '/flags', label: 'Feature Flags', icon: 'flags' },

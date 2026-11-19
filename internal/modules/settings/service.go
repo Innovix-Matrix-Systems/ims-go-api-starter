@@ -47,12 +47,23 @@ type EffectiveSetting struct {
 	Value  any
 	Source string // tenant | global | default
 	Group  GroupInfo
+	// SortOrder is the position inside the group: the hand-picked order when
+	// set (dev dashboard), otherwise the catalog order.
+	SortOrder int
 }
 
 type groupsSnapshot struct {
 	Groups   []GroupInfo       `json:"groups"`
 	KeyGroup map[string]string `json:"key_group"`
 	KeyID    map[string]int64  `json:"key_id"`
+	KeyOrder map[string]int    `json:"key_order"`
+}
+
+func (s *groupsSnapshot) orderFor(key Key) int {
+	if order, ok := s.KeyOrder[key.Name]; ok {
+		return order
+	}
+	return key.SortOrder
 }
 
 func (s *groupsSnapshot) groupFor(key Key) GroupInfo {
@@ -213,6 +224,8 @@ func (s *Service) EffectiveForTarget(ctx context.Context, target Target) ([]Effe
 			Value:  value,
 			Source: source,
 			Group:  snapshot.groupFor(key),
+
+			SortOrder: snapshot.orderFor(key),
 		})
 	}
 	sortEffective(out)
@@ -244,6 +257,8 @@ func (s *Service) EffectiveForTargetKey(ctx context.Context, target Target, name
 		Value:  value,
 		Source: source,
 		Group:  snapshot.groupFor(key),
+
+		SortOrder: snapshot.orderFor(key),
 	}, nil
 }
 
@@ -412,6 +427,45 @@ func (s *Service) AssignKeyGroup(ctx context.Context, name string, groupID *int6
 	}
 	s.invalidateGroups(ctx)
 	return s.EffectiveForTargetKey(ctx, Target{Type: TargetGlobal}, name)
+}
+
+// PlaceKeys puts keys into a group in the given order (dev dashboard drag
+// and drop). Every key needs its global row (run settings:sync first).
+func (s *Service) PlaceKeys(ctx context.Context, groupID int64, keys []string) error {
+	if _, err := s.repo.GetGroup(ctx, groupID); err != nil {
+		return err
+	}
+	for _, name := range keys {
+		if _, ok := Lookup(name); !ok {
+			return apperr.Newf(apperr.ResourceNotFound, "Setting %q is not registered.", name)
+		}
+	}
+	for index, name := range keys {
+		placed, err := s.repo.PlaceSetting(ctx, name, &groupID, int32(index+1))
+		if err != nil {
+			return err
+		}
+		if !placed {
+			return apperr.Newf(apperr.ResourceNotFound, "Setting %q has no global row yet; run settings:sync first.", name)
+		}
+	}
+	s.invalidateGroups(ctx)
+	return nil
+}
+
+// ReorderGroups sets the group order to the given ids.
+func (s *Service) ReorderGroups(ctx context.Context, ids []int64) error {
+	for index, id := range ids {
+		updated, err := s.repo.SetGroupSortOrder(ctx, id, int32(index+1))
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return apperr.Newf(apperr.ResourceNotFound, "Settings group %d was not found.", id)
+		}
+	}
+	s.invalidateGroups(ctx)
+	return nil
 }
 
 func (s *Service) invalidateGroups(ctx context.Context) {
@@ -615,12 +669,16 @@ func (s *Service) buildGroups(ctx context.Context) (*groupsSnapshot, error) {
 
 	keyGroup := map[string]string{}
 	keyID := map[string]int64{}
+	keyOrder := map[string]int{}
 	globals, err := s.repo.ListGlobal(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, row := range globals {
 		keyID[row.Key] = row.ID
+		if row.SortOrder != nil {
+			keyOrder[row.Key] = int(*row.SortOrder)
+		}
 		if row.GroupID == nil {
 			continue
 		}
@@ -639,7 +697,7 @@ func (s *Service) buildGroups(ctx context.Context) (*groupsSnapshot, error) {
 		}
 		return groups[i].Slug < groups[j].Slug
 	})
-	return &groupsSnapshot{Groups: groups, KeyGroup: keyGroup, KeyID: keyID}, nil
+	return &groupsSnapshot{Groups: groups, KeyGroup: keyGroup, KeyID: keyID, KeyOrder: keyOrder}, nil
 }
 
 func (s *Service) groupIDsBySlug(ctx context.Context) (map[string]int64, error) {
@@ -662,8 +720,8 @@ func sortEffective(items []EffectiveSetting) {
 		if items[i].Group.Slug != items[j].Group.Slug {
 			return items[i].Group.Slug < items[j].Group.Slug
 		}
-		if items[i].Key.SortOrder != items[j].Key.SortOrder {
-			return items[i].Key.SortOrder < items[j].Key.SortOrder
+		if items[i].SortOrder != items[j].SortOrder {
+			return items[i].SortOrder < items[j].SortOrder
 		}
 		return items[i].Key.Name < items[j].Key.Name
 	})

@@ -1,6 +1,6 @@
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { api } from '../api/client'
 import type { CursorPage, DevLog } from '../api/types'
@@ -16,13 +16,15 @@ const levels = ['', 'warn', 'error'] as const
 function LogsPage() {
   const [level, setLevel] = useState('')
   const [live, setLive] = useState(false)
+  const [search, setSearch] = useState('')
+  const deferredSearch = useDeferredValue(search.trim())
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const query = useInfiniteQuery({
-    queryKey: ['logs', { level }],
+    queryKey: ['logs', { level, search: deferredSearch }],
     queryFn: ({ pageParam, signal }) =>
       api<CursorPage<DevLog>>('/dev/api/logs', {
-        query: { limit: 50, cursor: pageParam || undefined, level: level || undefined },
+        query: { limit: 50, cursor: pageParam || undefined, level: level || undefined, search: deferredSearch || undefined },
         signal,
         unwrap: false,
       }),
@@ -69,8 +71,19 @@ function LogsPage() {
             </button>
           ))}
         </div>
+        <label className="inspector-search" style={{ maxWidth: 420 }}>
+          <Icon name="search" />
+          <input
+            className="input"
+            placeholder="Search message, attributes or request id"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </label>
         <div className="spacer" />
-        <span className="small dim">{rows.length} entries loaded</span>
+        <span className="small dim">
+          {rows.length} entries loaded{deferredSearch ? ` matching “${deferredSearch}”` : ''}
+        </span>
       </div>
 
       {query.isLoading ? (
@@ -79,16 +92,41 @@ function LogsPage() {
         <ErrorBox message={query.error instanceof Error ? query.error.message : 'Unable to load logs.'} />
       ) : rows.length === 0 ? (
         <div className="log-list">
-          <EmptyState
-            title="No logs captured yet"
-            description="Warn- and error-level logs appear here with their request correlation id. Generate a few samples to see the pipeline end to end."
-            icon="logs"
-            action={
-              <Link to="/actions" className="btn">
-                <Icon name="terminal" /> Generate sample logs
-              </Link>
-            }
-          />
+          {deferredSearch || level ? (
+            <EmptyState
+              title="No logs match"
+              description="Nothing matches this search or level. Search looks in the message, the attributes and the start of the request id."
+              icon="search"
+              action={
+                <Button
+                  icon="x"
+                  onClick={() => {
+                    setSearch('')
+                    setLevel('')
+                  }}
+                >
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              title="No logs captured yet"
+              description="Warn- and error-level logs appear here with their request correlation id. Generate a few samples to see the pipeline end to end."
+              icon="logs"
+              action={
+                <Button
+                  icon="terminal"
+                  onClick={async () => {
+                    await api('/dev/api/simulate-events', { method: 'POST', body: { logs: 3, level: 'warn', exception: false } })
+                    void query.refetch()
+                  }}
+                >
+                  Generate sample logs
+                </Button>
+              }
+            />
+          )}
         </div>
       ) : (
         <div className="log-list">

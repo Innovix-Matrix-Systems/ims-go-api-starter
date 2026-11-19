@@ -32,7 +32,7 @@ func (q *Queries) DeleteSetting(ctx context.Context, arg DeleteSettingParams) (i
 
 const getSetting = `-- name: GetSetting :one
 
-SELECT id, key, value, created_at, updated_at, target_type, target_id, group_id FROM settings
+SELECT id, key, value, created_at, updated_at, target_type, target_id, group_id, sort_order FROM settings
 WHERE key = $1
   AND target_type IS NOT DISTINCT FROM $2::text
   AND target_id IS NOT DISTINCT FROM $3::bigint
@@ -58,6 +58,7 @@ func (q *Queries) GetSetting(ctx context.Context, arg GetSettingParams) (Setting
 		&i.TargetType,
 		&i.TargetID,
 		&i.GroupID,
+		&i.SortOrder,
 	)
 	return i, err
 }
@@ -66,7 +67,7 @@ const insertGlobalSettingIfAbsent = `-- name: InsertGlobalSettingIfAbsent :one
 INSERT INTO settings (key, target_type, target_id, group_id, value)
 VALUES ($1, NULL, NULL, $2, $3)
 ON CONFLICT (key) WHERE target_type IS NULL DO NOTHING
-RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id
+RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id, sort_order
 `
 
 type InsertGlobalSettingIfAbsentParams struct {
@@ -87,12 +88,13 @@ func (q *Queries) InsertGlobalSettingIfAbsent(ctx context.Context, arg InsertGlo
 		&i.TargetType,
 		&i.TargetID,
 		&i.GroupID,
+		&i.SortOrder,
 	)
 	return i, err
 }
 
 const listGlobalSettings = `-- name: ListGlobalSettings :many
-SELECT id, key, value, created_at, updated_at, target_type, target_id, group_id FROM settings
+SELECT id, key, value, created_at, updated_at, target_type, target_id, group_id, sort_order FROM settings
 WHERE target_type IS NULL AND target_id IS NULL
 ORDER BY key
 `
@@ -115,6 +117,7 @@ func (q *Queries) ListGlobalSettings(ctx context.Context) ([]Setting, error) {
 			&i.TargetType,
 			&i.TargetID,
 			&i.GroupID,
+			&i.SortOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -127,7 +130,7 @@ func (q *Queries) ListGlobalSettings(ctx context.Context) ([]Setting, error) {
 }
 
 const listSettingsByTarget = `-- name: ListSettingsByTarget :many
-SELECT id, key, value, created_at, updated_at, target_type, target_id, group_id FROM settings
+SELECT id, key, value, created_at, updated_at, target_type, target_id, group_id, sort_order FROM settings
 WHERE target_type = $1 AND target_id = $2
 ORDER BY key
 `
@@ -155,6 +158,7 @@ func (q *Queries) ListSettingsByTarget(ctx context.Context, arg ListSettingsByTa
 			&i.TargetType,
 			&i.TargetID,
 			&i.GroupID,
+			&i.SortOrder,
 		); err != nil {
 			return nil, err
 		}
@@ -166,11 +170,32 @@ func (q *Queries) ListSettingsByTarget(ctx context.Context, arg ListSettingsByTa
 	return items, nil
 }
 
+const placeSetting = `-- name: PlaceSetting :execrows
+UPDATE settings
+SET group_id = $1, sort_order = $2, updated_at = now()
+WHERE key = $3 AND target_type IS NULL AND target_id IS NULL
+`
+
+type PlaceSettingParams struct {
+	GroupID   *int64 `json:"group_id"`
+	SortOrder *int32 `json:"sort_order"`
+	Key       string `json:"key"`
+}
+
+// Moves a key into a group at a position (global row only).
+func (q *Queries) PlaceSetting(ctx context.Context, arg PlaceSettingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, placeSetting, arg.GroupID, arg.SortOrder, arg.Key)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setSettingGroup = `-- name: SetSettingGroup :one
 UPDATE settings
 SET group_id = $1, updated_at = now()
 WHERE key = $2 AND target_type IS NULL AND target_id IS NULL
-RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id
+RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id, sort_order
 `
 
 type SetSettingGroupParams struct {
@@ -190,6 +215,7 @@ func (q *Queries) SetSettingGroup(ctx context.Context, arg SetSettingGroupParams
 		&i.TargetType,
 		&i.TargetID,
 		&i.GroupID,
+		&i.SortOrder,
 	)
 	return i, err
 }
@@ -198,7 +224,7 @@ const setSettingGroupIfNull = `-- name: SetSettingGroupIfNull :one
 UPDATE settings
 SET group_id = $1, updated_at = now()
 WHERE key = $2 AND target_type IS NULL AND group_id IS NULL
-RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id
+RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id, sort_order
 `
 
 type SetSettingGroupIfNullParams struct {
@@ -218,6 +244,7 @@ func (q *Queries) SetSettingGroupIfNull(ctx context.Context, arg SetSettingGroup
 		&i.TargetType,
 		&i.TargetID,
 		&i.GroupID,
+		&i.SortOrder,
 	)
 	return i, err
 }
@@ -227,7 +254,7 @@ INSERT INTO settings (key, target_type, target_id, value)
 VALUES ($1, NULL, NULL, $2)
 ON CONFLICT (key) WHERE target_type IS NULL DO UPDATE
 SET value = EXCLUDED.value, updated_at = now()
-RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id
+RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id, sort_order
 `
 
 type UpsertGlobalSettingParams struct {
@@ -247,6 +274,7 @@ func (q *Queries) UpsertGlobalSetting(ctx context.Context, arg UpsertGlobalSetti
 		&i.TargetType,
 		&i.TargetID,
 		&i.GroupID,
+		&i.SortOrder,
 	)
 	return i, err
 }
@@ -256,7 +284,7 @@ INSERT INTO settings (key, target_type, target_id, value)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (target_type, target_id, key) WHERE target_type IS NOT NULL DO UPDATE
 SET value = EXCLUDED.value, updated_at = now()
-RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id
+RETURNING id, key, value, created_at, updated_at, target_type, target_id, group_id, sort_order
 `
 
 type UpsertTargetSettingParams struct {
@@ -283,6 +311,7 @@ func (q *Queries) UpsertTargetSetting(ctx context.Context, arg UpsertTargetSetti
 		&i.TargetType,
 		&i.TargetID,
 		&i.GroupID,
+		&i.SortOrder,
 	)
 	return i, err
 }

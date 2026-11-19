@@ -166,3 +166,67 @@ ORDER BY target, id DESC;
 
 -- name: GetDevAction :one
 SELECT * FROM dev_actions WHERE id = @id;
+
+-- name: DevListTenants :many
+-- Tenants with their current subscription (an active/trial one when present,
+-- otherwise the latest) and usage counts.
+SELECT t.id, t.name, t.code, t.domain, t.email, t.phone, t.is_active, t.created_at,
+       coalesce(s.id, 0)::bigint AS subscription_id, coalesce(s.status, '')::text AS subscription_status,
+       s.expires_at, s.trial_ends_at,
+       p.name AS package_name,
+       (SELECT count(*) FROM users u WHERE u.tenant_id = t.id AND u.deleted_at IS NULL)::bigint AS user_count,
+       (SELECT count(*) FROM branches b WHERE b.tenant_id = t.id AND b.deleted_at IS NULL)::bigint AS branch_count,
+       ((SELECT count(*) FROM settings st WHERE st.target_type = 'tenant' AND st.target_id = t.id)
+        + (SELECT count(*) FROM feature_flags ff WHERE ff.target_type = 'tenant' AND ff.target_id = t.id))::bigint AS override_count
+FROM tenants t
+LEFT JOIN LATERAL (
+    SELECT * FROM subscriptions sub
+    WHERE sub.tenant_id = t.id
+    ORDER BY (sub.status IN ('active', 'trial')) DESC, sub.id DESC
+    LIMIT 1
+) s ON true
+LEFT JOIN packages p ON p.id = s.package_id
+WHERE t.deleted_at IS NULL
+  AND (@search::text = '' OR t.name ILIKE '%' || @search::text || '%' OR t.code ILIKE '%' || @search::text || '%'
+       OR coalesce(t.email, '') ILIKE '%' || @search::text || '%' OR coalesce(t.phone, '') ILIKE '%' || @search::text || '%'
+       OR coalesce(t.domain, '') ILIKE '%' || @search::text || '%')
+  AND (@active::text = '' OR (@active::text = 'active' AND t.is_active) OR (@active::text = 'inactive' AND NOT t.is_active))
+  AND (@subscription::text = ''
+       OR (@subscription::text = 'none' AND s.id IS NULL)
+       OR s.status = @subscription::text)
+  AND (@tenant_id::bigint = 0 OR t.id = @tenant_id::bigint)
+ORDER BY t.id
+LIMIT @page_limit OFFSET @page_offset;
+
+-- name: DevCountTenants :one
+SELECT count(*)
+FROM tenants t
+LEFT JOIN LATERAL (
+    SELECT * FROM subscriptions sub
+    WHERE sub.tenant_id = t.id
+    ORDER BY (sub.status IN ('active', 'trial')) DESC, sub.id DESC
+    LIMIT 1
+) s ON true
+WHERE t.deleted_at IS NULL
+  AND (@search::text = '' OR t.name ILIKE '%' || @search::text || '%' OR t.code ILIKE '%' || @search::text || '%'
+       OR coalesce(t.email, '') ILIKE '%' || @search::text || '%' OR coalesce(t.phone, '') ILIKE '%' || @search::text || '%'
+       OR coalesce(t.domain, '') ILIKE '%' || @search::text || '%')
+  AND (@active::text = '' OR (@active::text = 'active' AND t.is_active) OR (@active::text = 'inactive' AND NOT t.is_active))
+  AND (@subscription::text = ''
+       OR (@subscription::text = 'none' AND s.id IS NULL)
+       OR s.status = @subscription::text);
+
+-- name: DevTenantStorageBytes :one
+SELECT coalesce(sum(size), 0)::bigint FROM files WHERE tenant_id = @tenant_id;
+
+-- name: DevTenantSubscriptions :many
+SELECT s.id, s.status, s.starts_at, s.trial_ends_at, s.expires_at, s.cancelled_at, s.overrides, s.created_at,
+       p.id AS package_id, p.name AS package_name
+FROM subscriptions s
+JOIN packages p ON p.id = s.package_id
+WHERE s.tenant_id = @tenant_id
+ORDER BY s.id DESC
+LIMIT 20;
+
+-- name: DevPackageFeatures :many
+SELECT feature_key, is_enabled, limit_value FROM package_features WHERE package_id = @package_id;

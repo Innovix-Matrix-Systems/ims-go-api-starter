@@ -272,7 +272,7 @@ func toDevSettings(items []settings.EffectiveSetting, target settings.Target) []
 			Scope:       scope,
 			Editable:    target.IsGlobal() || (target.Type == settings.TargetTenant && item.Key.AllowsTenant()),
 			Overridden:  settingsSourceMatchesTarget(item.Source, target),
-			SortOrder:   item.Key.SortOrder,
+			SortOrder:   item.SortOrder,
 			Group:       devGroupFromInfo(item.Group),
 		})
 	}
@@ -368,4 +368,51 @@ func settingsTargetLabel(target settings.Target) string {
 		return "global"
 	}
 	return formatTarget("tenant", target.ID)
+}
+
+type placeSettingsRequest struct {
+	Keys []string `json:"keys" validate:"required,min=1,max=500,dive,required"`
+}
+
+// placeSettings puts keys into a group in the given order (drag and drop).
+func (h *Handler) placeSettings(w http.ResponseWriter, r *http.Request) {
+	groupID, err := pathID(r)
+	if err != nil {
+		h.responder.Error(w, r, err)
+		return
+	}
+	var request placeSettingsRequest
+	if !h.bind(w, r, &request) {
+		return
+	}
+	started := time.Now()
+	opErr := h.settings.PlaceKeys(r.Context(), groupID, request.Keys)
+	h.audit.Record(r.Context(), authn.UserID(r), "settings.place", formatTarget("settings_group", groupID),
+		map[string]any{"group_id": groupID, "keys": request.Keys}, started, opErr)
+	if opErr != nil {
+		h.responder.Error(w, r, opErr)
+		return
+	}
+	h.responder.Data(w, r, http.StatusOK, map[string]any{"group_id": groupID, "keys": request.Keys})
+}
+
+type reorderGroupsRequest struct {
+	IDs []int64 `json:"ids" validate:"required,min=1,max=200,dive,gt=0"`
+}
+
+// reorderSettingGroups sets the order of settings groups.
+func (h *Handler) reorderSettingGroups(w http.ResponseWriter, r *http.Request) {
+	var request reorderGroupsRequest
+	if !h.bind(w, r, &request) {
+		return
+	}
+	started := time.Now()
+	opErr := h.settings.ReorderGroups(r.Context(), request.IDs)
+	h.audit.Record(r.Context(), authn.UserID(r), "settings.groups.reorder", "settings_groups",
+		map[string]any{"ids": request.IDs}, started, opErr)
+	if opErr != nil {
+		h.responder.Error(w, r, opErr)
+		return
+	}
+	h.responder.Data(w, r, http.StatusOK, map[string]any{"ids": request.IDs})
 }

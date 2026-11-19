@@ -2567,6 +2567,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/dev/api/settings/groups/order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Reorder settings groups (dev.manage) */
+        put: operations["devReorderSettingGroups"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/settings/groups/{id}/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put settings into a group in the given order (dev.manage)
+         * @description Moves each key into the group and stores its position (drag and drop). Keys need their global row (settings:sync).
+         */
+        put: operations["devPlaceSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/tenants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Tenants with subscription, usage and override counts */
+        get: operations["devListTenants"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/dev/api/tenants/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One tenant with plan features, usage against limits and subscription history */
+        get: operations["devGetTenant"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/dev/api/inspector/routes": {
         parameters: {
             query?: never;
@@ -4640,6 +4711,65 @@ export interface components {
             duration_ms?: number;
             /** Format: date-time */
             created_at: string;
+        };
+        DevTenant: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+            code: string;
+            domain: string | null;
+            email: string | null;
+            phone: string | null;
+            is_active: boolean;
+            subscription_status: string | null;
+            package_name: string | null;
+            /** Format: date-time */
+            expires_at: string | null;
+            /** Format: int64 */
+            users: number;
+            /** Format: int64 */
+            branches: number;
+            /**
+             * Format: int64
+             * @description Tenant setting and feature-flag overrides.
+             */
+            overrides: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        DevTenantDetail: components["schemas"]["DevTenant"] & {
+            /** Format: int64 */
+            storage_bytes: number;
+            features: {
+                key: string;
+                description: string;
+                is_limit: boolean;
+                enabled: boolean;
+                /**
+                 * Format: int64
+                 * @description null = unlimited.
+                 */
+                limit: number | null;
+                /** Format: int64 */
+                used: number | null;
+                overridden: boolean;
+            }[];
+            subscriptions: {
+                /** Format: int64 */
+                id: number;
+                status: string;
+                package_name: string;
+                /** Format: date-time */
+                starts_at: string | null;
+                /** Format: date-time */
+                expires_at: string | null;
+                /** Format: date-time */
+                trial_ends_at: string | null;
+                /** Format: date-time */
+                cancelled_at: string | null;
+                /** Format: date-time */
+                created_at: string;
+            }[];
         };
         DevRouteReport: {
             /** @description Middleware every route runs, in order. */
@@ -12949,6 +13079,262 @@ export interface operations {
             };
         };
     };
+    devReorderSettingGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Group ids in the new order. */
+                    ids: number[];
+                };
+            };
+        };
+        responses: {
+            /** @description Saved order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            ids?: number[];
+                        };
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devPlaceSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Setting keys in their new order. */
+                    keys: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Saved placement. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            /** Format: int64 */
+                            group_id?: number;
+                            keys?: string[];
+                        };
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devListTenants: {
+        parameters: {
+            query?: {
+                page?: components["parameters"]["Page"];
+                per_page?: components["parameters"]["PerPage"];
+                /** @description Name, code, email, phone or domain. */
+                search?: string;
+                active?: "active" | "inactive";
+                subscription?: "none" | "trial" | "active" | "pending" | "past_due" | "cancelled" | "expired";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated tenants. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevTenant"][];
+                        meta: components["schemas"]["PaginationMeta"];
+                        links: components["schemas"]["PaginationLinks"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    devGetTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tenant detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["DevTenantDetail"];
+                    };
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     devInspectorRoutes: {
         parameters: {
             query?: never;
@@ -14121,6 +14507,8 @@ export interface operations {
         parameters: {
             query?: {
                 level?: string;
+                /** @description Text in the message or attributes, or a request id prefix. */
+                search?: string;
                 request_id?: string;
                 limit?: number;
                 cursor?: string;

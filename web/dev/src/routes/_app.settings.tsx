@@ -2,7 +2,7 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useDeferredValue, useEffect, useMemo, useState, type DragEvent } from 'react'
 import { api } from '../api/client'
-import type { DevTarget, Page, SettingsGroup, SettingsItem } from '../api/types'
+import type { DevTarget, DevTenant, Page, SettingsGroup, SettingsItem } from '../api/types'
 import { Select } from '../components/inputs'
 import { SettingsList } from '../components/SettingsList'
 import { useToast } from '../components/Toasts'
@@ -24,10 +24,29 @@ import {
 } from '../components/ui'
 
 export const Route = createFileRoute('/_app/settings')({
+  validateSearch: (search: Record<string, unknown>): { tenant?: number } => ({
+    tenant: typeof search.tenant === 'number' ? search.tenant : undefined,
+  }),
   component: SettingsPage,
 })
 
 type TargetKind = 'global' | 'tenant'
+
+/** Loads the tenant named in ?tenant= (deep link from the Tenants panel). */
+function useLinkedTenant(id: number | undefined) {
+  return useQuery({
+    queryKey: ['tenants', 'detail', id],
+    queryFn: ({ signal }) => api<DevTenant>(`/dev/api/tenants/${id}`, { signal }),
+    enabled: id !== undefined,
+    select: (tenant): DevTarget => ({
+      id: tenant.id,
+      type: 'tenant',
+      name: tenant.name,
+      code: tenant.code,
+      overrides: tenant.overrides,
+    }),
+  })
+}
 
 type DragState = { type: 'setting'; key: string } | { type: 'group'; id: number } | null
 
@@ -75,6 +94,13 @@ function SettingsPage() {
   const queryClient = useQueryClient()
   const [targetKind, setTargetKind] = useState<TargetKind>('global')
   const [view, setView] = useState<'list' | 'board'>('list')
+  const { tenant: linkedTenantID } = Route.useSearch()
+  const linkedTenant = useLinkedTenant(linkedTenantID)
+  useEffect(() => {
+    if (!linkedTenant.data) return
+    setTargetKind('tenant')
+    setTenant(linkedTenant.data)
+  }, [linkedTenant.data])
   const [tenant, setTenant] = useState<DevTarget | null>(null)
   const [tenantSearch, setTenantSearch] = useState('')
   const [groupSearch, setGroupSearch] = useState('')
@@ -207,6 +233,19 @@ function SettingsPage() {
       invalidate()
     },
     onError: (error) => push(error instanceof Error ? error.message : 'Unable to delete the group', 'error'),
+  })
+
+  const placeSettings = useMutation({
+    mutationFn: ({ groupId, keys }: { groupId: number; keys: string[] }) =>
+      api(`/dev/api/settings/groups/${groupId}/keys`, { method: 'PUT', body: { keys } }),
+    onSuccess: () => invalidate(),
+    onError: (error) => push(error instanceof Error ? error.message : 'Unable to move the setting', 'error'),
+  })
+
+  const reorderGroupIds = useMutation({
+    mutationFn: (ids: number[]) => api('/dev/api/settings/groups/order', { method: 'PUT', body: { ids } }),
+    onSuccess: () => invalidate(),
+    onError: (error) => push(error instanceof Error ? error.message : 'Unable to reorder groups', 'error'),
   })
 
   const saveSetting = useMutation({
@@ -556,7 +595,7 @@ function SettingsPage() {
       ) : view === 'list' ? (
         <SettingsList
           items={settings}
-          groups={boardGroups.filter((group) => settings.some((item) => item.group.slug === group.slug))}
+          groups={boardGroups}
           target={targetLabel(targetKind, tenant)}
           savingKey={
             saveSetting.isPending
@@ -568,6 +607,8 @@ function SettingsPage() {
           onSave={(item, value) => saveSetting.mutate({ item, value })}
           onReset={(item) => resetSetting.mutate(item)}
           onDetails={openEditor}
+          onPlace={(groupId, keys) => placeSettings.mutate({ groupId, keys })}
+          onReorderGroups={(ids) => reorderGroupIds.mutate(ids)}
         />
       ) : (
         <div className="settings-layout mt-24">

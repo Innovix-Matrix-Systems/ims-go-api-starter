@@ -2,7 +2,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { createFileRoute } from '@tanstack/react-router'
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { api } from '../api/client'
-import type { DevFlag, DevTarget, DevTargetStats, Page } from '../api/types'
+import type { DevFlag, DevTarget, DevTargetStats, DevTenant, Page } from '../api/types'
 import { useToast } from '../components/Toasts'
 import {
   Button,
@@ -20,10 +20,29 @@ import {
 } from '../components/ui'
 
 export const Route = createFileRoute('/_app/flags')({
+  validateSearch: (search: Record<string, unknown>): { tenant?: number } => ({
+    tenant: typeof search.tenant === 'number' ? search.tenant : undefined,
+  }),
   component: FlagsPage,
 })
 
 type TargetKind = 'global' | 'tenant' | 'user'
+
+/** Loads the tenant named in ?tenant= (deep link from the Tenants panel). */
+function useLinkedTenant(id: number | undefined) {
+  return useQuery({
+    queryKey: ['tenants', 'detail', id],
+    queryFn: ({ signal }) => api<DevTenant>(`/dev/api/tenants/${id}`, { signal }),
+    enabled: id !== undefined,
+    select: (tenant): DevTarget => ({
+      id: tenant.id,
+      type: 'tenant',
+      name: tenant.name,
+      code: tenant.code,
+      overrides: tenant.overrides,
+    }),
+  })
+}
 
 interface SelectedTarget {
   type: TargetKind
@@ -200,6 +219,13 @@ function FlagsPage() {
   const queryClient = useQueryClient()
   const [kind, setKind] = useState<TargetKind>('global')
   const [selected, setSelected] = useState<SelectedTarget>(globalTarget)
+  const { tenant: linkedTenantID } = Route.useSearch()
+  const linkedTenant = useLinkedTenant(linkedTenantID)
+  useEffect(() => {
+    if (!linkedTenant.data) return
+    setKind('tenant')
+    setSelected(targetFromOption(linkedTenant.data))
+  }, [linkedTenant.data])
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [drawerKey, setDrawerKey] = useState<string | null>(null)
