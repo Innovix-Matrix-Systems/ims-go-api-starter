@@ -12,18 +12,20 @@ import (
 
 const flagsTTL = 5 * time.Minute
 
-func globalBlobKey() string               { return "flags:blob:g" }
-func tenantBlobKey(tenantID int64) string { return fmt.Sprintf("flags:blob:t:%d", tenantID) }
-func userBlobKey(userID int64) string     { return fmt.Sprintf("flags:blob:u:%d", userID) }
+// v2: blobs carry a rollout percentage next to the value.
+func globalBlobKey() string               { return "flags:v2:g" }
+func tenantBlobKey(tenantID int64) string { return fmt.Sprintf("flags:v2:t:%d", tenantID) }
+func userBlobKey(userID int64) string     { return fmt.Sprintf("flags:v2:u:%d", userID) }
 
-// blob is one target's key -> bool cache entry.
-type blob map[string]bool
+// blob is one target's key -> stored state cache entry.
+type blob map[string]state
 
 // EffectiveFlag is one catalog flag resolved for a target.
 type EffectiveFlag struct {
-	Flag   Flag
-	Value  bool
-	Source string // user | tenant | global | default
+	Flag    Flag
+	Value   bool
+	Rollout *int   // percentage when the winning value is a partial rollout
+	Source  string // user | tenant | global | default
 }
 
 // Service resolves and persists feature flags.
@@ -38,98 +40,108 @@ func NewService(repo Repository, store cache.Store) *Service {
 }
 
 // Effective resolves every catalog flag for the caller:
-// user -> tenant -> global -> default.
+// user -> tenant -> global -> default, then applies any percentage rollout.
 func (s *Service) Effective(ctx context.Context, scope tenancy.Scope, userID int64) (map[string]bool, error) {
-	result := make(map[string]bool, len(Catalog))
-	for _, flag := range Catalog {
-		result[flag.Key] = flag.Default
-	}
-
-	global, err := s.globalBlob(ctx)
+	tenantID := scope.EffectiveTenantID()
+	levels, err := s.levels(ctx, tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
-	for key, value := range global {
-		result[key] = value
-	}
-
-	if tenantID := scope.EffectiveTenantID(); tenantID > 0 {
-		tenant, err := s.tenantBlob(ctx, tenantID)
-		if err != nil {
-			return nil, err
-		}
-		for key, value := range tenant {
-			result[key] = value
-		}
-	}
-
-	if userID > 0 {
-		user, err := s.userBlob(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		for key, value := range user {
-			result[key] = value
-		}
+	result := make(map[string]bool, len(Catalog))
+	for _, flag := range Catalog {
+		st, _ := resolve(flag, levels)
+		result[flag.Key] = st.enabledFor(flag, tenantID, userID)
 	}
 	return result, nil
 }
 
 // IsEnabled resolves a single flag for the caller (used by the gate middleware).
 func (s *Service) IsEnabled(ctx context.Context, scope tenancy.Scope, userID int64, key string) (bool, error) {
-	flag, ok := Lookup(key)
-	if !ok {
+	if _, ok := Lookup(key); !ok {
 		return false, apperr.Newf(apperr.InternalServerError, "Feature flag %q is not registered.", key)
 	}
 	values, err := s.Effective(ctx, scope, userID)
 	if err != nil {
 		return false, err
 	}
-	if value, ok := values[key]; ok {
-		return value, nil
-	}
-	return flag.Default, nil
+	return values[key], nil
 }
 
-// EffectiveForTarget resolves every catalog flag for an explicit target.
+// EffectiveForTarget resolves every catalog flag for an explicit target. For a
+// user target a rollout is decided for that user; for a global (or tenant)
+// view of a per-user rollout, Value is "on" and Rollout says for how many.
 func (s *Service) EffectiveForTarget(ctx context.Context, target Target) ([]EffectiveFlag, error) {
-	global, err := s.globalBlob(ctx)
-	if err != nil {
-		return nil, err
+	var tenantID, userID int64
+	switch target.Type {
+	case TargetTenant:
+		tenantID = target.ID
+	case TargetUser:
+		userID = target.ID
+		owner, exists, err := s.repo.UserTenant(ctx, target.ID)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			tenantID = owner
+		}
 	}
-	tenant, err := s.tenantBlobForTarget(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	user, err := s.userBlobForTarget(ctx, target)
+	levels, err := s.levels(ctx, tenantID, userID)
 	if err != nil {
 		return nil, err
 	}
 
 	out := make([]EffectiveFlag, 0, len(Catalog))
 	for _, flag := range Catalog {
-		value, source := flag.Default, "default"
-		if v, ok := global[flag.Key]; ok {
-			value, source = v, "global"
+		st, source := resolve(flag, levels)
+		item := EffectiveFlag{Flag: flag, Value: st.Value, Source: source}
+		if st.Rollout != nil {
+			percent := int(*st.Rollout)
+			item.Rollout = &percent
+			if decidable(flag, tenantID, userID) {
+				item.Value = st.enabledFor(flag, tenantID, userID)
+			}
 		}
-		if v, ok := tenant[flag.Key]; ok {
-			value, source = v, "tenant"
-		}
-		if v, ok := user[flag.Key]; ok {
-			value, source = v, "user"
-		}
-		out = append(out, EffectiveFlag{Flag: flag, Value: value, Source: source})
+		out = append(out, item)
 	}
 	return out, nil
 }
 
 // SetBatch applies a batch of flag values to a target. A nil value clears that
-// override (inherit from the next level).
-func (s *Service) SetBatch(ctx context.Context, actorID int64, target Target, flags map[string]*bool) ([]EffectiveFlag, error) {
+// override (inherit from the next level). rollout optionally limits an enabled
+// flag to a percentage of users (or tenants, see Flag.RolloutBy); a key that
+// only appears in rollout is enabled for that percentage.
+func (s *Service) SetBatch(ctx context.Context, actorID int64, target Target, flags map[string]*bool, rollout map[string]int) ([]EffectiveFlag, error) {
 	if err := s.validateTarget(ctx, target); err != nil {
 		return nil, err
 	}
-	for key := range flags {
+
+	type change struct {
+		clear bool
+		state state
+	}
+	changes := make(map[string]change, len(flags)+len(rollout))
+	for key, value := range flags {
+		if value == nil {
+			if _, ok := rollout[key]; ok {
+				return nil, apperr.Validation(map[string][]string{"rollout." + key: {"A cleared flag cannot also set a rollout."}})
+			}
+			changes[key] = change{clear: true}
+			continue
+		}
+		changes[key] = change{state: state{Value: *value}}
+	}
+	for key, percent := range rollout {
+		value := true
+		if current, ok := flags[key]; ok && current != nil {
+			value = *current
+		}
+		st, err := newState(value, &percent)
+		if err != nil {
+			return nil, err
+		}
+		changes[key] = change{state: st}
+	}
+	for key := range changes {
 		if _, ok := Lookup(key); !ok {
 			return nil, apperr.Newf(apperr.ResourceNotFound, "Feature flag %q is not registered.", key)
 		}
@@ -139,20 +151,17 @@ func (s *Service) SetBatch(ctx context.Context, actorID int64, target Target, fl
 	if actorID > 0 {
 		actor = &actorID
 	}
-	for key, value := range flags {
-		if value == nil {
-			if _, err := s.repo.Delete(ctx, key, target); err != nil {
-				return nil, err
-			}
-			continue
+	for key, c := range changes {
+		var err error
+		switch {
+		case c.clear:
+			_, err = s.repo.Delete(ctx, key, target)
+		case target.IsGlobal():
+			_, err = s.repo.UpsertGlobal(ctx, key, c.state.Value, c.state.Rollout, actor)
+		default:
+			_, err = s.repo.UpsertTarget(ctx, key, target, c.state.Value, c.state.Rollout, actor)
 		}
-		if target.IsGlobal() {
-			if _, err := s.repo.UpsertGlobal(ctx, key, *value, actor); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if _, err := s.repo.UpsertTarget(ctx, key, target, *value, actor); err != nil {
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -193,6 +202,43 @@ func (s *Service) Sync(ctx context.Context) (int, error) {
 	}
 	_ = s.cache.Delete(ctx, globalBlobKey())
 	return created, nil
+}
+
+// flagLevels holds the stored states from most to least specific.
+type flagLevels struct{ user, tenant, global blob }
+
+func (s *Service) levels(ctx context.Context, tenantID, userID int64) (flagLevels, error) {
+	var levels flagLevels
+	var err error
+	if levels.global, err = s.load(ctx, globalBlobKey(), Target{Type: TargetGlobal}); err != nil {
+		return levels, err
+	}
+	if tenantID > 0 {
+		if levels.tenant, err = s.load(ctx, tenantBlobKey(tenantID), Target{Type: TargetTenant, ID: tenantID}); err != nil {
+			return levels, err
+		}
+	}
+	if userID > 0 {
+		if levels.user, err = s.load(ctx, userBlobKey(userID), Target{Type: TargetUser, ID: userID}); err != nil {
+			return levels, err
+		}
+	}
+	return levels, nil
+}
+
+// resolve picks the most specific stored state: user -> tenant -> global ->
+// code default.
+func resolve(flag Flag, levels flagLevels) (state, string) {
+	if st, ok := levels.user[flag.Key]; ok {
+		return st, "user"
+	}
+	if st, ok := levels.tenant[flag.Key]; ok {
+		return st, "tenant"
+	}
+	if st, ok := levels.global[flag.Key]; ok {
+		return st, "global"
+	}
+	return state{Value: flag.Default}, "default"
 }
 
 func (s *Service) validateTarget(ctx context.Context, target Target) error {
@@ -242,82 +288,26 @@ func (s *Service) invalidate(ctx context.Context, target Target) {
 	}
 }
 
-func (s *Service) tenantBlobForTarget(ctx context.Context, target Target) (blob, error) {
-	switch target.Type {
-	case TargetTenant:
-		return s.tenantBlob(ctx, target.ID)
-	case TargetUser:
-		tenantID, exists, err := s.repo.UserTenant(ctx, target.ID)
-		if err != nil {
-			return nil, err
-		}
-		if !exists || tenantID == 0 {
-			return blob{}, nil
-		}
-		return s.tenantBlob(ctx, tenantID)
-	default:
-		return blob{}, nil
-	}
-}
-
-func (s *Service) userBlobForTarget(ctx context.Context, target Target) (blob, error) {
-	if target.Type == TargetUser {
-		return s.userBlob(ctx, target.ID)
-	}
-	return blob{}, nil
-}
-
-func (s *Service) globalBlob(ctx context.Context) (blob, error) {
+// load reads one target's stored states, cached. A cache outage degrades to
+// the database instead of failing the request.
+func (s *Service) load(ctx context.Context, key string, target Target) (blob, error) {
 	var cached blob
-	// A cache outage degrades to the database instead of failing the request.
-	if found, err := s.cache.Get(ctx, globalBlobKey(), &cached); err == nil && found {
-		return cached, nil
-	}
-	rows, err := s.repo.ListGlobal(ctx)
-	if err != nil {
-		return nil, err
-	}
-	values := make(blob, len(rows))
-	for _, row := range rows {
-		values[row.Key] = row.Value
-	}
-	_ = s.cache.Set(ctx, globalBlobKey(), values, flagsTTL)
-	return values, nil
-}
-
-func (s *Service) tenantBlob(ctx context.Context, tenantID int64) (blob, error) {
-	key := tenantBlobKey(tenantID)
-	var cached blob
-	// A cache outage degrades to the database instead of failing the request.
 	if found, err := s.cache.Get(ctx, key, &cached); err == nil && found {
 		return cached, nil
 	}
-	rows, err := s.repo.ListByTarget(ctx, Target{Type: TargetTenant, ID: tenantID})
+	var rows []FeatureFlag
+	var err error
+	if target.IsGlobal() {
+		rows, err = s.repo.ListGlobal(ctx)
+	} else {
+		rows, err = s.repo.ListByTarget(ctx, target)
+	}
 	if err != nil {
 		return nil, err
 	}
 	values := make(blob, len(rows))
 	for _, row := range rows {
-		values[row.Key] = row.Value
-	}
-	_ = s.cache.Set(ctx, key, values, flagsTTL)
-	return values, nil
-}
-
-func (s *Service) userBlob(ctx context.Context, userID int64) (blob, error) {
-	key := userBlobKey(userID)
-	var cached blob
-	// A cache outage degrades to the database instead of failing the request.
-	if found, err := s.cache.Get(ctx, key, &cached); err == nil && found {
-		return cached, nil
-	}
-	rows, err := s.repo.ListByTarget(ctx, Target{Type: TargetUser, ID: userID})
-	if err != nil {
-		return nil, err
-	}
-	values := make(blob, len(rows))
-	for _, row := range rows {
-		values[row.Key] = row.Value
+		values[row.Key] = state{Value: row.Value, Rollout: row.Rollout}
 	}
 	_ = s.cache.Set(ctx, key, values, flagsTTL)
 	return values, nil

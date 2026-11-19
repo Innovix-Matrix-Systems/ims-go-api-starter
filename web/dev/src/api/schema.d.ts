@@ -4340,7 +4340,10 @@ export interface components {
         };
         FeatureFlagItem: {
             key: string;
+            /** @description Effective value. With a rollout it is decided for a user target; otherwise it means "on for `rollout`%". */
             value: boolean;
+            /** @description Percentage of users (or tenants) the winning value is enabled for; null means everyone. */
+            rollout: number | null;
             default: boolean;
             /** @enum {string} */
             source: "user" | "tenant" | "global" | "default";
@@ -4355,13 +4358,23 @@ export interface components {
         FeatureFlagListEnvelope: {
             data: components["schemas"]["FeatureFlagItem"][];
         };
+        /** @description Send `flags`, `rollout` or both. */
         FeatureFlagUpdateRequest: {
             /** @enum {string} */
             target_type?: "global" | "tenant" | "user";
             /** Format: int64 */
             target_id?: number;
-            flags: {
+            flags?: {
                 [key: string]: boolean | null;
+            };
+            /**
+             * @description Flag key to percentage (0-100). Enables the flag for that share of users; 100 means everyone.
+             * @example {
+             *       "feature.audit": 60
+             *     }
+             */
+            rollout?: {
+                [key: string]: number;
             };
         };
         SettingsGroup: {
@@ -4918,6 +4931,8 @@ export interface components {
             key: string;
             /** @description Effective value after resolution. */
             value: boolean;
+            /** @description Rollout percentage of the winning value; null means everyone. */
+            rollout: number | null;
             /** @description Code-defined default. */
             default: boolean;
             /** @enum {string} */
@@ -4930,6 +4945,7 @@ export interface components {
         DevFlagListEnvelope: {
             data: components["schemas"]["DevFlag"][];
         };
+        /** @description Send `flags`, `rollout` or both. */
         DevFlagUpdateRequest: {
             /**
              * @default global
@@ -4939,8 +4955,12 @@ export interface components {
             /** Format: int64 */
             target_id?: number | null;
             /** @description Flag key to value; null clears the override at this target. */
-            flags: {
+            flags?: {
                 [key: string]: boolean | null;
+            };
+            /** @description Flag key to rollout percentage (enables the flag for that share). */
+            rollout?: {
+                [key: string]: number;
             };
         };
         DevFlagResetEnvelope: {

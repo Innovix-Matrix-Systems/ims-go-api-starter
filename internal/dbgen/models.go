@@ -173,6 +173,7 @@ type FeatureFlag struct {
 	UpdatedBy  *int64             `json:"updated_by"`
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	Rollout    *int16             `json:"rollout"`
 }
 
 type File struct {

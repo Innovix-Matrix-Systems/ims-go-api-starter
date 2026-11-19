@@ -20,6 +20,7 @@ import (
 type devFlag struct {
 	Key         string `json:"key"`
 	Value       bool   `json:"value"`
+	Rollout     *int   `json:"rollout"`
 	Default     bool   `json:"default"`
 	Source      string `json:"source"`
 	Overridden  bool   `json:"overridden"`
@@ -30,7 +31,8 @@ type devFlag struct {
 type updateFlagsRequest struct {
 	TargetType string           `json:"target_type" validate:"omitempty,oneof=global tenant user"`
 	TargetID   *int64           `json:"target_id" validate:"omitempty,gt=0"`
-	Flags      map[string]*bool `json:"flags" validate:"required,min=1"`
+	Flags      map[string]*bool `json:"flags" validate:"required_without=Rollout"`
+	Rollout    map[string]int   `json:"rollout" validate:"omitempty,dive,min=0,max=100"`
 }
 
 func (h *Handler) listFlags(w http.ResponseWriter, r *http.Request) {
@@ -76,16 +78,22 @@ func (h *Handler) updateFlags(w http.ResponseWriter, r *http.Request) {
 		}
 		setKeys = append(setKeys, key)
 	}
+	for key := range request.Rollout {
+		if _, listed := request.Flags[key]; !listed {
+			setKeys = append(setKeys, key)
+		}
+	}
 	sort.Strings(setKeys)
 	sort.Strings(clearKeys)
 
 	started := time.Now()
-	items, opErr := h.flags.SetBatch(r.Context(), actorID, target, request.Flags)
+	items, opErr := h.flags.SetBatch(r.Context(), actorID, target, request.Flags, request.Rollout)
 	h.recordAction(r.Context(), actorID, "flags.set", flagTargetLabel(target), map[string]any{
 		"target_type": target.Type,
 		"target_id":   target.ID,
 		"set":         setKeys,
 		"cleared":     clearKeys,
+		"rollout":     request.Rollout,
 	}, started, opErr)
 	if opErr != nil {
 		h.responder.Error(w, r, opErr)
@@ -239,6 +247,7 @@ func toDevFlags(items []featureflags.EffectiveFlag, target featureflags.Target) 
 		flags = append(flags, devFlag{
 			Key:         item.Flag.Key,
 			Value:       item.Value,
+			Rollout:     item.Rollout,
 			Default:     item.Flag.Default,
 			Source:      item.Source,
 			Overridden:  item.Source == flagTargetSource(target),

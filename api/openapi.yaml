@@ -5081,10 +5081,11 @@ components:
 
     FeatureFlagItem:
       type: object
-      required: [key, value, default, source, description, group]
+      required: [key, value, rollout, default, source, description, group]
       properties:
         key: {type: string}
-        value: {type: boolean}
+        value: {type: boolean, description: "Effective value. With a rollout it is decided for a user target; otherwise it means \"on for `rollout`%\"."}
+        rollout: {type: integer, nullable: true, minimum: 0, maximum: 100, description: Percentage of users (or tenants) the winning value is enabled for; null means everyone.}
         default: {type: boolean}
         source: {type: string, enum: [user, tenant, global, default]}
         description: {type: string}
@@ -5108,13 +5109,18 @@ components:
 
     FeatureFlagUpdateRequest:
       type: object
-      required: [flags]
+      description: Send `flags`, `rollout` or both.
       properties:
         target_type: {type: string, enum: [global, tenant, user]}
         target_id: {type: integer, format: int64}
         flags:
           type: object
           additionalProperties: {type: boolean, nullable: true}
+        rollout:
+          type: object
+          description: Flag key to percentage (0-100). Enables the flag for that share of users; 100 means everyone.
+          additionalProperties: {type: integer, minimum: 0, maximum: 100}
+          example: {feature.audit: 60}
 
     SettingsGroup:
       type: object
@@ -5812,10 +5818,11 @@ components:
 
     DevFlag:
       type: object
-      required: [key, value, default, source, overridden, description, group]
+      required: [key, value, rollout, default, source, overridden, description, group]
       properties:
         key: {type: string}
         value: {type: boolean, description: Effective value after resolution.}
+        rollout: {type: integer, nullable: true, description: Rollout percentage of the winning value; null means everyone.}
         default: {type: boolean, description: Code-defined default.}
         source: {type: string, enum: [default, global, tenant, user]}
         overridden: {type: boolean, description: True when the requested target stores an override.}
@@ -5832,7 +5839,7 @@ components:
 
     DevFlagUpdateRequest:
       type: object
-      required: [flags]
+      description: Send `flags`, `rollout` or both.
       properties:
         target_type: {type: string, enum: [global, tenant, user], default: global}
         target_id: {type: integer, format: int64, nullable: true}
@@ -5840,6 +5847,10 @@ components:
           type: object
           additionalProperties: {type: boolean, nullable: true}
           description: Flag key to value; null clears the override at this target.
+        rollout:
+          type: object
+          additionalProperties: {type: integer, minimum: 0, maximum: 100}
+          description: Flag key to rollout percentage (enables the flag for that share).
 
     DevFlagResetEnvelope:
       type: object

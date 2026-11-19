@@ -32,7 +32,7 @@ func (q *Queries) DeleteFeatureFlag(ctx context.Context, arg DeleteFeatureFlagPa
 
 const getFeatureFlag = `-- name: GetFeatureFlag :one
 
-SELECT id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at FROM feature_flags
+SELECT id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at, rollout FROM feature_flags
 WHERE key = $1
   AND target_type IS NOT DISTINCT FROM $2::text
   AND target_id IS NOT DISTINCT FROM $3::bigint
@@ -59,6 +59,7 @@ func (q *Queries) GetFeatureFlag(ctx context.Context, arg GetFeatureFlagParams) 
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Rollout,
 	)
 	return i, err
 }
@@ -67,7 +68,7 @@ const insertGlobalFeatureFlagIfAbsent = `-- name: InsertGlobalFeatureFlagIfAbsen
 INSERT INTO feature_flags (key, target_type, target_id, value)
 VALUES ($1, NULL, NULL, $2)
 ON CONFLICT (key) WHERE target_type IS NULL DO NOTHING
-RETURNING id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at
+RETURNING id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at, rollout
 `
 
 type InsertGlobalFeatureFlagIfAbsentParams struct {
@@ -88,12 +89,13 @@ func (q *Queries) InsertGlobalFeatureFlagIfAbsent(ctx context.Context, arg Inser
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Rollout,
 	)
 	return i, err
 }
 
 const listFeatureFlagsByTarget = `-- name: ListFeatureFlagsByTarget :many
-SELECT id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at FROM feature_flags
+SELECT id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at, rollout FROM feature_flags
 WHERE target_type = $1 AND target_id = $2
 ORDER BY key
 `
@@ -122,6 +124,7 @@ func (q *Queries) ListFeatureFlagsByTarget(ctx context.Context, arg ListFeatureF
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Rollout,
 		); err != nil {
 			return nil, err
 		}
@@ -134,7 +137,7 @@ func (q *Queries) ListFeatureFlagsByTarget(ctx context.Context, arg ListFeatureF
 }
 
 const listGlobalFeatureFlags = `-- name: ListGlobalFeatureFlags :many
-SELECT id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at FROM feature_flags
+SELECT id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at, rollout FROM feature_flags
 WHERE target_type IS NULL AND target_id IS NULL
 ORDER BY key
 `
@@ -158,6 +161,7 @@ func (q *Queries) ListGlobalFeatureFlags(ctx context.Context) ([]FeatureFlag, er
 			&i.UpdatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Rollout,
 		); err != nil {
 			return nil, err
 		}
@@ -170,58 +174,25 @@ func (q *Queries) ListGlobalFeatureFlags(ctx context.Context) ([]FeatureFlag, er
 }
 
 const upsertGlobalFeatureFlag = `-- name: UpsertGlobalFeatureFlag :one
-INSERT INTO feature_flags (key, target_type, target_id, value, created_by, updated_by)
-VALUES ($1, NULL, NULL, $2, $3, $3)
+INSERT INTO feature_flags (key, target_type, target_id, value, rollout, created_by, updated_by)
+VALUES ($1, NULL, NULL, $2, $3::smallint, $4, $4)
 ON CONFLICT (key) WHERE target_type IS NULL DO UPDATE
-SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
-RETURNING id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at
+SET value = EXCLUDED.value, rollout = EXCLUDED.rollout, updated_by = EXCLUDED.updated_by, updated_at = now()
+RETURNING id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at, rollout
 `
 
 type UpsertGlobalFeatureFlagParams struct {
 	Key     string `json:"key"`
 	Value   bool   `json:"value"`
+	Rollout *int16 `json:"rollout"`
 	ActorID *int64 `json:"actor_id"`
 }
 
 func (q *Queries) UpsertGlobalFeatureFlag(ctx context.Context, arg UpsertGlobalFeatureFlagParams) (FeatureFlag, error) {
-	row := q.db.QueryRow(ctx, upsertGlobalFeatureFlag, arg.Key, arg.Value, arg.ActorID)
-	var i FeatureFlag
-	err := row.Scan(
-		&i.ID,
-		&i.Key,
-		&i.TargetType,
-		&i.TargetID,
-		&i.Value,
-		&i.CreatedBy,
-		&i.UpdatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const upsertTargetFeatureFlag = `-- name: UpsertTargetFeatureFlag :one
-INSERT INTO feature_flags (key, target_type, target_id, value, created_by, updated_by)
-VALUES ($1, $2, $3, $4, $5, $5)
-ON CONFLICT (target_type, target_id, key) WHERE target_type IS NOT NULL DO UPDATE
-SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
-RETURNING id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at
-`
-
-type UpsertTargetFeatureFlagParams struct {
-	Key        string  `json:"key"`
-	TargetType *string `json:"target_type"`
-	TargetID   *int64  `json:"target_id"`
-	Value      bool    `json:"value"`
-	ActorID    *int64  `json:"actor_id"`
-}
-
-func (q *Queries) UpsertTargetFeatureFlag(ctx context.Context, arg UpsertTargetFeatureFlagParams) (FeatureFlag, error) {
-	row := q.db.QueryRow(ctx, upsertTargetFeatureFlag,
+	row := q.db.QueryRow(ctx, upsertGlobalFeatureFlag,
 		arg.Key,
-		arg.TargetType,
-		arg.TargetID,
 		arg.Value,
+		arg.Rollout,
 		arg.ActorID,
 	)
 	var i FeatureFlag
@@ -235,6 +206,49 @@ func (q *Queries) UpsertTargetFeatureFlag(ctx context.Context, arg UpsertTargetF
 		&i.UpdatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Rollout,
+	)
+	return i, err
+}
+
+const upsertTargetFeatureFlag = `-- name: UpsertTargetFeatureFlag :one
+INSERT INTO feature_flags (key, target_type, target_id, value, rollout, created_by, updated_by)
+VALUES ($1, $2, $3, $4, $5::smallint, $6, $6)
+ON CONFLICT (target_type, target_id, key) WHERE target_type IS NOT NULL DO UPDATE
+SET value = EXCLUDED.value, rollout = EXCLUDED.rollout, updated_by = EXCLUDED.updated_by, updated_at = now()
+RETURNING id, key, target_type, target_id, value, created_by, updated_by, created_at, updated_at, rollout
+`
+
+type UpsertTargetFeatureFlagParams struct {
+	Key        string  `json:"key"`
+	TargetType *string `json:"target_type"`
+	TargetID   *int64  `json:"target_id"`
+	Value      bool    `json:"value"`
+	Rollout    *int16  `json:"rollout"`
+	ActorID    *int64  `json:"actor_id"`
+}
+
+func (q *Queries) UpsertTargetFeatureFlag(ctx context.Context, arg UpsertTargetFeatureFlagParams) (FeatureFlag, error) {
+	row := q.db.QueryRow(ctx, upsertTargetFeatureFlag,
+		arg.Key,
+		arg.TargetType,
+		arg.TargetID,
+		arg.Value,
+		arg.Rollout,
+		arg.ActorID,
+	)
+	var i FeatureFlag
+	err := row.Scan(
+		&i.ID,
+		&i.Key,
+		&i.TargetType,
+		&i.TargetID,
+		&i.Value,
+		&i.CreatedBy,
+		&i.UpdatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Rollout,
 	)
 	return i, err
 }

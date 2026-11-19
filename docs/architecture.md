@@ -134,7 +134,12 @@ surfaces. `model_has_roles.model_type` is the constant `user`.
 - **Feature flags** (`modules/featureflags`): separate boolean-flag catalog/table so flag reads
   never load settings; resolution user → tenant → global → default; one small cache blob per
   target; internal-only writes with the target in the payload; `feature:<key>` gate middleware
-  (`platform/featureflags`); `feature-flags:sync` seeds globals.
+  (`platform/featureflags`); `feature-flags:sync` seeds globals. An enabled value can carry a
+  **percentage rollout** (`rollout: {"feature.x": 60}` on the internal/dev PATCH): each user (or
+  tenant, with `Flag.RolloutBy = RolloutByTenant`) hashes to a fixed bucket 0-99 per flag, so the
+  same user always gets the same answer and raising 20% → 60% only adds users. 100% is stored as a
+  plain "on" (`rollout` NULL). The rollout is decided per request, after user → tenant → global
+  resolution, so a user or tenant override still pins the value for that target.
 - **Health** (`platform/health`): registry with checks for environment, debug mode, application,
   database, migrations+River schema, cache, queue, scheduler; `/api/health` returns the cached
   health payload (`?fresh=1` forces a run), `/up` is a bare liveness probe.

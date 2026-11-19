@@ -76,7 +76,7 @@ func (h *Handler) internalUpdate(w http.ResponseWriter, r *http.Request) {
 		h.responder.Error(w, r, err)
 		return
 	}
-	items, err := h.service.SetBatch(r.Context(), identity.UserID, targetFromRequest(req.TargetType, req.TargetID), req.Flags)
+	items, err := h.service.SetBatch(r.Context(), identity.UserID, targetFromRequest(req.TargetType, req.TargetID), req.Flags, req.Rollout)
 	if err != nil {
 		h.responder.Error(w, r, err)
 		return
