@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"io"
@@ -11,9 +11,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/app"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 // TestInternalRoutesRejectTenantScopedCallers is the phase-12 regression net
@@ -24,30 +25,12 @@ import (
 // being routed into the tenant-exempt group. This test would have caught
 // C1–C3.
 func TestInternalRoutesRejectTenantScopedCallers(t *testing.T) {
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-
-	dbtest.Clean(t, pool,
-		"payment_approval_requests", "payments", "subscriptions",
-		"package_features", "packages",
-		"personal_access_tokens", "role_has_permissions", "model_has_roles",
-		"users", "roles", "permissions", "branches", "tenants",
-	)
+	kit := testkit.New(t)
+	cfg := kit.Config
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
+	deps := kit.Deps
 
 	if err := seeder.Run(t.Context(), cfg, deps.Tx.Queries(), deps.Tx, deps.Checker, logger); err != nil {
 		t.Fatalf("seeder.Run() error = %v", err)
@@ -96,7 +79,7 @@ func TestInternalRoutesRejectTenantScopedCallers(t *testing.T) {
 // tenant directly in the database (the tenant-management API lives behind
 // system-only internal routes — exactly the surface under test) and logs in
 // for a tenant-scoped token.
-func createTenantAdminAndLogin(t *testing.T, router http.Handler, deps *Dependencies) string {
+func createTenantAdminAndLogin(t *testing.T, router http.Handler, deps *app.Dependencies) string {
 	t.Helper()
 	ctx := t.Context()
 

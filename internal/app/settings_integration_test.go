@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"context"
@@ -8,11 +8,10 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	billingdomain "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 type settingItemJSON struct {
@@ -37,31 +36,12 @@ type settingsGroupJSON struct {
 // through the real router: grouped reads, tenant-admin writes, internal
 // target-aware writes, permission boundaries and validation.
 func TestSettingsAndFeatureFlagsEndToEnd(t *testing.T) {
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-
-	dbtest.Clean(t, pool,
-		"feature_flags", "settings", "settings_groups",
-		"payment_approval_requests", "payments", "subscriptions",
-		"package_features", "packages",
-		"personal_access_tokens", "role_has_permissions", "model_has_roles",
-		"users", "roles", "permissions", "branches", "tenants",
-	)
+	kit := testkit.New(t)
+	cfg := kit.Config
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
+	deps := kit.Deps
 
 	ctx := context.Background()
 	if err := seeder.Run(ctx, cfg, deps.Tx.Queries(), deps.Tx, deps.Checker, logger); err != nil {

@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"context"
@@ -12,39 +12,22 @@ import (
 	"time"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 // TestDeveloperDashboardEndToEnd proves the Phase 9 access model: the seeded
 // developer account logs in, reaches the gated /dev API, and the hidden
 // Developer role never appears in role responses.
 func TestDeveloperDashboardEndToEnd(t *testing.T) {
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 	t.Setenv("DEV_DASHBOARD_ENABLED", "true")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-
-	dbtest.Clean(t, pool,
-		"dev_actions", "personal_access_tokens", "role_has_permissions", "model_has_roles",
-		"users", "roles", "permissions", "branches", "tenants",
-	)
+	kit := testkit.New(t)
+	cfg := kit.Config
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
+	deps, pool := kit.Deps, kit.Pool
 
 	ctx := context.Background()
 	runSeed := func() {

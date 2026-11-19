@@ -58,8 +58,12 @@ type App struct {
 // New migrates (once per package), empties the application tables, seeds
 // the default tenant, roles and accounts, and builds the router. Tenants it
 // creates are on an unlimited plan so plan limits never get in the way.
-func New(t *testing.T) *App {
+func New(t *testing.T, options ...Option) *App {
 	t.Helper()
+	settings := newSettings{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	for _, option := range options {
+		option(&settings)
+	}
 	pool := dbtest.Pool(t) // skips the test without DATABASE_TEST_DSN
 	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
 	t.Setenv("APP_ENV_FILE", "")
@@ -72,7 +76,7 @@ func New(t *testing.T) *App {
 	}
 	truncateAll(t, pool)
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logger := settings.logger
 	deps, cleanup, err := app.NewDependencies(cfg, logger)
 	if err != nil {
 		t.Fatalf("testkit: NewDependencies: %v", err)
@@ -95,6 +99,19 @@ func New(t *testing.T) *App {
 	a := &App{Deps: deps, Router: deps.Router(), Pool: pool, Config: cfg, plan: plan.ID}
 	a.subscribe(t, DefaultTenant)
 	return a
+}
+
+// Option customises New.
+type Option func(*newSettings)
+
+type newSettings struct {
+	logger *slog.Logger
+}
+
+// WithLogger sends application logs to logger (default: discarded), e.g. to
+// assert what gets logged.
+func WithLogger(logger *slog.Logger) Option {
+	return func(s *newSettings) { s.logger = logger }
 }
 
 // truncateAll empties every application table (migrations and the River

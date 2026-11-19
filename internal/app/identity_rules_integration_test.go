@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"context"
@@ -10,10 +10,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	billingdomain "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/billing/domain"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 // TestIdentityWriteRules covers the phase-13 identity invariants end to end:
@@ -21,28 +20,11 @@ import (
 // roles, a self password change signs out other devices, and the users.max
 // quota holds under concurrent creates.
 func TestIdentityWriteRules(t *testing.T) {
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-	dbtest.Clean(t, pool,
-		"payment_approval_requests", "payments", "subscriptions",
-		"package_features", "packages",
-		"personal_access_tokens", "role_has_permissions", "model_has_roles",
-		"users", "roles", "permissions", "branches", "tenants",
-	)
+	kit := testkit.New(t)
+	cfg := kit.Config
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
+	deps, pool := kit.Deps, kit.Pool
 	ctx := context.Background()
 	if err := seeder.Run(ctx, cfg, deps.Tx.Queries(), deps.Tx, deps.Checker, logger); err != nil {
 		t.Fatalf("seeder.Run() error = %v", err)

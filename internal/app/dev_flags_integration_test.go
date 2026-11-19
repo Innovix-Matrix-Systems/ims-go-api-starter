@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"context"
@@ -8,37 +8,21 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/featureflags"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 // TestDeveloperFlagsEndToEnd proves the flags panel: target search, global and
 // tenant/user overrides, reset-to-inherit, sync and audit coverage.
 func TestDeveloperFlagsEndToEnd(t *testing.T) {
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 	t.Setenv("DEV_DASHBOARD_ENABLED", "true")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-	dbtest.Clean(t, pool,
-		"dev_actions", "feature_flags", "personal_access_tokens", "role_has_permissions",
-		"model_has_roles", "users", "roles", "permissions", "branches", "tenants",
-	)
+	kit := testkit.New(t)
+	cfg := kit.Config
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
+	deps := kit.Deps
 	if err := seeder.Run(context.Background(), cfg, deps.Tx.Queries(), deps.Tx, deps.Checker, logger); err != nil {
 		t.Fatalf("seeder.Run() error = %v", err)
 	}

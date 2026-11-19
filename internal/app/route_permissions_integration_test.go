@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"io"
@@ -11,9 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 // routesWithoutPermission lists every /api/v1 route that deliberately needs
@@ -68,28 +67,11 @@ var routesWithoutPermission = map[string]bool{
 // no roles at all and calls every /api/v1 route. Each one must refuse with 403
 // unless it is listed in routesWithoutPermission.
 func TestEveryProtectedRouteRequiresAPermission(t *testing.T) {
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-	dbtest.Clean(t, pool,
-		"payment_approval_requests", "payments", "subscriptions",
-		"package_features", "packages",
-		"personal_access_tokens", "role_has_permissions", "model_has_roles",
-		"users", "roles", "permissions", "branches", "tenants",
-	)
+	kit := testkit.New(t)
+	cfg := kit.Config
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
+	deps, pool := kit.Deps, kit.Pool
 	if err := seeder.Run(t.Context(), cfg, deps.Tx.Queries(), deps.Tx, deps.Checker, logger); err != nil {
 		t.Fatalf("seeder.Run() error = %v", err)
 	}

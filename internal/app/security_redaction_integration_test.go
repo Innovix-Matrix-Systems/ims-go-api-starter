@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"bytes"
@@ -8,9 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database/dbtest"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/seeder"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/testkit"
 )
 
 type syncBuffer struct {
@@ -33,39 +31,15 @@ func (b *syncBuffer) String() string {
 // TestNoSecretsInLogs is the redaction audit: passwords (success and failure)
 // and issued tokens must never appear in application logs.
 func TestNoSecretsInLogs(t *testing.T) {
-	pool := dbtest.Pool(t)
-	t.Setenv("DATABASE_DSN", dbtest.DSN(t))
-	t.Setenv("APP_ENV_FILE", "")
-	t.Setenv("BCRYPT_ROUNDS", "4")
-	t.Setenv("AUTH_DEFAULT_PASSWORD", "secret123")
 	t.Setenv("APP_DEBUG", "false")
-
-	cfg, err := config.Load("")
-	if err != nil {
-		t.Fatalf("config.Load() error = %v", err)
-	}
-	dbtest.Clean(t, pool,
-		"personal_access_tokens", "role_has_permissions", "model_has_roles",
-		"users", "roles", "permissions", "branches", "tenants",
-	)
 
 	captured := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(captured, &slog.HandlerOptions{Level: slog.LevelDebug}))
-
-	deps, cleanup, err := NewDependencies(cfg, logger)
-	if err != nil {
-		t.Fatalf("NewDependencies() error = %v", err)
-	}
-	t.Cleanup(cleanup)
-	if err := seeder.Run(t.Context(), cfg, deps.Tx.Queries(), deps.Tx, deps.Checker, logger); err != nil {
-		t.Fatalf("seeder.Run() error = %v", err)
-	}
-
-	router := deps.Router()
+	router := testkit.New(t, testkit.WithLogger(logger)).Router
 
 	// Successful login (issued token must not be logged).
-	rec := doRequest(t, router, http.MethodPost, "/api/v1/login",
-		`{"email":"superadmin@ims.com","password":"secret123","device":"redact-device"}`)
+	rec := apiRequest(t, router, http.MethodPost, "/api/v1/login",
+		`{"email":"superadmin@ims.com","password":"secret123","device":"redact-device"}`, "", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("login status = %d body = %s", rec.Code, rec.Body.String())
 	}
@@ -73,8 +47,8 @@ func TestNoSecretsInLogs(t *testing.T) {
 
 	// Failed login with a distinctive wrong password.
 	const wrongPassword = "wrongpass-9f3a1b"
-	fail := doRequest(t, router, http.MethodPost, "/api/v1/login",
-		`{"email":"superadmin@ims.com","password":"`+wrongPassword+`","device":"redact-device"}`)
+	fail := apiRequest(t, router, http.MethodPost, "/api/v1/login",
+		`{"email":"superadmin@ims.com","password":"`+wrongPassword+`","device":"redact-device"}`, "", nil)
 	if fail.Code == http.StatusOK {
 		t.Fatalf("failed login unexpectedly succeeded")
 	}
