@@ -1,10 +1,10 @@
 # AGENTS.md — Working Guide for This Repository
 
 Instructions for AI coding agents (and humans) working on the IMS Go API Starter. Read this before
-writing code. Architecture detail lives in [`docs/architecture.md`](docs/architecture.md); the
-developer guide is [`docs/developer-guide.md`](docs/developer-guide.md) and per-phase notes live in
-[`specs/`](specs/README.md). Task recipes live in **skills**: `.agents/skills/` (canonical) and the
-identical copy in `.claude/skills/` (`make skills-sync` copies, `make gen-check` fails on drift).
+writing code. Architecture detail lives in [`docs/architecture.md`](docs/architecture.md) and the
+developer guide is [`docs/developer-guide.md`](docs/developer-guide.md). Task recipes live in
+**skills**: `.agents/skills/` (canonical) and the identical copy in `.claude/skills/`
+(`make skills-sync` copies, `make gen-check` fails on drift).
 
 | Skill | Use when |
 |---|---|
@@ -25,9 +25,8 @@ identical copy in `.claude/skills/` (`make skills-sync` copies, `make gen-check`
   logs, exceptions, queue, backups, commands, inspector (routes, roles, config, packages),
   system, audit log, tenants, sessions, settings, feature flags, files, developers, playground;
   Ctrl+K command palette.
-- **Implemented phases:** 0–7, 9–20. Phase 20 finished the dashboard; remaining work is listed in
-  each spec's "Deferred" section (e.g. enforcing `tenants.is_active`, dashboard frontend tests,
-  golangci-lint v2).
+- **Known gaps** (do not assume they exist): `tenants.is_active` is not enforced at request time,
+  the dashboard has no frontend test suite, golangci-lint is still v1.
 
 ## Golden commands
 
@@ -51,7 +50,7 @@ go test -count=1 -race -p 2 ./...   # -p 2 locally: parallel race builds can exh
 ```
 
 Finish work with the `verify-changes` skill. Commit only when the user asks; then one commit per
-phase/feature with a message that says what changed and why.
+feature with a message that says what changed and why.
 
 ## Repository map
 
@@ -92,7 +91,6 @@ internal/
 api/openapi.yaml              canonical API contract (served at /docs)
 migrations/                   goose SQL, embedded (also sqlc's schema source)
 sql/queries/                  sqlc queries
-specs/                        per-phase specs (decisions + implementation notes + deferred)
 ```
 
 ## Module anatomy (the pattern to follow)
@@ -148,21 +146,20 @@ Rules of the layering (enforced by review and `route_permissions_integration_tes
 
 ### Adding a new module (checklist — details in the `add-module` skill)
 
-1. Read the owning `specs/phase-N-*.md`.
-2. Prefer `ims gen module --name=x --fields="..."` (writes migration, queries, model, repository,
+1. Prefer `ims gen module --name=x --fields="..."` (writes migration, queries, model, repository,
    service, request, handler, routes, service test and OpenAPI regions), then adapt.
-3. Migration + queries (`db-change` skill); `make sqlc`.
-4. Service: tenancy from `tenancy.Scope`, stamping actor/tenant, `activity.Recorder` for changes
+2. Migration + queries (`db-change` skill); `make sqlc`.
+3. Service: tenancy from `tenancy.Scope`, stamping actor/tenant, `activity.Recorder` for changes
    tenant admins should see.
-5. Handler + routes with `h.can(...)`; mount in `internal/app/routes.go`, wire in
+4. Handler + routes with `h.can(...)`; mount in `internal/app/routes.go`, wire in
    `internal/app/wiring.go`.
-6. Permissions in `internal/authz/catalog.go` (+ `AdminTenantPermissions` group if tenant admins
+5. Permissions in `internal/authz/catalog.go` (+ `AdminTenantPermissions` group if tenant admins
    get it); `permission:sync`.
-7. OpenAPI: `ims gen openapi --module=<name>` (or hand-write outside the generated regions);
+6. OpenAPI: `ims gen openapi --module=<name>` (or hand-write outside the generated regions);
    `make openapi-check`.
-8. Tests: unit tests with fakes; an integration test with `testkit` including a cross-tenant
+7. Tests: unit tests with fakes; an integration test with `testkit` including a cross-tenant
    isolation check.
-9. Update the phase spec (checklist, implementation notes).
+8. Record non-obvious decisions in `docs/architecture.md` §11 and the list below.
 
 ## Route groups (registered in `internal/app/routes.go`)
 
@@ -274,7 +271,7 @@ Keep this list accurate; add to it when you make a non-obvious choice (also upda
 
 ## When a task is ambiguous
 
-1. Check the relevant `specs/phase-N-*.md` and `docs/architecture.md`.
-2. Prefer the established pattern in this codebase over inventing a new one.
-3. Record decisions in the spec's implementation notes and, if architectural, in
-   `docs/architecture.md`.
+1. Check `docs/architecture.md` (§11 lists the deliberate decisions) and the developer guide.
+2. Prefer the established pattern in this codebase over inventing a new one — the reference
+   modules are `branches` (small), `identity` (rich) and `billing` (big).
+3. Record a new non-obvious decision in `docs/architecture.md` §11 and in the list above.

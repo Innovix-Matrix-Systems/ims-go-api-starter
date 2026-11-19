@@ -37,8 +37,8 @@ DROP TABLE example;
    `ADD CONSTRAINT ... NOT VALID` (see `00020_indexes_and_constraints.sql`).
 4. Comments must not contain the literal `+goose` (goose parses it as a directive).
 5. Apply: `go run ./cmd/app migrate` (also River); check `go run ./cmd/app migrate:status`.
-   The local API applies pending migrations when it starts in `local`, but run `migrate` yourself
-   after adding one.
+   Migrations never run on boot; `make dev` runs `migrate` once before starting, so run it yourself
+   after adding one while `make dev` is already running.
 
 ## Adding or editing queries
 

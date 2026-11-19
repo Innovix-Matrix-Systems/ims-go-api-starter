@@ -36,7 +36,7 @@ migration job) before rolling the units.
 ## SQLite
 
 Not supported in v1 (PostgreSQL only). The SQLite adapter is deferred to a future version; see
-`specs/phase-7-*.md` and `docs/architecture.md` §11.
+`docs/architecture.md` §11.
 
 ## Recovering from a failed migration
 

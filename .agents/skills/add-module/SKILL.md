@@ -1,6 +1,6 @@
 ---
 name: add-module
-description: Use when adding a new feature/CRUD module to this Go starter (internal/modules/<name>), adding an endpoint to an existing module, or porting a Laravel module — covers the generator, migration, sqlc queries, repository, service, handler (httpx.Kit), routes with permissions, wiring, OpenAPI, activity log, testkit tests and spec updates.
+description: Use when adding a new feature/CRUD module to this Go starter (internal/modules/<name>), adding an endpoint to an existing module, or porting a Laravel module — covers the generator, migration, sqlc queries, repository, service, handler (httpx.Kit), routes with permissions, wiring, OpenAPI, activity log and testkit tests.
 ---
 
 # Adding a module (or an endpoint)
@@ -24,7 +24,8 @@ decimal bool date datetime json`; `?` = optional.
 
 ## 2. Order of work (never skip steps)
 
-1. **Spec** — `specs/phase-N-*.md` owns the feature. If it is a stub, write goal/scope/decisions.
+1. **Decide the shape** — tenant-scoped or global, branch-scoped or not, which permissions,
+   which changes belong in the activity log. Note non-obvious choices for step 14.
 2. **Migration + queries** — follow the `db-change` skill. Scoped tables carry `tenant_id`
    (and `branch_id`), audit columns, `deleted_at`, partial unique indexes. Single-row queries
    take the tenant predicate `(@all_tenants::boolean OR tenant_id = @tenant_id)`.
@@ -101,7 +102,8 @@ decimal bool date datetime json`; `?` = optional.
     A route without `can:` fails `route_permissions_integration_test.go` unless it is meant to be
     open to every authenticated user — then add it to that test's allowlist with a reason.
 13. **Verify** — the `verify-changes` skill.
-14. **Record** — tick the spec checklist; note deviations and deferred items.
+14. **Record** — add non-obvious decisions to `docs/architecture.md` §11 (and `AGENTS.md`);
+    update the developer guide if you introduced a new pattern.
 
 ## Gotchas
 

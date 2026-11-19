@@ -1,5 +1,9 @@
 # Codebase Review — IMS Go API Starter
 
+> **Historical snapshot.** This review describes the code at commit `1f55eeb`. Its findings were
+> fixed afterwards (see `specs/` for what changed and what was deliberately deferred); file paths
+> and line numbers below refer to that commit, not to the current code.
+
 **Reviewed:** commit `1f55eeb` ("Update ci.yml"), working tree clean
 **Scope:** entire repository — Go backend (314 files), SQL layer (17 migrations / 18 query files / 243 named queries), OpenAPI contract, developer-dashboard SPA (50 files), CI/CD, deployment scripts, and all documentation.
 **Method:** static review of every package in 9 parallel deep-dive passes, plus objective verification (build, vet, gofmt, lint, unit tests, statement coverage) and manual end-to-end verification of every Critical and High security claim against the source. **Second pass:** every Critical and High finding was independently re-verified line-by-line against the source (route → middleware → permission catalog → default role → service → SQL), with preconditions and mitigations traced; several claims were corrected, sharpened or downgraded — see §7b for the verification log.

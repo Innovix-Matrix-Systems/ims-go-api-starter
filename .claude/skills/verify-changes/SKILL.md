@@ -65,5 +65,6 @@ inline JSON quotes — pass bodies with `--data-binary "@file.json"`.
 - Seeding: `db:seed` twice reports no duplicates.
 - New routes are protected (`route_permissions_integration_test.go`) and documented
   (`openapi-check`).
-- Specs: tick the phase checklist; record implementation notes, decisions and deferred items.
-- Commit only when the user asks: one commit per phase/feature, message says what and why.
+- Docs: behavior or workflow changes are reflected in `docs/`, `AGENTS.md` and the skills
+  (then `make skills-sync`).
+- Commit only when the user asks: one commit per feature, message says what and why.

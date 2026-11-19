@@ -92,11 +92,11 @@ token without permissions.
 
 **Pagination** — `page, perPage, offset := httpx.PageParams(r)` (`per_page` default 10, max 100),
 whitelist ordering with `httpx.OrderParams(r, "id", "name", "created_at")`, respond with
-`responder.Paginated(w, r, status, data, meta, links)` where `meta, links := httpx.NewPagination(r, page, perPage, total)`.
+`h.Paginated(w, r, status, data, meta, links)` where `meta, links := httpx.NewPagination(r, page, perPage, total)`.
 
 **Cursor pagination** — the notification feed and developer-dashboard streams (requests, logs,
 exceptions, jobs, sessions, actions, backups). They use `limit` (default 20/25, max 100) + `cursor`,
-not `page`/`per_page`, and respond with `responder.Cursor(w, r, status, data, meta, links)`; links
+not `page`/`per_page`, and respond with `h.Cursor(w, r, status, data, meta, links)`; links
 come from `httpx.CursorURL`. Management lists (users, developers, targets, files) use
 `page`/`per_page`.
 
@@ -211,8 +211,8 @@ Products *product.Handler
 
 // NewDependencies, inside the deps literal:
 Products: product.NewHandler(
-    product.NewService(product.NewRepository(queries), checker),
-    binder, validator, responder,
+    product.NewService(product.NewRepository(queries)),
+    checker, binder, validator, responder,
 ),
 ```
 
@@ -250,10 +250,10 @@ Step 6 — tests:
 
 - The generated `service_test.go` covers tenant scoping with a fake repository; extend it for your
   business rules.
-- Add a `dbtest` repository integration test and a cross-tenant isolation test (model it on
-  `internal/modules/branches/isolation_integration_test.go`). Call `dbtest.Clean(t, pool, "products", ...)`
-  with the tables you own.
-- Add an HTTP flow to `internal/app/*_integration_test.go` for critical routes.
+- Add an integration test with `testkit` (§8a) that covers the happy path **and** cross-tenant
+  isolation: a second tenant's admin gets 404 on read, update and delete.
+- New routes must declare a permission, or `internal/app/route_permissions_integration_test.go`
+  fails; routes open to every authenticated user go in that test's allowlist with a reason.
 
 Step 7 — verify:
 
@@ -276,9 +276,9 @@ If you also touched the dashboard, run `make web-typecheck` and `make web-build`
 
 1. `request.go` — add the request/response DTO + mapper.
 2. `service.go` — add the method (tenancy, rules, `WithTx` if it writes).
-3. `handler.go` — `MustCan` → bind → validate → service → respond.
+3. `handler.go` — `h.Bind` → service → `h.Data` / `h.Error` (`h.PathID` for `{id}`).
 4. `repository.go` + `sql/queries/<name>.sql` — add the query (only if it needs new SQL); `make sqlc`.
-5. `routes.go` — register the path.
+5. `routes.go` — register the path with its permission: `r.With(h.can(PermX)).Post(...)`.
 6. `api/openapi.yaml` — document it by hand, or `ims gen openapi --module=<name>` if the module
    follows the scaffold convention (this only refreshes the managed region).
 7. `make openapi` — regenerate `internal/contract` from the spec; `make openapi-check` verifies
@@ -362,5 +362,5 @@ tests; `app.Deps` and `app.Pool` are there for anything else.
 - [ ] `make gen-check` green (sqlc/OpenAPI output committed).
 - [ ] `make check` green; `make test-integration` green when a DSN is available.
 - [ ] Dashboard touched → `make web-typecheck` + `make web-build` green.
-- [ ] Spec's implementation notes updated for behavior/scope changes.
+- [ ] Non-obvious decisions recorded in `docs/architecture.md` §11 (and `AGENTS.md`).
 - [ ] No secrets logged; tokens/passwords never appear in logs or payloads.
