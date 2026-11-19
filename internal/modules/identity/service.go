@@ -20,7 +20,9 @@ import (
 
 // LimitChecker enforces billing plan limits for tenant resources.
 type LimitChecker interface {
-	RequireWithinLimitByName(ctx context.Context, tenantID int64, feature string, current int64) error
+	// QuotaFor reads the plan limit (before any lock) and returns a check
+	// that only compares numbers.
+	QuotaFor(ctx context.Context, tenantID int64, feature string) (func(current int64) error, error)
 }
 
 // Service implements user business rules.
@@ -214,15 +216,25 @@ func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64
 // TxManager the count and the insert share one transaction holding a
 // per-tenant advisory lock, so concurrent creates cannot exceed the quota.
 func (s *Service) withUserQuota(ctx context.Context, tenantID int64, create func(repo Repository) error) error {
+	// The plan limit is read before the lock; inside it only the count runs,
+	// on the locked transaction.
+	var allow func(current int64) error // nil: no limit to enforce
+	if tenantID != 0 && s.limits != nil {
+		quota, err := s.limits.QuotaFor(ctx, tenantID, "users.max")
+		if err != nil {
+			return err
+		}
+		allow = quota
+	}
 	check := func(repo Repository) error {
-		if tenantID == 0 || s.limits == nil {
+		if allow == nil {
 			return nil
 		}
 		count, err := repo.Count(ctx, ListFilter{TenantID: tenantID})
 		if err != nil {
 			return err
 		}
-		return s.limits.RequireWithinLimitByName(ctx, tenantID, "users.max", count)
+		return allow(count)
 	}
 	if tenantID == 0 || s.tx == nil {
 		if err := check(s.repo); err != nil {

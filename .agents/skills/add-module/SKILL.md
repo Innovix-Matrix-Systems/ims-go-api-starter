@@ -34,7 +34,8 @@ decimal bool date datetime json`; `?` = optional.
    (`scope.Filter()`; a zero filter matches nothing). `pgx.ErrNoRows` →
    `apperr.Newf(apperr.ResourceNotFound, ...)`; other errors → `database.MapError("x.op", err)`.
 5. **service.go** — business rules, tenancy from the `tenancy.Scope` argument, stamping
-   tenant/actor, transactions (`TxManager.WithTx`; plan limits under `WithTenantLock`), and
+   tenant/actor, transactions (`TxManager.WithTx`; plan limits: `QuotaFor` before `WithTenantLock`, then only
+   `q`-bound queries inside the lock), and
    `s.activity.Record(ctx, activity.Entry{...})` after changes tenant admins should see.
    **No permission checks here** — those are on the route. Optional collaborators are
    `WithX(...)` options so unit tests can leave them out.

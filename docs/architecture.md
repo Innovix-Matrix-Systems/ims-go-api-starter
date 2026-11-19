@@ -331,7 +331,9 @@ The running list (keep it in sync with `AGENTS.md`):
     bucket per flag, so raising the percentage only adds users (see §6).
 26. **Quotas under advisory locks.** `users.max`/`branches.max` count-check-insert runs under a
     per-tenant Postgres advisory lock (`TxManager.WithTenantLock`), so concurrent creates cannot
-    exceed a plan limit.
+    exceed a plan limit. The plan limit is read before the lock (`Guard.QuotaFor`) and every
+    query inside it runs on the locked transaction, so lock holders never wait for a second pool
+    connection (`TestQuotaUnderConcurrency` runs 8 creates on a 3-connection pool).
 27. **Dashboard audit.** Every dashboard mutation and dashboard sign-in (including failures, never
     the password) is written to `dev_actions` with IP and browser, kept for
     `DEV_DASHBOARD_AUDIT_RETENTION_DAYS`.

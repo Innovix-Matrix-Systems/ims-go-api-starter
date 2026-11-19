@@ -143,7 +143,9 @@ Rules of the layering (enforced by review and `route_permissions_integration_tes
 4. Services are callable from HTTP, CLI, jobs and scheduled tasks — no `http.Request` below the
    handler. Optional collaborators are `WithX(...)` options (`WithTx`, `WithActivity`, ...).
 5. Repositories take explicit typed params (`tenancy.Filter`, `tenantID`); services own
-   transactions (`TxManager.WithTx`, `WithTenantLock` for quota checks).
+   transactions (`TxManager.WithTx`, `WithTenantLock` for quota checks). Inside a lock, every
+   query runs on the locked transaction (`q`); read anything else (like the plan limit) before
+   taking it, or concurrent requests can fill the pool and deadlock.
 
 ### Adding a new module (checklist — details in the `add-module` skill)
 
@@ -226,7 +228,7 @@ global → default, groups + order editable in the dashboard. Flags: catalog in
 file gets a URL; private files go through the authorized download route.
 
 **Billing** — `service.Guard` resolves features/limits (overrides → package); resource services
-enforce limits through small `LimitChecker` interfaces under `WithTenantLock`. Gateway callbacks
+read the limit with `LimitChecker.QuotaFor` before `WithTenantLock`, then count and compare inside it. Gateway callbacks
 are always confirmed with the gateway. Staff move a tenant onto a plan with `SubscriptionService.Assign`
 (`POST /billing/internal/tenants/{tenant_id}/subscription`); an override set to `null` is removed.
 Billing management belongs in the product's admin app, not the developer dashboard.
