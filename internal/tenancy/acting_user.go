@@ -150,6 +150,7 @@ func actAsUser(opts ResolveOptions, next http.Handler, w http.ResponseWriter, r 
 		return
 	}
 
+	httpx.NoteUser(ctx, target.UserID, caller.UserID)
 	actingCtx := authn.WithIdentity(ctx, target)
 	recorder := &httpx.ResponseRecorder{ResponseWriter: w, Status: http.StatusOK}
 	defer func() {

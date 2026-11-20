@@ -211,6 +211,10 @@ changes). Public pre-sign-in routes use `tenancy.Public` (`X-Tenant-Code`). Impe
 not re-check permissions. Password reset and e-mail verification use single-use hashed tokens in
 the cache (`authn.Recovery`); responses never reveal whether an e-mail exists.
 
+**Who made a request, outside the chain** — middleware that wraps authentication (access log,
+telemetry) cannot see context values added inside it. They read `httpx.RequestInfoFrom(ctx)`,
+which `authn.Authenticate` (`httpx.NoteUser`) and `tenancy` (`httpx.NoteScope`) fill in.
+
 **Activity log** — services call `s.activity.Record(ctx, activity.Entry{TenantID, Action:
 "branch.created", Subject: "branch", SubjectID, Changes})` after a change succeeds. A nil recorder
 records nothing; actor, IP and request id come from the context; secret-looking keys are redacted.

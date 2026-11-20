@@ -23,6 +23,15 @@ All notable changes to this project are documented here. The format follows
   optionally `X-Branch-Id`) before sign-in; first endpoint `GET /api/v1/public/tenant`. Modules add
   their own with `RegisterPublicTenantRoutes`.
 
+### Fixed
+
+- **Request telemetry records who made the request.** Captured requests always had an empty
+  `user_id` and `tenant_id`: telemetry read them from its own outer request context, which the
+  authentication and tenancy layers never write to. They now fill an `httpx.RequestInfo` holder
+  that telemetry and the access log read after the handler. Requests made while acting as a user
+  also record `impersonator_id` (migration `00026`), shown as an "acting" chip in the dashboard;
+  the access log gains `user_id`, `tenant_id` and `impersonator_id`.
+
 ### Changed
 
 - Internal accounts without `activity.view.all` now get 403 on `GET /api/v1/activity` instead of

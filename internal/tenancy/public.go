@@ -111,6 +111,7 @@ func Public(opts PublicOptions) func(http.Handler) http.Handler {
 			}
 			ctx = context.WithValue(ctx, publicTenantKey{}, resolved)
 			ctx = WithScope(ctx, Scope{TenantID: tenant.ID, BranchID: branch.ID, Public: true})
+			httpx.NoteScope(ctx, tenant.ID, branch.ID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

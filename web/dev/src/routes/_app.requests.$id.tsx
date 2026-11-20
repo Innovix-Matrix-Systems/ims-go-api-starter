@@ -139,7 +139,16 @@ function RequestDetailPage() {
                 <dt>Duration</dt><dd>{formatDuration(request.duration_ms)}</dd>
                 <dt>IP</dt><dd>{request.ip ?? '—'}</dd>
                 <dt>User agent</dt><dd>{request.user_agent ?? '—'}</dd>
-                <dt>User</dt><dd>{request.user_id ?? '—'}</dd>
+                <dt>User</dt>
+                <dd>
+                  {request.user_id ?? '—'}
+                  {request.impersonator_id != null && (
+                    <>
+                      {' '}
+                      <Chip tone="purple">acted as by user {request.impersonator_id}</Chip>
+                    </>
+                  )}
+                </dd>
                 <dt>Tenant / branch</dt><dd>{request.tenant_id ?? '—'} / {request.branch_id ?? '—'}</dd>
                 <dt>Captured</dt><dd>{formatDateTime(request.created_at)}</dd>
               </dl>

@@ -32,6 +32,7 @@ func Authenticate(auth Authenticator, responder *httpx.Responder) func(http.Hand
 				responder.Error(w, r, apperr.New(apperr.AccountDeactivated, "Your account is deactivated."))
 				return
 			}
+			httpx.NoteUser(r.Context(), identity.UserID, 0)
 			next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), identity)))
 		})
 	}

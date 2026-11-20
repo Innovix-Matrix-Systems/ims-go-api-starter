@@ -5476,8 +5476,16 @@ export interface components {
             request_bytes: number;
             /** Format: int64 */
             response_bytes: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description The user the request ran as (the user acted as, with X-Acting-User).
+             */
             user_id?: number | null;
+            /**
+             * Format: int64
+             * @description Who was really calling when acting as a user.
+             */
+            impersonator_id?: number | null;
             /** Format: int64 */
             tenant_id?: number | null;
             ip?: string | null;

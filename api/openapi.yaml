@@ -6201,7 +6201,8 @@ components:
         duration_ms: {type: number}
         request_bytes: {type: integer, format: int64}
         response_bytes: {type: integer, format: int64}
-        user_id: {type: integer, format: int64, nullable: true}
+        user_id: {type: integer, format: int64, nullable: true, description: "The user the request ran as (the user acted as, with X-Acting-User)."}
+        impersonator_id: {type: integer, format: int64, nullable: true, description: Who was really calling when acting as a user.}
         tenant_id: {type: integer, format: int64, nullable: true}
         ip: {type: string, nullable: true}
         created_at: {type: string, format: date-time}

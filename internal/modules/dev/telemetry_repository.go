@@ -14,19 +14,22 @@ import (
 
 // TelemetryRequestSummary is the list representation of a captured request.
 type TelemetryRequestSummary struct {
-	ID            int64     `json:"id"`
-	RequestID     string    `json:"request_id"`
-	Method        string    `json:"method"`
-	Path          string    `json:"path"`
-	Route         string    `json:"route"`
-	Status        int32     `json:"status"`
-	DurationMS    float64   `json:"duration_ms"`
-	RequestBytes  int64     `json:"request_bytes"`
-	ResponseBytes int64     `json:"response_bytes"`
-	UserID        *int64    `json:"user_id"`
-	TenantID      *int64    `json:"tenant_id"`
-	IP            *string   `json:"ip"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID            int64   `json:"id"`
+	RequestID     string  `json:"request_id"`
+	Method        string  `json:"method"`
+	Path          string  `json:"path"`
+	Route         string  `json:"route"`
+	Status        int32   `json:"status"`
+	DurationMS    float64 `json:"duration_ms"`
+	RequestBytes  int64   `json:"request_bytes"`
+	ResponseBytes int64   `json:"response_bytes"`
+	UserID        *int64  `json:"user_id"`
+	// ImpersonatorID is set when the request was made while acting as
+	// user_id (X-Acting-User).
+	ImpersonatorID *int64    `json:"impersonator_id"`
+	TenantID       *int64    `json:"tenant_id"`
+	IP             *string   `json:"ip"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // TelemetryRequest is the full request record with redacted payloads.
@@ -119,19 +122,20 @@ type RequestFilter struct {
 
 func mapTelemetryRequestSummary(row dbgen.DevRequest) TelemetryRequestSummary {
 	return TelemetryRequestSummary{
-		ID:            row.ID,
-		RequestID:     row.RequestID,
-		Method:        row.Method,
-		Path:          row.Path,
-		Route:         row.Route,
-		Status:        row.Status,
-		DurationMS:    row.DurationMs,
-		RequestBytes:  row.RequestBytes,
-		ResponseBytes: row.ResponseBytes,
-		UserID:        row.UserID,
-		TenantID:      row.TenantID,
-		IP:            row.Ip,
-		CreatedAt:     row.CreatedAt.Time,
+		ID:             row.ID,
+		RequestID:      row.RequestID,
+		Method:         row.Method,
+		Path:           row.Path,
+		Route:          row.Route,
+		Status:         row.Status,
+		DurationMS:     row.DurationMs,
+		RequestBytes:   row.RequestBytes,
+		ResponseBytes:  row.ResponseBytes,
+		UserID:         row.UserID,
+		ImpersonatorID: row.ImpersonatorID,
+		TenantID:       row.TenantID,
+		IP:             row.Ip,
+		CreatedAt:      row.CreatedAt.Time,
 	}
 }
 

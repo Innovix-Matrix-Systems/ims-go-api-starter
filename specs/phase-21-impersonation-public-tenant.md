@@ -1,6 +1,6 @@
 # Phase 21 — Act-as-user impersonation, system audit log & public tenant resolution
 
-**Status:** In progress (implemented on `feat/phase-21-impersonation`; telemetry item open)
+**Status:** Done (2026-11-21)
 **Source:** project-owner review (2026-11-20); closes review **M61** (`X-Tenant-Code` documented, never read)
 **Depends on:** Phase 2 (tokens, tenancy), Phase 12 (`InternalOnly`), Phase 17 (activity log)
 
@@ -220,7 +220,7 @@ Three layers, so that nothing done while acting can go unrecorded:
 - [x] **Survives tenant deletion:** the `impersonation.*` rows have no tenant, so deleting the
       tenant (which cascades its own rows) keeps the record of who acted inside it.
 - [x] **Retention:** one window for everything, `ACTIVITY_RETENTION_DAYS`.
-- [ ] **Telemetry:** `telemetry.RequestEntry` and the access log gain `impersonator_id`; the
+- [x] **Telemetry:** `telemetry.RequestEntry` and the access log gain `impersonator_id`; the
       developer dashboard's request list shows an "acting as" badge. This is debugging aid only; the
       audit record is the activity log.
 - [x] **OpenAPI:** the `tenant_id`, `impersonator_id` and `impersonated` query parameters; the
@@ -335,10 +335,14 @@ Three layers, so that nothing done while acting can go unrecorded:
    attempts by tenant users show up in the system log.
 4. **`X-Tenant-Code` had no OpenAPI parameter** to reuse (it was removed earlier); `TenantCode`
    and `BranchId` parameters were added.
-5. **Telemetry `impersonator_id` is not done.** Request telemetry reads the identity from the
-   outer request context, which never holds it, so `user_id`/`tenant_id` are always empty in
-   captured requests today. That pre-existing bug needs fixing first (a mutable holder put in the
-   context by the telemetry middleware); the audit record does not depend on it.
+5. **Telemetry needed a fix first.** Request telemetry read the identity and scope from its own
+   (outer) request context, which never holds them: context values only travel down the chain,
+   so every captured request had an empty `user_id`/`tenant_id`. Fixed with `httpx.RequestInfo`,
+   a holder the access log and telemetry put in the context before the handler runs;
+   `authn.Authenticate` and `tenancy` write the user, tenant, branch and impersonator into it.
+   `dev_requests.impersonator_id` (migration `00026`) stores it, the dashboard's request list and
+   detail show an "acting" chip, and the access log now logs `user_id`, `tenant_id` and
+   `impersonator_id`. Telemetry no longer imports `authn` or `tenancy`.
 6. **Public branch cache:** the branch name and the tenant's first branch are cached under
    `public_branch:*` / `public_first_branch:*`, dropped by `InvalidateBranchCheck`, instead of
    reusing `branch_check:*` (which holds only a boolean).

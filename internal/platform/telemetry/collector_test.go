@@ -12,6 +12,7 @@ import (
 type recordingSink struct {
 	mu       sync.Mutex
 	requests int
+	entries  []RequestEntry
 	logs     int
 	flushed  chan struct{}
 }
@@ -19,6 +20,7 @@ type recordingSink struct {
 func (s *recordingSink) InsertRequests(entries []RequestEntry) error {
 	s.mu.Lock()
 	s.requests += len(entries)
+	s.entries = append(s.entries, entries...)
 	s.mu.Unlock()
 	s.signal()
 	return nil

@@ -200,6 +200,7 @@ func tenantCheckKey(tenantID int64) string {
 }
 
 func serve(next http.Handler, w http.ResponseWriter, r *http.Request, scope Scope) {
+	httpx.NoteScope(r.Context(), scope.EffectiveTenantID(), scope.EffectiveBranchID())
 	next.ServeHTTP(w, r.WithContext(WithScope(r.Context(), scope)))
 }
 
