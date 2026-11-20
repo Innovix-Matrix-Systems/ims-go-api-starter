@@ -427,6 +427,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Users]
       summary: List users
@@ -472,6 +473,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Users]
       summary: Get the authenticated user's profile
@@ -488,6 +490,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Users]
       summary: Update the authenticated user's profile
@@ -516,6 +519,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Users]
       summary: Update a user's avatar
@@ -558,6 +562,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Users]
       summary: Change the authenticated user's password
@@ -585,6 +590,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Users]
       summary: Assign roles to a user
@@ -608,6 +614,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Users]
       summary: Set another user's password (admin)
@@ -631,6 +638,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     patch:
       tags: [Users]
       summary: Switch a user's active branch
@@ -651,6 +659,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Users]
       summary: Queue a background user import (CSV/XLSX upload)
@@ -682,6 +691,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Users]
       summary: Queue a background user export
@@ -706,6 +716,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Users]
       summary: Download the CSV user-import template
@@ -725,6 +736,7 @@ paths:
       - $ref: "#/components/parameters/PathID"
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Users]
       summary: Get a user
@@ -1087,15 +1099,33 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Activity]
-      summary: The tenant's activity log, newest first
+      summary: The activity log, newest first
       description: |
-        Who did what in the resolved tenant (user, role, branch, setting and
-        subscription changes). Platform accounts without an acting tenant see
-        every tenant. Requires `activity.view`. Secrets in `changes` are redacted.
+        Who did what (user, role, branch, setting and subscription changes).
+        Secrets in `changes` are redacted.
+
+        - With `activity.view`, a tenant user reads their own tenant only.
+        - With `activity.view.all`, an internal user reads every tenant and the
+          system audit log (entries with `tenant_id: null`: internal changes and
+          `impersonation.started`, `impersonation.request`, `impersonation.denied`).
+          `tenant_id` narrows it to one tenant or to `system`. With X-Acting-Tenant
+          they read that tenant only. An internal account without it gets 403.
+
+        `by_staff` is true when staff made the change while acting as the actor.
+        Only `activity.view.all` readers get who that was (`impersonator`).
       operationId: listActivity
       parameters:
+        - name: tenant_id
+          in: query
+          required: false
+          schema: {type: string}
+          description: A tenant id, or `system` for the system audit log only (`activity.view.all` only).
+          example: system
+        - {name: impersonator_id, in: query, required: false, schema: {type: integer, format: int64}, description: Entries made by this staff member while acting as a user (`activity.view.all` only).}
+        - {name: impersonated, in: query, required: false, schema: {type: boolean}, description: Only act-as entries (`activity.view.all` only).}
         - {name: cursor, in: query, required: false, schema: {type: string}, description: Opaque cursor from `meta.next_cursor`.}
         - {name: per_page, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 25}}
         - {name: subject_type, in: query, required: false, schema: {type: string}, example: user}
@@ -1116,6 +1146,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Branches]
       summary: List branches in the resolved tenant
@@ -1158,6 +1189,7 @@ paths:
       - $ref: "#/components/parameters/PathID"
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Branches]
       summary: Get a branch
@@ -1204,6 +1236,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Roles & Permissions]
       summary: List tenant roles
@@ -1239,6 +1272,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Roles & Permissions]
       summary: Assign permissions to a tenant role
@@ -1263,6 +1297,7 @@ paths:
       - $ref: "#/components/parameters/PathID"
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Roles & Permissions]
       summary: Get a role
@@ -1530,6 +1565,42 @@ paths:
         "403": *forbidden
         "404": *notFound
 
+  /api/v1/public/tenant:
+    parameters:
+      - {$ref: "#/components/parameters/TenantCode"}
+      - {$ref: "#/components/parameters/BranchId"}
+    get:
+      tags: [Tenants]
+      summary: Public tenant details for a sign-in page
+      description: |
+        No sign-in. The tenant comes from X-Tenant-Code, the branch from X-Branch-Id
+        or, without it, the tenant's first branch.
+      operationId: getPublicTenant
+      security: []
+      responses:
+        "200":
+          description: The tenant and branch.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [name, code, branch]
+                    properties:
+                      name: {type: string}
+                      code: {type: string}
+                      branch:
+                        type: object
+                        required: [id, name]
+                        properties:
+                          id: {type: integer, format: int64}
+                          name: {type: string}
+        "422": *validationFailed
+        "429": *tooManyRequests
+
   /api/v1/public/packages:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
@@ -1666,6 +1737,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Billing]
       summary: Current subscription status for the resolved tenant
@@ -1682,6 +1754,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Billing]
       summary: List the resolved tenant's payments
@@ -1701,6 +1774,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Billing]
       summary: Subscribe the resolved tenant to a package
@@ -1965,6 +2039,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Notifications]
       summary: Cursor-paginated notification feed for the caller
@@ -1997,6 +2072,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Notifications]
       summary: Mark all notifications as read for the caller
@@ -2009,6 +2085,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     post:
       tags: [Notifications]
       summary: Mark one notification as read for the caller
@@ -2271,6 +2348,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Data Processing]
       summary: List data-processing jobs (admin)
@@ -2291,6 +2369,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Data Processing]
       summary: List the caller's data-processing jobs
@@ -2311,6 +2390,7 @@ paths:
       - $ref: "#/components/parameters/PathJobID"
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Data Processing]
       summary: Get a data-processing job
@@ -2330,6 +2410,7 @@ paths:
       - $ref: "#/components/parameters/PathJobID"
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Data Processing]
       summary: Download a completed job's output file
@@ -2348,6 +2429,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Data Processing]
       summary: Get the effective cleanup retention window
@@ -2386,6 +2468,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Settings]
       summary: Get the caller's effective settings, grouped
@@ -2409,6 +2492,7 @@ paths:
       - $ref: "#/components/parameters/PathKey"
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     patch:
       tags: [Settings]
       summary: Update the caller's tenant override for a setting
@@ -2508,6 +2592,7 @@ paths:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
       - {$ref: "#/components/parameters/ActingBranch"}
+      - {$ref: "#/components/parameters/ActingUser"}
     get:
       tags: [Feature Flags]
       summary: Get the caller's effective feature flags
@@ -4479,6 +4564,32 @@ components:
         Optional super-admin impersonation branch id; paired with X-Acting-Tenant. Sent
         only when impersonating — there is no default.
       schema: {type: integer, format: int64}
+    ActingUser:
+      name: X-Acting-User
+      in: header
+      required: false
+      description: |
+        Act as this user for one request (needs `user.impersonate`): their roles,
+        permissions, tenant and branch apply. Cannot be combined with the other acting
+        headers (422). Refused with 403 `IMPERSONATION_FORBIDDEN` for yourself, inactive
+        or platform accounts and users who can act as others. Account changes (profile,
+        password, avatar, branch switch) are refused while acting. Every request is
+        written to the system audit log.
+      schema: {type: integer, format: int64}
+    TenantCode:
+      name: X-Tenant-Code
+      in: header
+      required: true
+      description: |
+        The tenant's public code. A missing, unknown or inactive tenant gets the same
+        422 `TENANT_CONTEXT_NOT_RESOLVED`.
+      schema: {type: string}
+    BranchId:
+      name: X-Branch-Id
+      in: header
+      required: false
+      description: Optional branch of that tenant; without it the tenant's first branch is used.
+      schema: {type: integer, format: int64}
 
   responses:
     BadRequest: *badRequest
@@ -4886,16 +4997,25 @@ components:
 
     ActivityEntry:
       type: object
-      required: [id, tenant_id, actor, action, subject_type, subject_id, changes, ip, request_id, created_at]
+      required: [id, tenant_id, actor, by_staff, impersonator, action, subject_type, subject_id, changes, ip, request_id, created_at]
       properties:
         id: {type: integer, format: int64}
-        tenant_id: {type: integer, format: int64, nullable: true}
+        tenant_id: {type: integer, format: int64, nullable: true, description: Null for system audit log entries.}
         actor:
           type: object
           nullable: true
           required: [id, name]
           properties:
             id: {type: integer, format: int64}
+            name: {type: string}
+        by_staff: {type: boolean, description: True when staff did this while acting as the actor.}
+        impersonator:
+          type: object
+          nullable: true
+          description: Who acted as the actor. Null unless the reader holds `activity.view.all`.
+          required: [id, name]
+          properties:
+            id: {type: integer, format: int64, description: 0 when that account was deleted.}
             name: {type: string}
         action: {type: string, example: user.created}
         subject_type: {type: string, example: user}

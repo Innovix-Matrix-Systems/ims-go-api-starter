@@ -75,3 +75,14 @@ SELECT EXISTS (
 
 -- name: SyncBranchIDSequence :exec
 SELECT setval(pg_get_serial_sequence('branches', 'id'), (SELECT COALESCE(MAX(id), 1) FROM branches));
+
+-- name: FirstBranchOfTenant :one
+-- The branch public tenant routes use when the client sends no X-Branch-Id.
+SELECT id, name FROM branches
+WHERE tenant_id = @tenant_id AND deleted_at IS NULL
+ORDER BY id
+LIMIT 1;
+
+-- name: GetTenantBranchName :one
+SELECT name FROM branches
+WHERE id = @branch_id AND tenant_id = @tenant_id AND deleted_at IS NULL;

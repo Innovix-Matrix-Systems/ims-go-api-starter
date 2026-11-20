@@ -1,6 +1,6 @@
 # Phase 21 — Act-as-user impersonation, system audit log & public tenant resolution
 
-**Status:** Accepted
+**Status:** In progress (implemented on `feat/phase-21-impersonation`; telemetry item open)
 **Source:** project-owner review (2026-11-20); closes review **M61** (`X-Tenant-Code` documented, never read)
 **Depends on:** Phase 2 (tokens, tenancy), Phase 12 (`InternalOnly`), Phase 17 (activity log)
 
@@ -63,7 +63,7 @@ sit on the routes inside its group), and it already parses the acting headers.
 
 ### A. Act-as-user impersonation (`X-Acting-User`)
 
-- [ ] **Permission:** add `user.impersonate` to the catalog. The rule is simply **whoever holds
+- [x] **Permission:** add `user.impersonate` to the catalog. The rule is simply **whoever holds
       the permission may act as a user**; there is no role check.
   - It is `IsSystem`, so it is never granted to tenant roles (`AdminTenantPermissions` skips
     system permissions). Tenant admins cannot get it.
@@ -73,9 +73,9 @@ sit on the routes inside its group), and it already parses the acting headers.
     because every use is audited and the target refusals below still apply.
   - Any other internal role (support, staff) gets it by being assigned the permission through the
     normal internal role management.
-- [ ] **`authn.Identity` gains `ImpersonatorID int64`.** It is zero normally; when it is set,
+- [x] **`authn.Identity` gains `ImpersonatorID int64`.** It is zero normally; when it is set,
       `UserID` and the rest of the identity are the target's.
-- [ ] **`tenancy.Resolve`, a new first case:** when `X-Acting-User` is present, it runs before
+- [x] **`tenancy.Resolve`, a new first case:** when `X-Acting-User` is present, it runs before
       today's logic.
   1. The caller must hold `user.impersonate`. Otherwise 403.
   2. `X-Acting-User` together with `X-Acting-Tenant` or `X-Acting-Branch` gets 422: the target's
@@ -92,34 +92,34 @@ sit on the routes inside its group), and it already parses the acting headers.
   6. Continue down today's **tenant-user** path with the target. It requires a tenant and an active
      branch, uses the cached branch-belongs-to-tenant check, and produces
      `Scope{TenantID, BranchID}`. That code is reused, not copied.
-- [ ] **Where it applies:** only the tenant-resolved route group, because that is where
+- [x] **Where it applies:** only the tenant-resolved route group, because that is where
       `Resolve` is mounted. It never runs on:
   - the session routes: `/logout` deletes the token of the user in the context, so it would sign
     the *target* out;
   - `/dev`.
-- [ ] **Tenant-exempt routes:** `tenancy.Exempt()` answers 422 when `X-Acting-User` is present
+- [x] **Tenant-exempt routes:** `tenancy.Exempt()` answers 422 when `X-Acting-User` is present
       ("act-as is only available on tenant routes"). Otherwise an upload or other exempt call
       would silently run as the admin.
-- [ ] **Blocked while acting:** these return 403 `IMPERSONATION_FORBIDDEN` when
+- [x] **Blocked while acting:** these return 403 `IMPERSONATION_FORBIDDEN` when
       `ImpersonatorID != 0`, through a small `authn.DenyImpersonated` middleware mounted on them.
   - profile password change (`/user/profile/change-password`);
   - profile update and avatar (the target's own account data);
   - any future e-mail, OTP or account-deletion endpoint.
-- [ ] **Audit:** see §C. Act-as is not shippable without it.
-- [ ] **CORS:** add `X-Acting-User` to the default `CORS_ALLOWED_HEADERS`.
-- [ ] **OpenAPI:**
+- [x] **Audit:** see §C. Act-as is not shippable without it.
+- [x] **CORS:** add `X-Acting-User` to the default `CORS_ALLOWED_HEADERS`.
+- [x] **OpenAPI:**
   - a reusable `ActingUser` header parameter, added next to `ActingTenant`/`ActingBranch` on
     tenant-resolved paths;
   - the scaffold generator (`internal/scaffold/openapi.go`) emits it too;
   - the new error code.
-- [ ] **Docs:**
+- [x] **Docs:**
   - the tenancy guide replaces its impersonation table with the two-kinds table above;
   - the authentication guide gets an "Acting as a user" section;
   - permissions reference: regenerate it.
 
 ### B. Public tenant resolution
 
-- [ ] **`tenancy.Public(opts)` middleware:**
+- [x] **`tenancy.Public(opts)` middleware:**
   - `X-Tenant-Code` is required. Missing, unknown, soft-deleted or inactive (`is_active = false`)
     all give 422 `TENANT_CONTEXT_NOT_RESOLVED` with the same message, so codes cannot be
     probed by error text.
@@ -127,25 +127,25 @@ sit on the routes inside its group), and it already parses the acting headers.
   - Without it, the tenant's first branch (lowest id, not deleted) is used. A tenant without
     branches gets 422.
   - It produces `Scope{TenantID, BranchID, Public: true}`.
-- [ ] **`Scope.Public` (new field):** services can refuse writes that must not happen
+- [x] **`Scope.Public` (new field):** services can refuse writes that must not happen
       anonymously. `EffectiveTenantID`, `EffectiveBranchID` and `Filter` behave exactly as for a
       tenant user.
-- [ ] **Cache:**
+- [x] **Cache:**
   - code → `{id, is_active}` under `tenant_code:<code>` for `CheckTTL` (5 min);
   - invalidated by tenant update and delete (`tenancy.InvalidateTenantCode`), next to the existing
     `InvalidateTenantCheck`;
   - the branch check reuses `branch_check:*`.
-- [ ] **SQL:** `FirstBranchOfTenant :one`. `GetTenantByCode` already exists.
-- [ ] **Routes:**
+- [x] **SQL:** `FirstBranchOfTenant :one`. `GetTenantByCode` already exists.
+- [x] **Routes:**
   - a new `/api/v1/public` group in `internal/app/routes.go` with `tenancy.Public`, below the
     existing global public routes (`/public/packages` stays tenant-free);
   - modules get a `RegisterPublicTenantRoutes(r)` hook for their own public endpoints.
-- [ ] **First endpoint:** `GET /api/v1/public/tenant` returns `{name, code, branch: {id, name}}`,
+- [x] **First endpoint:** `GET /api/v1/public/tenant` returns `{name, code, branch: {id, name}}`,
       for branding the sign-in page.
-- [ ] **Rate limiting:** the existing per-IP limiter covers the group. Nothing new is needed.
-- [ ] **OpenAPI:** reuse the existing `X-Tenant-Code` parameter (M61) and add `X-Branch-Id`. The
+- [x] **Rate limiting:** the existing per-IP limiter covers the group. Nothing new is needed.
+- [x] **OpenAPI:** reuse the existing `X-Tenant-Code` parameter (M61) and add `X-Branch-Id`. The
       route-coverage test lists `/api/v1/public/tenant` as public.
-- [ ] **Docs:** the tenancy guide gets a "Public routes" section with a `RegisterPublicTenantRoutes`
+- [x] **Docs:** the tenancy guide gets a "Public routes" section with a `RegisterPublicTenantRoutes`
       example. Restore the `X-Tenant-Code` line removed in 2026-11-20 once it is true.
 
 ### C. Audit log: the system log, and act-as entries
@@ -164,10 +164,10 @@ platform actions). This phase makes that split readable on purpose, and records 
 | Done by staff | `by_staff: true` on the entry, no staff id or name | `by_staff: true` plus `impersonator {id, name}` |
 | Act-as entries (`impersonation.*`) | never returned (they are system rows) | returned |
 
-- [ ] **Permission `activity.view.all`:** new, `IsSystem`, so never granted to tenant roles.
+- [x] **Permission `activity.view.all`:** new, `IsSystem`, so never granted to tenant roles.
       Super-Admin has it through the bypass. It is not seeded to Developer or any other role; an
       internal role gets it by assignment.
-- [ ] **Feed rules** (`activity.Service.Feed`), replacing today's "platform accounts see
+- [x] **Feed rules** (`activity.Service.Feed`), replacing today's "platform accounts see
       everything":
   - The route stays `GET /api/v1/activity`, gated by `activity.view` **or** `activity.view.all`.
   - A caller holding `activity.view.all` and not acting as a user reads across tenants. Query
@@ -178,16 +178,16 @@ platform actions). This phase makes that split readable on purpose, and records 
   - An internal account without `activity.view.all` gets 403. Today it would see every tenant.
   - New filter `impersonator_id` (and `impersonated=true` for "any act-as row"), honoured only for
     `activity.view.all` holders.
-- [ ] **SQL:** `ListActivity` gets a three-way tenant predicate (all / one tenant / `IS NULL`) and
+- [x] **SQL:** `ListActivity` gets a three-way tenant predicate (all / one tenant / `IS NULL`) and
       the impersonation filters. Index `activity_log_system_feed_idx ON activity_log (created_at
       DESC, id DESC) WHERE tenant_id IS NULL` for the system-only view.
 
 **Migration `00025_activity_impersonator.sql`**
 
-- [ ] `impersonator_id bigint NULL REFERENCES users(id) ON DELETE SET NULL`, plus
+- [x] `impersonator_id bigint NULL REFERENCES users(id) ON DELETE SET NULL`, plus
       `impersonator_name text NULL`, a snapshot taken when the row is written, so the record still
       names the person if their account is deleted later.
-- [ ] Partial index `ON activity_log (impersonator_id, created_at DESC) WHERE impersonator_id IS
+- [x] Partial index `ON activity_log (impersonator_id, created_at DESC) WHERE impersonator_id IS
       NOT NULL`.
 
 **What gets recorded while acting**
@@ -210,20 +210,20 @@ Three layers, so that nothing done while acting can go unrecorded:
    target, so the tenant row reads "done by Jane, via staff"; the system view shows "done by Jane,
    on behalf of admin X". The shared `request_id` links it to the matching `impersonation.request` row.
 
-- [ ] **Refusals:** every 403 `IMPERSONATION_FORBIDDEN` writes an `impersonation.denied` system row
+- [x] **Refusals:** every 403 `IMPERSONATION_FORBIDDEN` writes an `impersonation.denied` system row
       (caller, requested target, reason). Best-effort, like ordinary entries.
-- [ ] **Tenants see that staff acted, not who.** Every entry carries `by_staff` (true when
+- [x] **Tenants see that staff acted, not who.** Every entry carries `by_staff` (true when
       `impersonator_id` is set). Callers without `activity.view.all` get only that flag; the
       `impersonator` object is `null` for them. The `impersonation.*` rows are system rows, so the
       start, per-request and denied entries never reach a tenant feed. A user acting as Jane who
       opens the activity page sees Jane's view: the flag, not the details.
-- [ ] **Survives tenant deletion:** the `impersonation.*` rows have no tenant, so deleting the
+- [x] **Survives tenant deletion:** the `impersonation.*` rows have no tenant, so deleting the
       tenant (which cascades its own rows) keeps the record of who acted inside it.
-- [ ] **Retention:** one window for everything, `ACTIVITY_RETENTION_DAYS`.
+- [x] **Retention:** one window for everything, `ACTIVITY_RETENTION_DAYS`.
 - [ ] **Telemetry:** `telemetry.RequestEntry` and the access log gain `impersonator_id`; the
       developer dashboard's request list shows an "acting as" badge. This is debugging aid only; the
       audit record is the activity log.
-- [ ] **OpenAPI:** the `tenant_id`, `impersonator_id` and `impersonated` query parameters; the
+- [x] **OpenAPI:** the `tenant_id`, `impersonator_id` and `impersonated` query parameters; the
       `by_staff` (boolean) and `impersonator` (`{id, name}`, null for tenant callers) on activity
       entries.
 
@@ -323,6 +323,25 @@ Three layers, so that nothing done while acting can go unrecorded:
    marked with the impersonator. Tenant users see that a change was made by staff
    (`by_staff`), but not who, and never the `impersonation.*` rows; system readers see everything
    (§C).
+
+## Deviations (implementation, 2026-11-20)
+
+1. **Branch switch is blocked too.** `PATCH /user/switch-branch/{id}` stores the user's active
+   branch, so it joins the account changes refused while acting.
+2. **A non-numeric `X-Acting-User`** answers 422 (validation), not 403: it is a malformed header,
+   not a refused target.
+3. **A caller without `user.impersonate`** gets 403 `IMPERSONATION_FORBIDDEN` (not
+   `INSUFFICIENT_PERMISSIONS`) and an `impersonation.denied` row with reason `permission`, so
+   attempts by tenant users show up in the system log.
+4. **`X-Tenant-Code` had no OpenAPI parameter** to reuse (it was removed earlier); `TenantCode`
+   and `BranchId` parameters were added.
+5. **Telemetry `impersonator_id` is not done.** Request telemetry reads the identity from the
+   outer request context, which never holds it, so `user_id`/`tenant_id` are always empty in
+   captured requests today. That pre-existing bug needs fixing first (a mutable holder put in the
+   context by the telemetry middleware); the audit record does not depend on it.
+6. **Public branch cache:** the branch name and the tenant's first branch are cached under
+   `public_branch:*` / `public_first_branch:*`, dropped by `InvalidateBranchCheck`, instead of
+   reusing `branch_check:*` (which holds only a boolean).
 
 ## Open questions
 

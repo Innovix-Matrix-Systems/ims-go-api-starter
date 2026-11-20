@@ -14,3 +14,9 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.With(h.can(authz.PermTenantUpdate)).Patch("/tenant/{id}", h.update)
 	r.With(h.can(authz.PermTenantDelete)).Delete("/tenant/{id}", h.destroy)
 }
+
+// RegisterPublicTenantRoutes mounts routes used before sign-in. They run
+// behind tenancy.Public: the tenant comes from X-Tenant-Code.
+func (h *Handler) RegisterPublicTenantRoutes(r chi.Router) {
+	r.Get("/public/tenant", h.publicTenant)
+}

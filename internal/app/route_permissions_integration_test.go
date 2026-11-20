@@ -32,6 +32,7 @@ var routesWithoutPermission = map[string]bool{
 	"POST /api/v1/email/verification-notification": true,
 	"POST /api/v1/email/verify":                    true,
 	"GET /api/v1/public/packages":                  true,
+	"GET /api/v1/public/tenant":                    true, // tenant from X-Tenant-Code, no sign-in
 	"POST /api/v1/billing/{gateway}/callback":      true,
 	"GET /api/v1/billing/{gateway}/callback":       true,
 	// self-service: the caller's own session, profile and inbox

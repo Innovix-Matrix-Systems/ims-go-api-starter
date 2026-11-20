@@ -72,7 +72,7 @@ func (d *Dependencies) Router() http.Handler {
 		r.HandleFunc("/dev/*", d.DevUI.ServeHTTP)
 		r.Route("/dev/api", func(r chi.Router) {
 			r.Use(authn.Authenticate(d.Authenticator, d.Responder))
-			r.Use(tenancy.Exempt())
+			r.Use(tenancy.Exempt(d.Responder))
 			r.Use(authz.Require(d.Checker, authz.PermDevView, d.Responder))
 			d.Dev.RegisterRoutes(r)
 		})
@@ -82,6 +82,15 @@ func (d *Dependencies) Router() http.Handler {
 		d.System.RegisterRoutes(r)
 		d.Auth.RegisterPublicRoutes(r)
 		d.Billing.RegisterPublicRoutes(r)
+
+		// Public tenant-scoped routes: no sign-in, the tenant comes from
+		// X-Tenant-Code (and optionally X-Branch-Id).
+		r.Group(func(r chi.Router) {
+			r.Use(tenancy.Public(tenancy.PublicOptions{
+				Queries: d.TenancyOpts.Queries, Cache: d.TenancyOpts.Cache, Responder: d.Responder,
+			}))
+			d.Tenants.RegisterPublicTenantRoutes(r)
+		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(authn.Authenticate(d.Authenticator, d.Responder))
@@ -105,7 +114,7 @@ func (d *Dependencies) Router() http.Handler {
 			})
 
 			r.Group(func(r chi.Router) {
-				r.Use(tenancy.Exempt())
+				r.Use(tenancy.Exempt(d.Responder))
 
 				// Shared exempt surfaces: files are creator-scoped (plus the
 				// system-only file.view.all / file.delete permissions) and

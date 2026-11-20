@@ -18,7 +18,16 @@ type Identity struct {
 	BranchID       int64
 	ActiveBranchID int64
 	IsActive       bool
+
+	// ImpersonatorID is set when another user is acting as this one
+	// (X-Acting-User). UserID and every field above are then the target's;
+	// ImpersonatorID and ImpersonatorName are the person really calling.
+	ImpersonatorID   int64
+	ImpersonatorName string
 }
+
+// Impersonated reports whether this identity is acted as by someone else.
+func (i *Identity) Impersonated() bool { return i != nil && i.ImpersonatorID != 0 }
 
 // EffectiveBranchID returns the branch the user is currently acting in.
 func (i *Identity) EffectiveBranchID() int64 {

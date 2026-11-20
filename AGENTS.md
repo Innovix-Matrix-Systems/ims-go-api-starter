@@ -197,7 +197,9 @@ Business validation lives in services: `apperr.Validation(map[string][]string{..
 
 **Tenancy** — `tenancy.From(r)` gives the `Scope`; `scope.Filter()` is what repositories use for
 single-row reads: one tenant, or every tenant only for internal/global reads. A zero `Filter`
-matches **no** tenant rows (fails closed). Impersonators send `X-Acting-Tenant` /
+matches **no** tenant rows (fails closed). `X-Acting-User` (`user.impersonate`) runs the request as
+another user (`Identity.ImpersonatorID` is the caller; mount `authn.DenyImpersonated` on account
+changes). Public pre-sign-in routes use `tenancy.Public` (`X-Tenant-Code`). Impersonators send `X-Acting-Tenant` /
 `X-Acting-Branch`.
 
 > **Tenant isolation is explicit — there is no RLS.** Every tenant-scoped query MUST filter on
@@ -212,7 +214,9 @@ the cache (`authn.Recovery`); responses never reveal whether an e-mail exists.
 **Activity log** — services call `s.activity.Record(ctx, activity.Entry{TenantID, Action:
 "branch.created", Subject: "branch", SubjectID, Changes})` after a change succeeds. A nil recorder
 records nothing; actor, IP and request id come from the context; secret-looking keys are redacted.
-Read at `GET /api/v1/activity` (`activity.view`).
+Read at `GET /api/v1/activity` (`activity.view`: own tenant; `activity.view.all`: every tenant
+and the system log, the rows with no tenant). Entries written while acting as a user carry the
+impersonator; act-as itself is logged as `impersonation.*` system rows.
 
 **Pagination** — `page`/`per_page` (default 10, max 100) via `httpx.PageParams`, whitelisted
 ordering via `httpx.OrderParams`, `h.Paginated(...)` with `httpx.NewPagination`. Feeds
@@ -280,7 +284,10 @@ Keep this list accurate; add to it when you make a non-obvious choice (also upda
 - Backups are local-first with optional S3/R2 copies.
 - Dashboard: handlers call services (`dev/services.go`), mutations need `dev.manage` on the route,
   every mutation and dashboard sign-in is audited (`dev_actions`, with IP and browser).
-- Tenant `is_active` is not enforced at request time yet (dashboard shows it read-only).
+- Tenant `is_active` is not enforced at request time yet (dashboard shows it read-only); public
+  tenant routes (`tenancy.Public`) do enforce it.
+- Act as a user per request (`X-Acting-User`), not with login-as tokens; act-as is written to the
+  system audit log (start is fail-closed, every request is logged).
 
 ## When a task is ambiguous
 

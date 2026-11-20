@@ -153,6 +153,26 @@ func (q *Queries) CreateBranchWithID(ctx context.Context, arg CreateBranchWithID
 	return i, err
 }
 
+const firstBranchOfTenant = `-- name: FirstBranchOfTenant :one
+SELECT id, name FROM branches
+WHERE tenant_id = $1 AND deleted_at IS NULL
+ORDER BY id
+LIMIT 1
+`
+
+type FirstBranchOfTenantRow struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// The branch public tenant routes use when the client sends no X-Branch-Id.
+func (q *Queries) FirstBranchOfTenant(ctx context.Context, tenantID int64) (FirstBranchOfTenantRow, error) {
+	row := q.db.QueryRow(ctx, firstBranchOfTenant, tenantID)
+	var i FirstBranchOfTenantRow
+	err := row.Scan(&i.ID, &i.Name)
+	return i, err
+}
+
 const getBranch = `-- name: GetBranch :one
 SELECT id, tenant_id, name, address, description, phone, email, manager_id, created_by, updated_by, created_at, updated_at, deleted_at FROM branches
 WHERE id = $1
@@ -185,6 +205,23 @@ func (q *Queries) GetBranch(ctx context.Context, arg GetBranchParams) (Branch, e
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const getTenantBranchName = `-- name: GetTenantBranchName :one
+SELECT name FROM branches
+WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+`
+
+type GetTenantBranchNameParams struct {
+	BranchID int64 `json:"branch_id"`
+	TenantID int64 `json:"tenant_id"`
+}
+
+func (q *Queries) GetTenantBranchName(ctx context.Context, arg GetTenantBranchNameParams) (string, error) {
+	row := q.db.QueryRow(ctx, getTenantBranchName, arg.BranchID, arg.TenantID)
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const listBranches = `-- name: ListBranches :many

@@ -31,6 +31,7 @@ const (
 	OTPExpired               Code = "OTP_EXPIRED"
 	Forbidden                Code = "FORBIDDEN"
 	InsufficientPermissions  Code = "INSUFFICIENT_PERMISSIONS"
+	ImpersonationForbidden   Code = "IMPERSONATION_FORBIDDEN"
 	ResourceNotFound         Code = "RESOURCE_NOT_FOUND"
 	ResourceDeleted          Code = "RESOURCE_DELETED"
 	MethodNotAllowed         Code = "METHOD_NOT_ALLOWED"
@@ -77,6 +78,7 @@ var defaultStatuses = map[Code]int{
 	OTPExpired:               http.StatusBadRequest,
 	Forbidden:                http.StatusForbidden,
 	InsufficientPermissions:  http.StatusForbidden,
+	ImpersonationForbidden:   http.StatusForbidden,
 	ResourceNotFound:         http.StatusNotFound,
 	ResourceDeleted:          http.StatusNotFound,
 	MethodNotAllowed:         http.StatusMethodNotAllowed,

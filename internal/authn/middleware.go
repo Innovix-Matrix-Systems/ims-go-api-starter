@@ -36,3 +36,19 @@ func Authenticate(auth Authenticator, responder *httpx.Responder) func(http.Hand
 		})
 	}
 }
+
+// DenyImpersonated refuses a route while another user is acting as the
+// caller. Mount it on endpoints that change the account itself (password,
+// profile, avatar): acting as a user is for doing their work, not for
+// taking over their account.
+func DenyImpersonated(responder *httpx.Responder) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if identity, ok := IdentityFromContext(r.Context()); ok && identity.Impersonated() {
+				responder.Error(w, r, apperr.New(apperr.ImpersonationForbidden, "This action is not available while acting as another user."))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}

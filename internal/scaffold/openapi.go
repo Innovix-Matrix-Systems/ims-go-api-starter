@@ -222,6 +222,7 @@ func renderPaths(specs []ResourceSpec) string {
 			}
 			b.WriteString("      - {$ref: \"#/components/parameters/ActingTenant\"}\n")
 			b.WriteString("      - {$ref: \"#/components/parameters/ActingBranch\"}\n")
+			b.WriteString("      - {$ref: \"#/components/parameters/ActingUser\"}\n")
 			for _, m := range orderMethods(p.Methods) {
 				renderOperation(&b, rs, p.Suffix, m)
 			}

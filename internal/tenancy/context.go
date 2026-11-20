@@ -25,6 +25,10 @@ type Scope struct {
 	ActingTenantID int64
 	ActingBranchID int64
 	Internal       bool
+	// Public is set by tenancy.Public: the request is anonymous and the
+	// tenant came from X-Tenant-Code. Services refuse writes that must not
+	// happen without a signed-in user.
+	Public bool
 }
 
 // EffectiveTenantID returns the tenant used for data access

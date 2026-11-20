@@ -6,6 +6,31 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Act as a user.** `X-Acting-User: <user id>` runs one tenant request as that user (their
+  permissions, tenant and branch), for holders of the new `user.impersonate` permission
+  (Super-Admin, Developer, or any internal role it is assigned to). Admins, platform accounts and
+  inactive users cannot be targets; profile, password, avatar and branch-switch changes are refused
+  while acting (`IMPERSONATION_FORBIDDEN`).
+- **System audit log.** Activity entries without a tenant are the system log. Internal users with
+  the new `activity.view.all` read every tenant and the system log at `GET /api/v1/activity`,
+  filtered with `tenant_id=<id>` or `tenant_id=system`, plus `impersonator_id` and `impersonated`.
+- **Act-as audit trail.** `impersonation.started` (fail-closed), `impersonation.request` for every
+  request and `impersonation.denied` are system entries. Entries written while acting carry the
+  staff member (`impersonator_id`, `impersonator_name`); tenants see only `by_staff: true`.
+- **Public tenant routes.** `tenancy.Public` resolves the tenant from `X-Tenant-Code` (and
+  optionally `X-Branch-Id`) before sign-in; first endpoint `GET /api/v1/public/tenant`. Modules add
+  their own with `RegisterPublicTenantRoutes`.
+
+### Changed
+
+- Internal accounts without `activity.view.all` now get 403 on `GET /api/v1/activity` instead of
+  every tenant's entries.
+- `tenancy.Exempt` takes the responder and refuses `X-Acting-User` with 422.
+- `CORS_ALLOWED_HEADERS` default includes `X-Acting-User`.
+- Migration `00025_activity_impersonator`; run `ims migrate` and `ims permission:sync`.
+
 ## [0.1.0] - 2026-11-20
 
 The first versioned release: the full starter, its developer dashboard and its documentation site.

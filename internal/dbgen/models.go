@@ -9,16 +9,18 @@ import (
 )
 
 type ActivityLog struct {
-	ID          int64              `json:"id"`
-	TenantID    *int64             `json:"tenant_id"`
-	ActorID     *int64             `json:"actor_id"`
-	Action      string             `json:"action"`
-	SubjectType string             `json:"subject_type"`
-	SubjectID   *int64             `json:"subject_id"`
-	Changes     []byte             `json:"changes"`
-	Ip          *string            `json:"ip"`
-	RequestID   *string            `json:"request_id"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ID               int64              `json:"id"`
+	TenantID         *int64             `json:"tenant_id"`
+	ActorID          *int64             `json:"actor_id"`
+	Action           string             `json:"action"`
+	SubjectType      string             `json:"subject_type"`
+	SubjectID        *int64             `json:"subject_id"`
+	Changes          []byte             `json:"changes"`
+	Ip               *string            `json:"ip"`
+	RequestID        *string            `json:"request_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ImpersonatorID   *int64             `json:"impersonator_id"`
+	ImpersonatorName *string            `json:"impersonator_name"`
 }
 
 type BackupRun struct {

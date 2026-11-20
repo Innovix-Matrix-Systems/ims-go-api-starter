@@ -3,6 +3,7 @@ package identity
 import (
 	"github.com/go-chi/chi/v5"
 
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 )
 
@@ -10,16 +11,18 @@ import (
 func (h *Handler) RegisterRoutesResolve(r chi.Router) {
 	r.With(h.can(authz.PermUserViewAll)).Get("/user", h.index)
 	r.Get("/user/profile", h.profile)
-	r.Post("/user/profile/update", h.profileUpdate)
-	r.Post("/user/profile/update-avatar", h.updateAvatar)
-	r.Post("/user/profile/change-password", h.profileChangePassword)
+	// Account changes are refused while someone acts as the user (phase 21).
+	own := r.With(authn.DenyImpersonated(h.Responder))
+	own.Post("/user/profile/update", h.profileUpdate)
+	own.Post("/user/profile/update-avatar", h.updateAvatar)
+	own.Post("/user/profile/change-password", h.profileChangePassword)
 	r.Get("/user/{id}", h.show)
 	r.With(h.can(authz.PermUserCreate)).Post("/user", h.store)
 	r.With(h.can(authz.PermUserUpdate)).Patch("/user/{id}", h.update)
 	r.With(h.can(authz.PermUserDelete)).Delete("/user/{id}", h.destroy)
 	r.With(h.can(authz.PermUserRoleAssign)).Post("/user/assign-role", h.assignRole)
 	r.With(h.can(authz.PermUserUpdate)).Post("/user/change-password", h.changePassword)
-	r.With(h.can(authz.PermUserBranchSwitch)).Patch("/user/switch-branch/{id}", h.switchBranch)
+	own.With(h.can(authz.PermUserBranchSwitch)).Patch("/user/switch-branch/{id}", h.switchBranch)
 	r.Post("/user/import-background", h.importUsersBackground)
 	r.Post("/user/export-background", h.exportUsersBackground)
 	r.With(h.can(authz.PermUserImport)).Post("/user/import-template", h.importTemplate)
