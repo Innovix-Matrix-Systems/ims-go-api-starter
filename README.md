@@ -1,12 +1,16 @@
 # IMS Go API Starter
 
 ![Version](https://img.shields.io/badge/version-0.1.0-ff5c1a)
+[![Docs](https://img.shields.io/badge/docs-ims--go--api--starter.innovixmatrixsystem.com-ff5c1a)](https://ims-go-api-starter.innovixmatrixsystem.com)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 
 **Laravel's developer experience, Go's performance.** A multi-tenant API starter that ships as
 **one CGO-free binary**: it serves the API, runs migrations, queue workers and the scheduler, and
 embeds a Telescope-style **developer dashboard**. No containers required, Docker-ready when you want it.
+
+**📖 Documentation: [ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com)**: quick start, a step-by-step tutorial,
+guides for every feature, the dashboard tour, operations runbooks and the design decisions.
 
 | Developer dashboard (`/dev`) | API reference (`/docs`) |
 | --- | --- |
@@ -82,7 +86,7 @@ commands also run from the dashboard.
 
 ## Learn more
 
-**📖 Documentation: [ims-go-api-starter.innovixmatrixsystem.workers.dev](https://ims-go-api-starter.innovixmatrixsystem.workers.dev)**
+**📖 Documentation: [ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com)**
 
 The pages live in [`docs/`](docs/README.md) and are published as that site (Astro Starlight,
 `website/`) with every release. Run `make docs` to read them locally.

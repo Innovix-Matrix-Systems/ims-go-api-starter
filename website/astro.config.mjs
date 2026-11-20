@@ -13,9 +13,9 @@ const repoUrl = 'https://github.com/Innovix-Matrix-Systems/ims-go-api-starter'
 const docsDir = fileURLToPath(new URL('../docs', import.meta.url))
 
 export default defineConfig({
-  // Set DOCS_SITE_URL to the deployed address (e.g. the workers.dev link) so
-  // canonical URLs and the sitemap are absolute; unset, pages use relative URLs.
-  site: process.env.DOCS_SITE_URL || undefined,
+  // The public address: canonical links, the sitemap and link previews use it.
+  // A fork publishing elsewhere sets DOCS_SITE_URL instead.
+  site: process.env.DOCS_SITE_URL || 'https://ims-go-api-starter.innovixmatrixsystem.com',
   markdown: {
     // Relative links such as ../guides/tenancy.md work on GitHub and here.
     processor: unified({ rehypePlugins: [[rehypeDocsLinks, { docsDir, repoUrl }]] }),

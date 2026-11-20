@@ -7,8 +7,9 @@ name: Docs deploy
 # One-time setup — repository secrets:
 #   CLOUDFLARE_API_TOKEN   (template "Edit Cloudflare Workers")
 #   CLOUDFLARE_ACCOUNT_ID
-# Optional repository variable DOCS_SITE_URL: the public address, used for
-# canonical links and the sitemap.
+# The public address is https://ims-go-api-starter.innovixmatrixsystem.com (a Custom Domain on the
+# Worker, set in the Cloudflare dashboard). A fork publishing elsewhere sets the
+# repository variable DOCS_SITE_URL.
 
 on:
   release:
@@ -27,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: docs
-      url: ${{ vars.DOCS_SITE_URL }}
+      url: ${{ vars.DOCS_SITE_URL || 'https://ims-go-api-starter.innovixmatrixsystem.com' }}
     steps:
       - uses: actions/checkout@v4
 
