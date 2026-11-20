@@ -11,11 +11,12 @@ import { unified } from '@astrojs/markdown-remark'
 const version = readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim()
 const repoUrl = 'https://github.com/Innovix-Matrix-Systems/ims-go-api-starter'
 const docsDir = fileURLToPath(new URL('../docs', import.meta.url))
+const siteUrl = process.env.DOCS_SITE_URL || 'https://ims-go-api-starter.innovixmatrixsystem.com'
 
 export default defineConfig({
   // The public address: canonical links, the sitemap and link previews use it.
   // A fork publishing elsewhere sets DOCS_SITE_URL instead.
-  site: process.env.DOCS_SITE_URL || 'https://ims-go-api-starter.innovixmatrixsystem.com',
+  site: siteUrl,
   markdown: {
     // Relative links such as ../guides/tenancy.md work on GitHub and here.
     processor: unified({ rehypePlugins: [[rehypeDocsLinks, { docsDir, repoUrl }]] }),
@@ -56,6 +57,12 @@ export default defineConfig({
       head: [
         { tag: 'meta', attrs: { name: 'docs-version', content: version } },
         { tag: 'meta', attrs: { name: 'author', content: 'Innovix Matrix System' } },
+        // Link-preview card (Slack, LinkedIn, X…), built by `npm run brand`.
+        { tag: 'meta', attrs: { property: 'og:image', content: `${siteUrl}/og.png` } },
+        { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+        { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+        { tag: 'meta', attrs: { property: 'og:image:alt', content: 'IMS Go API Starter, open source by Innovix Matrix System' } },
+        { tag: 'meta', attrs: { name: 'twitter:image', content: `${siteUrl}/og.png` } },
       ],
       sidebar: [
         {
