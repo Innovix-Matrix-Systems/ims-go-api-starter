@@ -1,4 +1,6 @@
-# Runbook — Local development
+---
+title: Local development
+---
 
 Run the whole system locally: the HTTP API plus the queue worker and the scheduler. They are three
 processes started from the same binary, so a full local stack means three shells.

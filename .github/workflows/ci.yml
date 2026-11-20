@@ -79,6 +79,9 @@ jobs:
       - name: agent skills are in sync (.agents/skills = .claude/skills)
         run: diff -r .agents/skills .claude/skills
 
+      - name: generated docs reference pages are current
+        run: go run ./cmd/app gen docs --check
+
       - name: test (race)
         run: go test -race ./...
 
@@ -115,6 +118,49 @@ jobs:
           npm run openapi:gen
           git diff --exit-code -- src/api/schema.d.ts
         working-directory: web/dev
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: install
+        run: npm ci
+        working-directory: website
+
+      - name: build and check every link
+        run: npm run build
+        working-directory: website
+
+  # Docker is optional, but it must keep working: build the image, bring the
+  # whole compose stack up and probe it.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: start the stack (postgres → migrate → api, worker, scheduler)
+        run: docker compose up -d --build --wait --wait-timeout 180 api worker scheduler
+
+      - name: probe the API and seed it
+        run: |
+          curl -fsS http://localhost:8080/up
+          docker compose run --rm api db:seed
+          docker compose run --rm api version
+
+      - name: logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: stop
+        if: always()
+        run: docker compose down -v
 
   cross-compile:
     runs-on: ubuntu-latest

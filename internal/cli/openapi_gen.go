@@ -114,7 +114,7 @@ func refreshOpenAPI(cmd *cobra.Command, root string, provided []scaffold.Resourc
 			fmt.Fprintln(cmd.OutOrStdout(), "generated OpenAPI regions are current")
 			return nil
 		}
-		return fmt.Errorf("generated OpenAPI regions are stale; run `make openapi:gen`")
+		return fmt.Errorf("generated OpenAPI regions are stale; run `make openapi-gen`")
 	}
 	if bytes.Equal(updated, data) {
 		fmt.Fprintln(cmd.OutOrStdout(), "generated OpenAPI regions already up to date")
@@ -153,7 +153,7 @@ func checkOpenAPIRegions(cmd *cobra.Command, root string) error {
 		return err
 	}
 	if !bytes.Equal(updated, data) {
-		return fmt.Errorf("generated OpenAPI regions are stale; run `make openapi:gen`")
+		return fmt.Errorf("generated OpenAPI regions are stale; run `make openapi-gen`")
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "generated OpenAPI regions are current")
 	return nil

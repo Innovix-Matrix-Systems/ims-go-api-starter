@@ -1,7 +1,9 @@
-# Runbook — Deploy
+---
+title: Deploy
+---
 
 Single binary + systemd, no containers. One host runs three units: the HTTP API, the scheduler and
-the queue worker.
+the queue worker. Prefer containers? The same binary runs from one image, see [Docker](docker.md).
 
 ## Layout
 

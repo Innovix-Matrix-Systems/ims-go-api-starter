@@ -18,7 +18,7 @@ import (
 )
 
 // TestInternalRoutesRejectTenantScopedCallers is the phase-12 regression net
-// (docs/codebase-review.md C4): a tenant-bound identity — even one holding
+// (docs/history/codebase-review.md C4): a tenant-bound identity — even one holding
 // every tenant-grantable permission — must be rejected with 403 on EVERY
 // /api/v1/internal/* route. "Internal" is a property of the account, proven
 // server-side by the tenancy.InternalOnly gate; it cannot be asserted by

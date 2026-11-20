@@ -20,7 +20,7 @@ import (
 // only on the caller's own account. Everything else must answer 403 to an
 // authenticated user with zero permissions.
 //
-// Permission checks live in handlers (docs/architecture.md §11.23), so this
+// Permission checks live in handlers (docs/architecture/decisions.md, decision 23), so this
 // test is the safety net that a new handler forgot its MustCan: adding a
 // route either adds a permission check or an entry here, on purpose.
 var routesWithoutPermission = map[string]bool{

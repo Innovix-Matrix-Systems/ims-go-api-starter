@@ -8,7 +8,7 @@
 
 APP                    := ims
 MODULE                 := github.com/Innovix-Matrix-Systems/ims-go-api-starter
-VERSION                ?= dev
+VERSION                ?= $(strip $(file < VERSION))
 
 GOEXE                  := $(shell go env GOEXE)
 BIN                    := bin/$(APP)$(GOEXE)
@@ -37,7 +37,7 @@ endif
         vet format format-check lint lint-fix tidy check \
         sqlc openapi openapi-gen openapi-check generate gen-check skills-sync skills-check \
         db-up db-down migrate migrate-status migrate-rollback seed fresh \
-        health config version web-build web-typecheck dev-web clean clean-all
+        health config version web-build web-typecheck dev-web docs docs-build docs-gen clean clean-all
 
 # ── Help ─────────────────────────────────────────────────────────────────────
 help:
@@ -70,7 +70,11 @@ help:
 	@echo   make openapi-gen       Refresh the generated regions of api/openapi.yaml
 	@echo   make openapi-check     Validate the spec + route drift + region freshness
 	@echo   make generate          sqlc + openapi + openapi-gen
-	@echo   make gen-check         Fail if generated code is out of date
+	@echo   make gen-check         Fail if generated code or docs are out of date
+	@echo --- Documentation ---
+	@echo   make docs              Preview the docs site at :4321 (Node 22.23+)
+	@echo   make docs-build        Build the docs site and check every link
+	@echo   make docs-gen          Regenerate the CLI/config/permissions/make reference pages
 	@echo --- Database ---
 	@echo   make db-up             Start local Postgres via docker compose
 	@echo   make db-down           Stop local Postgres
@@ -184,10 +188,11 @@ openapi-check: ## Validate the spec + route drift and fail if the generated regi
 
 generate: sqlc openapi openapi-gen ## Regenerate all generated code.
 
-gen-check: skills-check ## Verify generated code and skill copies are current; fails on drift.
+gen-check: skills-check ## Verify generated code, docs and skill copies are current; fails on drift.
 	$(MAKE) sqlc openapi
 	git diff --exit-code -- internal/dbgen internal/contract
 	go run ./cmd/app gen openapi --all --check
+	go run ./cmd/app gen docs --check
 
 skills-sync: ## Copy the agent skills (.agents/skills, canonical) to .claude/skills for Claude Code.
 	rm -rf .claude/skills
@@ -196,6 +201,18 @@ skills-sync: ## Copy the agent skills (.agents/skills, canonical) to .claude/ski
 
 skills-check: ## Fail when .claude/skills differs from .agents/skills (run `make skills-sync`).
 	diff -r .agents/skills .claude/skills
+
+# ── Documentation site (website/, content in docs/) ─────────────────────────
+docs: ## Preview the documentation site with hot reload at http://localhost:4321.
+	npm --prefix website ci
+	npm --prefix website run dev
+
+docs-build: ## Build the documentation site into website/dist and check every link.
+	npm --prefix website ci
+	npm --prefix website run build
+
+docs-gen: ## Regenerate docs/reference (CLI, configuration, permissions, make) from the code.
+	go run ./cmd/app gen docs
 
 # ── Database ─────────────────────────────────────────────────────────────────
 db-up: ## Start the local Postgres via docker compose.

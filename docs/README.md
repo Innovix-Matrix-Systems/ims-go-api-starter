@@ -1,45 +1,21 @@
 # Documentation
 
-Start with the [README](../README.md) for the feature tour and quick start. This index links every
-guide, runbook and reference in the repository.
+These Markdown files are the project's documentation. They read fine here on GitHub and are
+published as a site by [`website/`](../website) (Astro Starlight) — run `make docs` for a local
+preview at <http://localhost:4321>.
 
-## Understand the system
-
-| Document | Use it for |
+| Section | Pages |
 | --- | --- |
-| [Architecture](architecture.md) | Request lifecycle, module layering, tenancy, data layer, platform services and deliberate deviations |
-| [Developer guide](developer-guide.md) | Module anatomy, conventions and recipes: add a CRUD module, endpoint or field |
-| [AGENTS.md](../AGENTS.md) | Working agreement for humans and AI agents: commands, patterns, database workflow |
-| [OpenAPI contract](../api/openapi.yaml) | Canonical HTTP contract (paths, schemas, errors, security) |
-| [Specs](../specs/README.md) | History: the scope, decisions and implementation notes behind each development step |
+| **Start here** | [Introduction](getting-started/introduction.md) · [Quick start](getting-started/quick-start.mdx) · [How it works](getting-started/how-it-works.mdx) · [Project tour](getting-started/project-tour.mdx) |
+| **Tutorial** | [Build your first module](tutorial/first-module.mdx) |
+| **Building the API** | [Modules](guides/modules.md) · [Handlers & routes](guides/handlers-and-routes.md) · [Validation & errors](guides/validation-and-errors.md) · [Database](guides/database.md) · [Tenancy](guides/tenancy.md) · [Authentication](guides/authentication.md) · [Permissions](guides/permissions.md) · [Testing](guides/testing.md) |
+| **Features** | [Billing](guides/billing.md) · [Settings](guides/settings.md) · [Feature flags](guides/feature-flags.md) · [Queue & scheduler](guides/queue-and-scheduler.md) · [Files & storage](guides/files-and-storage.md) · [Activity log](guides/activity-log.md) · [Notifications](guides/notifications.md) · [Import & export](guides/import-export.md) · [Mail & i18n](guides/mail-and-i18n.md) · [Health & observability](guides/health-and-observability.md) |
+| **Developer dashboard** | [Tour](dashboard/overview.md) · [Extending](dashboard/extending.md) |
+| **Reference** | [HTTP API](reference/http-api.md) · [CLI](reference/cli.md) · [Configuration](reference/configuration.md) · [Permissions](reference/permissions.md) · [Make targets](reference/make.md) |
+| **Operations** | [Local development](operations/local-development.md) · [Deploy](operations/deploy.md) · [Docker](operations/docker.md) · [Migrations](operations/migrations.md) · [Backups](operations/backups.md) · [Rollback](operations/rollback.md) · [Releases](operations/releases.md) |
+| **Architecture** | [Overview](architecture/overview.md) · [Design decisions](architecture/decisions.md) |
+| **Project** | [Contributing](project/contributing.md) · [Working with AI agents](project/ai-agents.md) · [Changelog](../CHANGELOG.md) |
 
-## Run it
-
-| Document | Use it for |
-| --- | --- |
-| [Local development](runbooks/local-development.md) | First run, three-process stack, hot reload, seeded accounts, troubleshooting |
-| [Migrations](runbooks/migrations.md) | Creating/applying goose migrations and sqlc regeneration |
-| [Rollback](runbooks/rollback.md) | Reverting migrations safely |
-| [Deploy](runbooks/deploy.md) | systemd installation, release, configuration and operations |
-| [Backups](runbooks/backups.md) | `pg_dump` archives, local + S3/R2 destinations, retention, monitoring and restore notes |
-
-## Reference
-
-| Resource | Where |
-| --- | --- |
-| Interactive API reference | `http://localhost:8080/docs` while the API is running |
-| Liveness / health | `GET /up`, `GET /api/health` |
-| Prometheus metrics | `GET /metrics` when `METRICS_ENABLED=true` |
-| Developer dashboard | `http://localhost:8080/dev/` when `DEV_DASHBOARD_ENABLED=true` |
-| Dashboard screenshot | [images/dev-dashboard.png](images/dev-dashboard.png) |
-| API docs screenshot | [images/api-docs.png](images/api-docs.png) |
-| Agent skills | [`.agents/skills/`](../.agents/skills) (`add-module`, `db-change`, `dev-dashboard`, `verify-changes`), mirrored to `.claude/skills` |
-
-## Documentation conventions
-
-- Commands in guides assume the repository root.
-- `make` targets are the supported entry points; the CLI equivalents are shown where useful.
-- Operational runbooks are written for a single deployment (one scheduler, one or more queue
-  workers) and use `bin/ims` after `make build-all`.
-- When a change alters behavior described here, update the relevant guide (and `AGENTS.md` /
-  the skills when it changes how to work) in the same change.
+The reference pages for the CLI, configuration, permissions and Make targets are **generated**
+from the code (`make docs-gen`); don't edit them by hand. `history/` keeps past reviews for
+context — it is not current documentation.

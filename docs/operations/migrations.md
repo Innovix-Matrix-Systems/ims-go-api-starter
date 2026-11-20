@@ -1,4 +1,6 @@
-# Runbook — Migrations
+---
+title: Migrations
+---
 
 Migrations are **goose** SQL files embedded in the binary (`migrations`) and are the single
 schema source for both goose and sqlc.
@@ -36,7 +38,7 @@ migration job) before rolling the units.
 ## SQLite
 
 Not supported in v1 (PostgreSQL only). The SQLite adapter is deferred to a future version; see
-`docs/architecture.md` §11.
+[design decision 22](../architecture/decisions.md).
 
 ## Recovering from a failed migration
 

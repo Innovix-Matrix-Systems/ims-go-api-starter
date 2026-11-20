@@ -1,11 +1,12 @@
 # IMS Go API Starter
 
+![Version](https://img.shields.io/badge/version-0.1.0-ff5c1a)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 
 **Laravel's developer experience, Go's performance.** A multi-tenant API starter that ships as
 **one CGO-free binary**: it serves the API, runs migrations, queue workers and the scheduler, and
-embeds a Telescope-style **developer dashboard** — no containers required.
+embeds a Telescope-style **developer dashboard**. No containers required, Docker-ready when you want it.
 
 | Developer dashboard (`/dev`) | API reference (`/docs`) |
 | --- | --- |
@@ -30,6 +31,9 @@ embeds a Telescope-style **developer dashboard** — no containers required.
 
 ## Quick start
 
+Building a product on it? Press **Use this template** on GitHub to get a repository of your own
+(clean history, not a fork), then clone it.
+
 ```bash
 cp .env.example .env          # local configuration (git-ignored)
 make tools                    # air + golangci-lint (once)
@@ -42,6 +46,9 @@ make dev                      # dashboard on :8080/dev + API with hot reload
 Open **<http://localhost:8080/dev/>** and sign in as `superadmin@ims.com` or `developer@ims.com`
 (password `123456`, set by `AUTH_DEFAULT_PASSWORD`); the API reference is at **/docs**. Run
 `make queue` and `make schedule` in two more shells for background jobs and cron tasks.
+
+Prefer containers? `docker compose up -d --build` runs Postgres, the API, the worker and the
+scheduler from one image (see [Docker](docs/operations/docker.md)).
 
 ## Build a feature
 
@@ -75,14 +82,17 @@ commands also run from the dashboard.
 
 ## Learn more
 
+The full documentation lives in [`docs/`](docs/README.md) and is published as a site (Astro
+Starlight, `website/`) with every release — run `make docs` to read it locally.
+
 | | |
 | --- | --- |
-| [Developer guide](docs/developer-guide.md) | Conventions and recipes: modules, endpoints, fields, tests |
-| [Architecture](docs/architecture.md) | How it works and the deliberate design decisions |
-| [Local development](docs/runbooks/local-development.md) | Full local stack and troubleshooting |
-| [Deploy](docs/runbooks/deploy.md) · [Backups](docs/runbooks/backups.md) | systemd releases, `pg_dump` + S3/R2 |
+| [Quick start](docs/getting-started/quick-start.mdx) · [How it works](docs/getting-started/how-it-works.mdx) | Run it, then understand the one rule every request follows |
+| [Tutorial: your first module](docs/tutorial/first-module.mdx) | Build a products module step by step |
+| [Guides](docs/guides/modules.md) | Modules, handlers, database, tenancy, auth, testing, billing, queue, storage, … |
+| [Operations](docs/operations/deploy.md) · [Docker](docs/operations/docker.md) | Local development, deploy (systemd or Docker), migrations, backups, rollback, releases |
+| [Design decisions](docs/architecture/decisions.md) | What we chose, and why |
 | [AGENTS.md](AGENTS.md) | Working guide for humans and AI agents |
-| [All docs](docs/README.md) | Every guide and runbook |
 
 Requires PostgreSQL 16+, Go 1.26.11+ and Node.js 20.19+ (dashboard). Every setting lives in `.env`
 (documented in `.env.example`; `ims config:show` prints the effective values with secrets masked).

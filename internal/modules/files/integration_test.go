@@ -151,7 +151,7 @@ func isNotFound(err error) bool {
 // TestFilesTenantIsolation proves the phase-12 contract: a tenant-bound
 // caller cannot read, list or delete another tenant's files even with the
 // granular file permissions, while a tenantless system caller (all_tenants)
-// can. See docs/codebase-review.md C3.
+// can. See docs/history/codebase-review.md C3.
 func TestFilesTenantIsolation(t *testing.T) {
 	queries, pool := dbtest.Queries(t)
 	dbtest.Clean(t, pool, "files", "personal_access_tokens", "role_has_permissions", "model_has_roles", "users", "roles", "permissions", "branches", "tenants")

@@ -104,7 +104,7 @@ decimal bool date datetime json`; `?` = optional.
     A route without `can:` fails `route_permissions_integration_test.go` unless it is meant to be
     open to every authenticated user — then add it to that test's allowlist with a reason.
 13. **Verify** — the `verify-changes` skill.
-14. **Record** — add non-obvious decisions to `docs/architecture.md` §11 (and `AGENTS.md`);
+14. **Record** — add non-obvious decisions to `docs/architecture/decisions.md` (and `AGENTS.md`);
     update the developer guide if you introduced a new pattern.
 
 ## Gotchas
