@@ -6,20 +6,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-### Added
-
-<!-- rename:keep -->
-- **`make rename`.** Turns a project made from the template into your own app in one step:
-  `make rename MODULE=github.com/acme/shop-api [NAME=] [BINARY=] [TITLE=] [DRY=1]` rewrites the
-  module path, binary and CLI name, deploy names and paths, display title and `IMS_` deploy
-  variables, renames the systemd units, and regenerates code and docs. Seeded e-mails and credit
-  links are kept; it refuses uncommitted changes and a project that was already renamed.
-<!-- rename:end -->
-
 ## [0.1.2] - 2026-11-21
 
-Act as a user, a system audit log, public tenant routes, and request telemetry that knows who made
-each request.
+Act as a user, a system audit log, public tenant routes, request telemetry that knows who made each
+request, and `make rename` to turn the template into your own app.
 
 **Upgrading from 0.1.0:** run `ims migrate` (migrations `00025` and `00026`), then
 `ims permission:sync` and `ims db:seed` (idempotent; it gives the Developer role
@@ -29,6 +19,13 @@ each request.
 
 ### Added
 
+<!-- rename:keep -->
+- **`make rename`.** Turns a project made from the template into your own app in one step:
+  `make rename MODULE=github.com/acme/shop-api [NAME=] [BINARY=] [TITLE=] [DRY=1]` rewrites the
+  module path, binary and CLI name, deploy names and paths, display title and `IMS_` deploy
+  variables, renames the systemd units, and regenerates code and docs. Seeded e-mails and credit
+  links are kept; it refuses uncommitted changes and a project that was already renamed.
+<!-- rename:end -->
 - **Act as a user.** `X-Acting-User: <user id>` runs one tenant request as that user (their
   permissions, tenant and branch), for holders of the new `user.impersonate` permission
   (Super-Admin, Developer, or any internal role it is assigned to). Admins, platform accounts and
