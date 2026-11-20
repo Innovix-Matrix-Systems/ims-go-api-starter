@@ -4,7 +4,12 @@ export const company = {
   name: 'Innovix Matrix System',
   website: 'https://innovixmatrixsystem.com',
   github: 'https://github.com/Innovix-Matrix-Systems',
-  email: 'innovixmatrixsystem@gmail.com',
+  // One address per purpose: new work, help with the starter, everything else.
+  emails: {
+    hello: 'hello@innovixmatrixsystem.com',
+    support: 'support@innovixmatrixsystem.com',
+    info: 'info@innovixmatrixsystem.com',
+  },
   location: 'Dhaka, Bangladesh',
   pitch:
     'A software studio building custom software, web platforms and mobile apps. We use this starter for our own products, and we can help you ship yours on it.',

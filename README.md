@@ -111,4 +111,5 @@ studio in Dhaka, Bangladesh. We run our own products on it. More open-source sta
 [NestJS API](https://github.com/Innovix-Matrix-Systems/ims-nest-api-starter) ·
 [Laravel API](https://github.com/Innovix-Matrix-Systems/ims-laravel-api-starter) ·
 [Laravel admin](https://github.com/Innovix-Matrix-Systems/ims-laravel-admin-starter).
-Need a team to build on it? [Get in touch](https://innovixmatrixsystem.com).
+Need a team to build on it? Write to **[hello@innovixmatrixsystem.com](mailto:hello@innovixmatrixsystem.com)**.
+Questions about the starter: [support@innovixmatrixsystem.com](mailto:support@innovixmatrixsystem.com).

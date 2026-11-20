@@ -26,7 +26,7 @@ const year = new Date().getFullYear()
     <p class="pitch">{company.pitch}</p>
     <div class="cta">
       <a class="button primary" href={company.website} rel="noopener">Work with us</a>
-      <a class="button" href={`mailto:${company.email}`}>{company.email}</a>
+      <a class="button" href={`mailto:${company.emails.hello}`}>{company.emails.hello}</a>
     </div>
   </div>
 
@@ -51,7 +51,8 @@ const year = new Date().getFullYear()
       <ul>
         <li><a href={company.website} rel="noopener">Website</a></li>
         <li><a href={company.github} rel="noopener">GitHub</a></li>
-        <li><a href={`mailto:${company.email}`}>Contact</a></li>
+        <li><a href={`mailto:${company.emails.info}`}>Contact</a> <span>{company.emails.info}</span></li>
+        <li><a href={`mailto:${company.emails.support}`}>Support</a> <span>{company.emails.support}</span></li>
         <li><span>{company.location}</span></li>
       </ul>
     </div>
