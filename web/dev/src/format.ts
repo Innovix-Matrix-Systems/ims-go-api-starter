@@ -120,3 +120,33 @@ export function relativeDate(value: string | number): string {
   else text = `${Math.round(days / 365)} years`
   return future ? `in ${text}` : `${text} ago`
 }
+
+function utcOffset(date: Date): string {
+  const minutes = -date.getTimezoneOffset()
+  const sign = minutes >= 0 ? '+' : '-'
+  const abs = Math.abs(minutes)
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`
+}
+
+function localDay(iso: string | undefined, hours: number, minutes: number, seconds: number, ms: number): string | undefined {
+  if (!iso) return undefined
+  const [year, month, day] = iso.split('-').map(Number)
+  if (!year || !month || !day) return undefined
+  const at = new Date(year, month - 1, day, hours, minutes, seconds, ms)
+  const time = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+  return `${iso}T${time}${ms ? `.${String(ms).padStart(3, '0')}` : ''}${utcOffset(at)}`
+}
+
+/**
+ * Start of a picked calendar day (YYYY-MM-DD) in the viewer's time zone, as
+ * RFC 3339. The API reads a bare date as a UTC day, which is the wrong day
+ * for anyone east or west of UTC around midnight.
+ */
+export function localDayStart(iso: string | undefined): string | undefined {
+  return localDay(iso, 0, 0, 0, 0)
+}
+
+/** Last millisecond of a picked calendar day in the viewer's time zone (RFC 3339). */
+export function localDayEnd(iso: string | undefined): string | undefined {
+  return localDay(iso, 23, 59, 59, 999)
+}

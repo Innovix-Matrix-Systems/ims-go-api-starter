@@ -3,6 +3,7 @@ package dev_test
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -94,15 +95,29 @@ func TestAuditLogRecordsSignInsAndFilters(t *testing.T) {
 	if page.Meta.Total == 0 {
 		t.Fatal("search by e-mail found nothing")
 	}
-	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
-	today := time.Now().Format("2006-01-02")
+	// A bare date is a UTC day. Building it from local time broke this test
+	// between local midnight and UTC midnight (e.g. 00:00-06:00 in UTC+6).
+	nowUTC := time.Now().UTC()
+	tomorrow := nowUTC.AddDate(0, 0, 1).Format("2006-01-02")
+	today := nowUTC.Format("2006-01-02")
 	super.Get("/dev/api/actions?from="+tomorrow).Status(t, http.StatusOK).JSON(t, &page)
 	if page.Meta.Total != 0 {
 		t.Fatalf("from tomorrow = %d rows", page.Meta.Total)
 	}
 	super.Get("/dev/api/actions?from="+today+"&to="+today).Status(t, http.StatusOK).JSON(t, &page)
 	if page.Meta.Total < 3 {
-		t.Fatalf("today = %d rows, want at least 3", page.Meta.Total)
+		t.Fatalf("today (UTC) = %d rows, want at least 3", page.Meta.Total)
+	}
+	// What the dashboard sends: the viewer's calendar day as RFC 3339 bounds.
+	// UTC+6 is fixed so the test exercises an offset whatever the machine's zone.
+	zone := time.FixedZone("UTC+6", 6*60*60)
+	local := time.Now().In(zone)
+	dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, zone)
+	dayEnd := dayStart.Add(24*time.Hour - time.Millisecond)
+	super.Get("/dev/api/actions?from="+url.QueryEscape(dayStart.Format(time.RFC3339Nano))+
+		"&to="+url.QueryEscape(dayEnd.Format(time.RFC3339Nano))).Status(t, http.StatusOK).JSON(t, &page)
+	if page.Meta.Total < 3 {
+		t.Fatalf("today in UTC+6 = %d rows, want at least 3", page.Meta.Total)
 	}
 	super.Get("/dev/api/actions?status=maybe").Status(t, http.StatusUnprocessableEntity)
 

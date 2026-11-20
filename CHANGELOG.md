@@ -32,6 +32,12 @@ All notable changes to this project are documented here. The format follows
   also record `impersonator_id` (migration `00026`), shown as an "acting" chip in the dashboard;
   the access log gains `user_id`, `tenant_id` and `impersonator_id`.
 
+- **Dashboard date filters use your calendar day.** The audit log and files pages sent the picked
+  date as a bare `YYYY-MM-DD`, which the API reads as a UTC day, so near midnight (00:00-06:00 in
+  UTC+6) "today" missed that night's entries. They now send the local day as RFC 3339 bounds with
+  the browser's offset. The audit-log test built "today" from local time and failed in the same
+  window; it now checks both forms.
+
 ### Changed
 
 - Internal accounts without `activity.view.all` now get 403 on `GET /api/v1/activity` instead of
