@@ -35,6 +35,7 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 18 | [phase-18-account-recovery.md](phase-18-account-recovery.md) | **Done** (2026-11-19) |
 | 19 | [phase-19-simplicity-audit-testkit.md](phase-19-simplicity-audit-testkit.md) | Done — handler helpers, config split, activity log, testkit, flag rollout, storage disks |
 | 20 | [phase-20-dev-dashboard-finish.md](phase-20-dev-dashboard-finish.md) | Done — inspector, commands, form kit, settings view, dev service layer, tests on testkit |
+| 21 | [phase-21-impersonation-public-tenant.md](phase-21-impersonation-public-tenant.md) | Accepted — login-as impersonation, public tenant resolution (`X-Tenant-Code`) |
 
 Remediation phases 12–17 are derived from [docs/codebase-review.md](../docs/codebase-review.md)
 (the full-codebase review at commit `1f55eeb`); each spec lists the finding IDs it resolves.
