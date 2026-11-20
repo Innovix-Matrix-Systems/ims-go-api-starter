@@ -50,6 +50,7 @@ export default defineConfig({
         SiteTitle: './src/components/SiteTitle.astro',
         Hero: './src/components/Hero.astro',
         Footer: './src/components/Footer.astro',
+        Search: './src/components/Search.astro',
       },
       social: [{ icon: 'github', label: 'Innovix Matrix System on GitHub', href: 'https://github.com/Innovix-Matrix-Systems' }],
       head: [
