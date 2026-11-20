@@ -110,7 +110,8 @@ The password comes from `AUTH_DEFAULT_PASSWORD`. The API reference (Scalar, from
 
 ![The developer dashboard overview](../images/dev-dashboard.png)
 
-Call the API from a terminal:
+Call the API from a terminal. Sign in and use the system side with just the token, the way an
+admin panel does:
 
 <Tabs>
 <TabItem label="bash">
@@ -118,9 +119,10 @@ Call the API from a terminal:
 ```bash
 TOKEN=$(curl -s localhost:8080/api/v1/login -H 'Content-Type: application/json' \
   -d '{"email":"superadmin@ims.com","password":"123456","device":"cli"}' | jq -r .data.token)
+AUTH=(-H "Authorization: Bearer $TOKEN")
 
-curl -s localhost:8080/api/v1/branch -H "Authorization: Bearer $TOKEN" \
-  -H "X-Acting-Tenant: 1" -H "X-Acting-Branch: 1" | jq
+curl -s localhost:8080/api/v1/tenant "${AUTH[@]}" | jq    # system panel: every tenant
+curl -s localhost:8080/api/v1/branch "${AUTH[@]}" | jq    # a tenant resource, read across all tenants
 ```
 
 </TabItem>
@@ -129,17 +131,55 @@ curl -s localhost:8080/api/v1/branch -H "Authorization: Bearer $TOKEN" \
 ```powershell
 $login = Invoke-RestMethod http://localhost:8080/api/v1/login -Method Post `
   -ContentType 'application/json' -Body '{"email":"superadmin@ims.com","password":"123456","device":"cli"}'
-$headers = @{ Authorization = "Bearer $($login.data.token)"; 'X-Acting-Tenant' = '1'; 'X-Acting-Branch' = '1' }
-Invoke-RestMethod http://localhost:8080/api/v1/branch -Headers $headers
+$auth = @{ Authorization = "Bearer $($login.data.token)" }
+
+Invoke-RestMethod http://localhost:8080/api/v1/tenant -Headers $auth    # system panel: every tenant
+Invoke-RestMethod http://localhost:8080/api/v1/branch -Headers $auth    # a tenant resource, read across all tenants
 ```
 
 </TabItem>
 </Tabs>
 
-<Aside title="Why the X-Acting headers?">
-  The super admin belongs to no tenant. To read or write a tenant's data it **impersonates** one
-  with `X-Acting-Tenant` / `X-Acting-Branch`. A tenant user never sends them — their tenant comes
-  from their account. See [Tenancy](../guides/tenancy.md).
+To work **inside one tenant**, add the acting headers. Reads narrow to that tenant, and writes to
+tenant resources need them (without them the super admin gets 403):
+
+<Tabs>
+<TabItem label="bash">
+
+```bash
+ACT=(-H "X-Acting-Tenant: 1" -H "X-Acting-Branch: 1")
+
+curl -s localhost:8080/api/v1/branch "${AUTH[@]}" "${ACT[@]}" | jq    # tenant 1 only
+curl -s localhost:8080/api/v1/branch "${AUTH[@]}" "${ACT[@]}" \
+  -H 'Content-Type: application/json' -d '{"name":"Uptown"}' | jq      # a write inside tenant 1
+```
+
+</TabItem>
+<TabItem label="PowerShell">
+
+```powershell
+$act = $auth + @{ 'X-Acting-Tenant' = '1'; 'X-Acting-Branch' = '1' }
+
+Invoke-RestMethod http://localhost:8080/api/v1/branch -Headers $act    # tenant 1 only
+Invoke-RestMethod http://localhost:8080/api/v1/branch -Method Post -Headers $act `
+  -ContentType 'application/json' -Body '{"name":"Uptown"}'          # a write inside tenant 1
+```
+
+</TabItem>
+</Tabs>
+
+<Aside title="When does the super admin send acting headers?">
+  Only to work inside one tenant, or as one user. Signing in and the system routes (tenants, internal
+  users and roles, packages, internal settings, the system audit log) never use them, and reads
+  of tenant resources without them span every tenant.
+
+  - `X-Acting-Tenant` (+ `X-Acting-Branch`): **view or work inside one tenant**, still as yourself.
+    Writes to tenant resources need both.
+  - `X-Acting-User: <user id>`: **act as one user**, with their permissions, tenant and branch.
+    Every request is recorded in the system audit log.
+
+  A tenant user never sends any of them: their tenant comes from their account. See
+  [Tenancy](../guides/tenancy.md#how-a-request-is-resolved).
 </Aside>
 
 ## Background work

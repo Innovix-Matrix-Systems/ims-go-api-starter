@@ -275,7 +275,9 @@ r.Group(func(r chi.Router) {
 
 ## 7. Call your API
 
-Sign in as the super admin and act inside the seeded tenant (tenant 1, branch 1):
+Sign in as the super admin. Products belong to a tenant, and the super admin belongs to none, so
+creating one is a write that has to name the tenant and branch it happens in: send the acting
+headers for the seeded tenant (tenant 1, branch 1). A tenant user would send only the token.
 
 <Tabs>
 <TabItem label="bash">
