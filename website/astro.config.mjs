@@ -53,7 +53,10 @@ export default defineConfig({
         Footer: './src/components/Footer.astro',
         Search: './src/components/Search.astro',
       },
-      social: [{ icon: 'github', label: 'Innovix Matrix System on GitHub', href: 'https://github.com/Innovix-Matrix-Systems' }],
+      social: [{ icon: 'github', label: 'Source code on GitHub', href: repoUrl }],
+      // Pages are ../docs/*, so the base points at website/ and URL resolution
+      // turns website/../docs/x.md into docs/x.md. Generated pages opt out.
+      editLink: { baseUrl: `${repoUrl}/edit/main/website/` },
       head: [
         { tag: 'meta', attrs: { name: 'docs-version', content: version } },
         { tag: 'meta', attrs: { name: 'author', content: 'Innovix Matrix System' } },

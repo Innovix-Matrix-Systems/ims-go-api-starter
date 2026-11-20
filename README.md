@@ -35,7 +35,7 @@ guides for every feature, the dashboard tour, operations runbooks and the design
 
 ## Quick start
 
-Building a product on it? Press **Use this template** on GitHub to get a repository of your own
+Building a product on it? Press **[Use this template](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/generate)** on GitHub to get a repository of your own
 (clean history, not a fork), then clone it.
 
 ```bash
