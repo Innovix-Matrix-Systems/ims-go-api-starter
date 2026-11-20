@@ -11,6 +11,10 @@ hero:
     - text: Build your first module
       link: /tutorial/first-module/
       variant: minimal
+    - text: Use this template
+      link: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/generate
+      icon: github
+      variant: secondary
 ---
 
 import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components'
@@ -69,4 +73,18 @@ import Terminal from '@components/Terminal.astro'
   <LinkCard title="How it works" description="The one rule every request follows." href="/getting-started/how-it-works/" />
   <LinkCard title="Tutorial" description="Build a products module, step by step." href="/tutorial/first-module/" />
   <LinkCard title="Design decisions" description="What we chose, and why." href="/architecture/decisions/" />
+</CardGrid>
+
+## Who's behind it
+
+IMS Go API Starter is built and maintained by
+**[Innovix Matrix System](https://innovixmatrixsystem.com)**, a software studio in Dhaka, Bangladesh.
+We run our own products on it, and it joins our other open-source starters for
+[PocketBase](https://github.com/Innovix-Matrix-Systems/ims-pocketbase-baas-starter),
+[NestJS](https://github.com/Innovix-Matrix-Systems/ims-nest-api-starter) and
+[Laravel](https://github.com/Innovix-Matrix-Systems/ims-laravel-api-starter).
+
+<CardGrid>
+  <LinkCard title="Need a team to build on it?" description="Custom software, web platforms and mobile apps. Write to hello@innovixmatrixsystem.com." href="mailto:hello@innovixmatrixsystem.com" />
+  <LinkCard title="Follow our open source" description="Every starter we publish, on GitHub." href="https://github.com/Innovix-Matrix-Systems" />
 </CardGrid>

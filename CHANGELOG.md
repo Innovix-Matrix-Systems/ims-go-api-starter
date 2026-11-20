@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Documentation site at [ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com).**
+  - Innovix Matrix System credited in the hero, a footer on every page, the home page and the
+    README.
+  - The search dialog suggests pages and example searches before you type.
+
 ## [0.1.0] - 2026-11-20
 
 The first versioned release: the full starter, its developer dashboard and its documentation site.

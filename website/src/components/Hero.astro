@@ -4,6 +4,9 @@
 import Default from '@astrojs/starlight/components/Hero.astro'
 import { LinkButton } from '@astrojs/starlight/components'
 import Architecture from './Architecture.astro'
+import { company } from '../company'
+import mark from '../assets/brand/innovix-mark.png'
+import markOnDark from '../assets/brand/innovix-mark-light.png'
 
 const { data } = Astro.locals.starlightRoute.entry
 const hero = data.hero
@@ -20,6 +23,12 @@ const { title = data.title, tagline, actions = [] } = hero || {}
       </div>
       <div class="sl-flex stack">
         <div class="sl-flex copy">
+          <a class="eyebrow" href={company.website} rel="noopener">
+            Open source, by
+            <img class="light:sl-hidden" src={markOnDark.src} width="16" height="16" alt="" />
+            <img class="dark:sl-hidden" src={mark.src} width="16" height="16" alt="" />
+            <strong>{company.name}</strong>
+          </a>
           <h1 id="_top" data-page-title set:html={title} />
           {tagline && <div class="tagline" set:html={tagline} />}
         </div>
@@ -63,6 +72,24 @@ const { title = data.title, tagline, actions = [] } = hero || {}
   }
   .copy > * {
     max-width: 50ch;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 999px;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+    text-decoration: none;
+  }
+  .eyebrow strong {
+    color: var(--sl-color-accent-high);
+    font-weight: 600;
+  }
+  .eyebrow:hover {
+    border-color: var(--sl-color-accent);
   }
   h1 {
     font-size: clamp(var(--sl-text-3xl), calc(0.25rem + 5vw), var(--sl-text-6xl));

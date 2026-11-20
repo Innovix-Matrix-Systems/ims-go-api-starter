@@ -1,8 +1,8 @@
 # Documentation
 
 These Markdown files are the project's documentation. They read fine here on GitHub and are
-published as a site by [`website/`](../website) (Astro Starlight) — run `make docs` for a local
-preview at <http://localhost:4321>.
+published as a site at **[ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com)** by [`website/`](../website) (Astro Starlight).
+Run `make docs` for a local preview at <http://localhost:4321>.
 
 | Section | Pages |
 | --- | --- |

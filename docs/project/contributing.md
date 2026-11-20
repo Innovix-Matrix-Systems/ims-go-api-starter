@@ -66,3 +66,13 @@ The site's pages are the Markdown files in `docs/`; `website/` only renders them
 
 Write for someone who just cloned the repository: say what a thing is for before how it works,
 show real commands and real code from this codebase, and prefer a table to a paragraph of options.
+
+## Getting help
+
+| You want to… | Do this |
+| --- | --- |
+| report a bug or suggest a change | [open an issue](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/issues/new) on GitHub, with steps to reproduce |
+| ask how to do something with the starter | [support@innovixmatrixsystem.com](mailto:support@innovixmatrixsystem.com) |
+| report a security problem | e-mail [support@innovixmatrixsystem.com](mailto:support@innovixmatrixsystem.com) privately; please don't open a public issue |
+| have the team build or extend your product on it | [hello@innovixmatrixsystem.com](mailto:hello@innovixmatrixsystem.com) |
+| anything else | [info@innovixmatrixsystem.com](mailto:info@innovixmatrixsystem.com) |
