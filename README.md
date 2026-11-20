@@ -1,6 +1,6 @@
 # IMS Go API Starter
 
-![Version](https://img.shields.io/badge/version-0.1.0-ff5c1a)
+![Version](https://img.shields.io/badge/version-0.1.2-ff5c1a)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
 

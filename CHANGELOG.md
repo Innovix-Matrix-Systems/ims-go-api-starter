@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-21
+
+Act as a user, a system audit log, public tenant routes, and request telemetry that knows who made
+each request.
+
+**Upgrading from 0.1.0:** run `ims migrate` (migrations `00025` and `00026`), then
+`ims permission:sync` and `ims db:seed` (idempotent; it gives the Developer role
+`user.impersonate`). Internal accounts that read `GET /api/v1/activity` now need
+`activity.view.all`. Code calling `tenancy.Exempt()` passes the responder:
+`tenancy.Exempt(responder)`.
+
 ### Added
 
 - **Act as a user.** `X-Acting-User: <user id>` runs one tenant request as that user (their
@@ -44,7 +55,6 @@ All notable changes to this project are documented here. The format follows
   every tenant's entries.
 - `tenancy.Exempt` takes the responder and refuses `X-Acting-User` with 422.
 - `CORS_ALLOWED_HEADERS` default includes `X-Acting-User`.
-- Migration `00025_activity_impersonator`; run `ims migrate` and `ims permission:sync`.
 
 ## [0.1.0] - 2026-11-20
 
@@ -87,5 +97,6 @@ The first versioned release: the full starter, its developer dashboard and its d
   per-tenant lock every query runs on the locked transaction.
 - A failed backup run reports `destinations: []` instead of `null`.
 
-[Unreleased]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/releases/tag/v0.1.0
