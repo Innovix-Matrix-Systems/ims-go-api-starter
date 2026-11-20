@@ -71,8 +71,8 @@ workflow by hand from the **Actions** tab, e.g. after a docs-only fix.
 3. Optionally add a repository **variable** `DOCS_SITE_URL` with the final address (for canonical
    links and the sitemap).
 
-The first deploy creates the `ims-docs` worker; the site is then live at
-`https://ims-docs.<your-subdomain>.workers.dev`. A custom domain can be added later in the
+The first deploy creates the `ims-go-api-starter` worker; the site is then live at
+`https://ims-go-api-starter.<your-subdomain>.workers.dev`. A custom domain can be added later in the
 Cloudflare dashboard without changing anything here.
 
 **By hand**, from your machine:

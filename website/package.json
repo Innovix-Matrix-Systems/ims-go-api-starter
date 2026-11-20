@@ -1,5 +1,5 @@
 {
-  "name": "ims-docs",
+  "name": "ims-go-api-starter",
   "private": true,
   "type": "module",
   "description": "Documentation site for the IMS Go API Starter (Astro Starlight, content in ../docs).",
