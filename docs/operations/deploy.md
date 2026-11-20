@@ -32,8 +32,8 @@ enables the three units, and seeds `/etc/ims/ims-go-api/.env` from `deploy/.env.
 (`APP_ENV=production`, state paths under `/var/lib`, no default secrets). Fill in every
 `MUST SET` value; the app refuses to boot with unsafe production settings.
 
-Build with the **latest Go 1.26 patch** (CI does): older patches carry standard-library CVEs that
-`govulncheck` reports.
+Build with the **latest Go 1.26 patch** (CI does): older patches carry standard-library CVEs. To
+check a build yourself, run `go run golang.org/x/vuln/cmd/govulncheck@latest ./...`.
 
 ## Upgrade
 

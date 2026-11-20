@@ -68,12 +68,18 @@ workflow by hand from the **Actions** tab, e.g. after a docs-only fix.
    Workers**.
 2. In GitHub: **Settings → Secrets and variables → Actions**, add `CLOUDFLARE_API_TOKEN` and
    `CLOUDFLARE_ACCOUNT_ID` (shown on your Cloudflare Workers overview page).
-3. Optionally add a repository **variable** `DOCS_SITE_URL` with the final address (for canonical
-   links and the sitemap).
+3. **Workers & Pages → Your subdomain** must be registered once per Cloudflare account, or the
+   first deploy fails with "You need to register a workers.dev subdomain".
 
-The first deploy creates the `ims-go-api-starter` worker; the site is then live at
-`https://ims-go-api-starter.<your-subdomain>.workers.dev`. A custom domain can be added later in the
-Cloudflare dashboard without changing anything here.
+The first deploy creates the `ims-go-api-starter` Worker. The site is published at
+**[ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com)**, a **Custom Domain** attached to the Worker in the Cloudflare
+dashboard (**Worker → Settings → Domains & Routes → Add → Custom domain**). Cloudflare creates the DNS
+record and certificate. The domain is not in `wrangler.jsonc`, so the deploy token needs no zone
+permissions, and later deploys keep it.
+
+The site's own address (canonical links, sitemap) defaults to that domain in
+`website/astro.config.mjs`. If you fork the starter and publish somewhere else, set a repository
+**variable** `DOCS_SITE_URL` to your address.
 
 **By hand**, from your machine:
 

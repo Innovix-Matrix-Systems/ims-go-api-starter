@@ -5,6 +5,8 @@ import Default from '@astrojs/starlight/components/Hero.astro'
 import { LinkButton } from '@astrojs/starlight/components'
 import Architecture from './Architecture.astro'
 import { company } from '../company'
+import mark from '../assets/brand/innovix-mark.png'
+import markOnDark from '../assets/brand/innovix-mark-light.png'
 
 const { data } = Astro.locals.starlightRoute.entry
 const hero = data.hero
@@ -22,7 +24,10 @@ const { title = data.title, tagline, actions = [] } = hero || {}
       <div class="sl-flex stack">
         <div class="sl-flex copy">
           <a class="eyebrow" href={company.website} rel="noopener">
-            Open source, by <strong>{company.name}</strong>
+            Open source, by
+            <img class="light:sl-hidden" src={markOnDark.src} width="16" height="16" alt="" />
+            <img class="dark:sl-hidden" src={mark.src} width="16" height="16" alt="" />
+            <strong>{company.name}</strong>
           </a>
           <h1 id="_top" data-page-title set:html={title} />
           {tagline && <div class="tagline" set:html={tagline} />}

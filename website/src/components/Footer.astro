@@ -4,6 +4,8 @@
 import Default from '@astrojs/starlight/components/Footer.astro'
 import versionFile from '../../../VERSION?raw'
 import { company, starters } from '../company'
+import logo from '../assets/brand/innovix-logo.png'
+import logoOnDark from '../assets/brand/innovix-logo-light.png'
 
 const version = versionFile.trim()
 const year = new Date().getFullYear()
@@ -13,6 +15,10 @@ const year = new Date().getFullYear()
 
 <div class="ims-footer not-content">
   <div class="brand">
+    <a class="logo" href={company.website} rel="noopener" aria-label={company.name}>
+      <img class="light:sl-hidden" src={logoOnDark.src} width="160" height={Math.round((160 * logoOnDark.height) / logoOnDark.width)} alt={company.name} />
+      <img class="dark:sl-hidden" src={logo.src} width="160" height={Math.round((160 * logo.height) / logo.width)} alt={company.name} />
+    </a>
     <p class="made-by">
       Built and maintained by{' '}
       <a href={company.website} rel="noopener">{company.name}</a>
@@ -20,7 +26,7 @@ const year = new Date().getFullYear()
     <p class="pitch">{company.pitch}</p>
     <div class="cta">
       <a class="button primary" href={company.website} rel="noopener">Work with us</a>
-      <a class="button" href={`mailto:${company.email}`}>{company.email}</a>
+      <a class="button" href={`mailto:${company.emails.hello}`}>{company.emails.hello}</a>
     </div>
   </div>
 
@@ -41,11 +47,22 @@ const year = new Date().getFullYear()
       </ul>
     </div>
     <div>
+      <h2>This project</h2>
+      <ul>
+        <li><a href={company.repo} rel="noopener">Source code</a> <span>GitHub</span></li>
+        <li><a href={`${company.repo}/generate`} rel="noopener">Use this template</a></li>
+        <li><a href={`${company.repo}/issues/new`} rel="noopener">Report an issue</a></li>
+        <li><a href={`${company.repo}/releases`} rel="noopener">Releases</a></li>
+        <li><a href="/project/changelog/">Changelog</a></li>
+      </ul>
+    </div>
+    <div>
       <h2>Company</h2>
       <ul>
         <li><a href={company.website} rel="noopener">Website</a></li>
         <li><a href={company.github} rel="noopener">GitHub</a></li>
-        <li><a href={`mailto:${company.email}`}>Contact</a></li>
+        <li><a href={`mailto:${company.emails.info}`}>Contact</a> <span>{company.emails.info}</span></li>
+        <li><a href={`mailto:${company.emails.support}`}>Support</a> <span>{company.emails.support}</span></li>
         <li><span>{company.location}</span></li>
       </ul>
     </div>
@@ -65,6 +82,16 @@ const year = new Date().getFullYear()
     gap: 2rem;
     font-size: var(--sl-text-sm);
     color: var(--sl-color-gray-3);
+  }
+  .logo {
+    display: inline-block;
+    margin-bottom: 0.75rem;
+  }
+  /* No `display` here: Starlight's light:/dark:sl-hidden classes pick the
+     variant for the current theme. */
+  .logo img {
+    height: auto;
+    vertical-align: middle;
   }
   .made-by {
     margin: 0;

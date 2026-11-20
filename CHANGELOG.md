@@ -40,6 +40,10 @@ request, and `make rename` to turn the template into your own app.
 - **Public tenant routes.** `tenancy.Public` resolves the tenant from `X-Tenant-Code` (and
   optionally `X-Branch-Id`) before sign-in; first endpoint `GET /api/v1/public/tenant`. Modules add
   their own with `RegisterPublicTenantRoutes`.
+- **Documentation site at [ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com).**
+  - Innovix Matrix System credited in the hero, a footer on every page, the home page and the
+    README.
+  - The search dialog suggests pages and example searches before you type.
 
 ### Fixed
 
