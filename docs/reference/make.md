@@ -12,6 +12,7 @@ and docs site), so they work the same on Windows, macOS and Linux. `make help` p
 | Target | What it does |
 | --- | --- |
 | `make tools` | Install the developer tools used by `dev` and `lint`. |
+| `make rename` | Rename the starter to your app: make rename MODULE=github.com/acme/shop-api [NAME=] [BINARY=] [TITLE=] [DRY=1] |
 | `make env` | Warn when .env is missing. |
 | `make build` | Build the release binary with a baked-in version. |
 | `make build-all` | Build the developer SPA, then the Go binary. |

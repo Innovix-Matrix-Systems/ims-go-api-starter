@@ -12,9 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
 // HTTPMiddleware captures request/response pairs. It never touches request
@@ -39,7 +37,8 @@ func (c *Collector) HTTPMiddleware(next http.Handler) http.Handler {
 			requestBody = c.readRequestBody(r)
 			bodyLimit = c.capture.MaxBodyBytes
 		}
-		ctx := WithCapture(r.Context(), sampled)
+		ctx, _ := httpx.WithRequestInfo(r.Context())
+		ctx = WithCapture(ctx, sampled)
 		started := time.Now()
 		recorder := &captureWriter{ResponseWriter: w, limit: bodyLimit}
 
@@ -78,7 +77,6 @@ func (c *Collector) recordHTTPRequest(ctx context.Context, r *http.Request, reco
 	if routeCtx := chi.RouteContext(ctx); routeCtx != nil {
 		route = routeCtx.RoutePattern()
 	}
-	identity, hasIdentity := authn.IdentityFromContext(ctx)
 	entry := RequestEntry{
 		RequestID:     httpx.RequestIDFromContext(ctx),
 		Method:        r.Method,
@@ -95,19 +93,23 @@ func (c *Collector) recordHTTPRequest(ctx context.Context, r *http.Request, reco
 		ResponseBody:  c.redactor.JSON(recorder.body),
 		CreatedAt:     time.Now(),
 	}
-	if hasIdentity {
-		userID := identity.UserID
-		entry.UserID = &userID
-	}
-	if scope, ok := tenancy.FromContext(ctx); ok {
-		if tenantID := scope.EffectiveTenantID(); tenantID > 0 {
-			entry.TenantID = &tenantID
-		}
-		if branchID := scope.EffectiveBranchID(); branchID > 0 {
-			entry.BranchID = &branchID
-		}
+	// Who the request ran as is written by authn and tenancy into the holder
+	// this middleware put in the context: the context values they add never
+	// reach this outer layer.
+	if info := httpx.RequestInfoFrom(ctx); info != nil {
+		entry.UserID = positive(info.UserID)
+		entry.ImpersonatorID = positive(info.ImpersonatorID)
+		entry.TenantID = positive(info.TenantID)
+		entry.BranchID = positive(info.BranchID)
 	}
 	c.Request(entry)
+}
+
+func positive(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
 }
 
 // readRequestBody tees up to MaxBodyBytes of a JSON request body and restores

@@ -9,16 +9,18 @@ import (
 )
 
 type ActivityLog struct {
-	ID          int64              `json:"id"`
-	TenantID    *int64             `json:"tenant_id"`
-	ActorID     *int64             `json:"actor_id"`
-	Action      string             `json:"action"`
-	SubjectType string             `json:"subject_type"`
-	SubjectID   *int64             `json:"subject_id"`
-	Changes     []byte             `json:"changes"`
-	Ip          *string            `json:"ip"`
-	RequestID   *string            `json:"request_id"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ID               int64              `json:"id"`
+	TenantID         *int64             `json:"tenant_id"`
+	ActorID          *int64             `json:"actor_id"`
+	Action           string             `json:"action"`
+	SubjectType      string             `json:"subject_type"`
+	SubjectID        *int64             `json:"subject_id"`
+	Changes          []byte             `json:"changes"`
+	Ip               *string            `json:"ip"`
+	RequestID        *string            `json:"request_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ImpersonatorID   *int64             `json:"impersonator_id"`
+	ImpersonatorName *string            `json:"impersonator_name"`
 }
 
 type BackupRun struct {
@@ -158,24 +160,25 @@ type DevQueueEvent struct {
 }
 
 type DevRequest struct {
-	ID            int64              `json:"id"`
-	RequestID     string             `json:"request_id"`
-	Method        string             `json:"method"`
-	Path          string             `json:"path"`
-	Route         string             `json:"route"`
-	Status        int32              `json:"status"`
-	DurationMs    float64            `json:"duration_ms"`
-	RequestBytes  int64              `json:"request_bytes"`
-	ResponseBytes int64              `json:"response_bytes"`
-	UserID        *int64             `json:"user_id"`
-	TenantID      *int64             `json:"tenant_id"`
-	BranchID      *int64             `json:"branch_id"`
-	Ip            *string            `json:"ip"`
-	UserAgent     *string            `json:"user_agent"`
-	Headers       []byte             `json:"headers"`
-	RequestBody   []byte             `json:"request_body"`
-	ResponseBody  []byte             `json:"response_body"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ID             int64              `json:"id"`
+	RequestID      string             `json:"request_id"`
+	Method         string             `json:"method"`
+	Path           string             `json:"path"`
+	Route          string             `json:"route"`
+	Status         int32              `json:"status"`
+	DurationMs     float64            `json:"duration_ms"`
+	RequestBytes   int64              `json:"request_bytes"`
+	ResponseBytes  int64              `json:"response_bytes"`
+	UserID         *int64             `json:"user_id"`
+	TenantID       *int64             `json:"tenant_id"`
+	BranchID       *int64             `json:"branch_id"`
+	Ip             *string            `json:"ip"`
+	UserAgent      *string            `json:"user_agent"`
+	Headers        []byte             `json:"headers"`
+	RequestBody    []byte             `json:"request_body"`
+	ResponseBody   []byte             `json:"response_body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ImpersonatorID *int64             `json:"impersonator_id"`
 }
 
 type FeatureFlag struct {

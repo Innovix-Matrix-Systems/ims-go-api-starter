@@ -44,6 +44,7 @@ const (
 	PermUserInternalRoleAssign = "user.internal.role.assign"
 	PermUserTenantSwitch       = "user.tenant.switch"
 	PermUserBranchSwitch       = "user.branch.switch"
+	PermUserImpersonate        = "user.impersonate"
 	PermUserImport             = "user.import"
 	PermUserExport             = "user.export"
 	PermUserInternalImport     = "user.internal.import"
@@ -60,6 +61,7 @@ const (
 	PermNotificationUpdate  = "notification.update"
 
 	PermActivityView       = "activity.view"
+	PermActivityViewAll    = "activity.view.all"
 	PermNotificationDelete = "notification.delete"
 
 	PermDataProcessingViewAll = "data_processing_job.view.all"
@@ -136,6 +138,7 @@ var Catalog = []Permission{
 	{Name: PermUserInternalImport, Group: "user", IsSystem: true, Description: "Can import internal users"},
 	{Name: PermUserTenantSwitch, Group: "user", IsSystem: true, Description: "Can switch active tenant"},
 	{Name: PermUserBranchSwitch, Group: "user", Description: "Can switch active branch"},
+	{Name: PermUserImpersonate, Group: "user", IsSystem: true, Description: "Can act as another user (X-Acting-User)"},
 
 	// ── file ──────────────────────────────────────────────
 	{Name: PermFileView, Group: "file", Description: "Can view file details"},
@@ -176,6 +179,7 @@ var Catalog = []Permission{
 	{Name: PermNotificationUpdate, Group: "notification", IsSystem: true, Description: "Can modify existing notifications"},
 
 	{Name: PermActivityView, Group: "activity", Description: "Can view the activity log"},
+	{Name: PermActivityViewAll, Group: "activity", IsSystem: true, Description: "Can view every tenant's activity log and the system audit log"},
 	{Name: PermNotificationDelete, Group: "notification", IsSystem: true, Description: "Can delete notifications"},
 
 	// ── setting ───────────────────────────────────────────
@@ -199,13 +203,15 @@ var Catalog = []Permission{
 }
 
 // DeveloperPermissions is the hidden Developer role: developer-dashboard
-// access only (dev.view, dev.manage). It deliberately holds no tenant or
+// access (dev.view, dev.manage) plus user.impersonate. It holds no tenant or
 // system data-administration permissions — a leaked developer token must not
-// be a platform super-user (review H13).
+// be a platform super-user (review H13). Acting as a user was granted on
+// purpose (phase 21): every use is written to the system audit log, and the
+// target refusals (no admins, no platform accounts) still apply.
 func DeveloperPermissions() []Permission {
-	out := make([]Permission, 0, 2)
+	out := make([]Permission, 0, 3)
 	for _, permission := range Catalog {
-		if permission.Group == "dev" {
+		if permission.Group == "dev" || permission.Name == PermUserImpersonate {
 			out = append(out, permission)
 		}
 	}

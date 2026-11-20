@@ -148,6 +148,8 @@ func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rec := &ResponseRecorder{ResponseWriter: w, Status: http.StatusOK}
 			start := time.Now()
+			ctx, info := WithRequestInfo(r.Context())
+			r = r.WithContext(ctx)
 			next.ServeHTTP(rec, r)
 			attrs := []any{
 				"request_id", RequestIDFromContext(r.Context()),
@@ -160,6 +162,15 @@ func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 			}
 			if routeCtx := chi.RouteContext(r.Context()); routeCtx != nil && routeCtx.RoutePattern() != "" {
 				attrs = append(attrs, "route", routeCtx.RoutePattern())
+			}
+			if info.UserID != 0 {
+				attrs = append(attrs, "user_id", info.UserID)
+			}
+			if info.ImpersonatorID != 0 {
+				attrs = append(attrs, "impersonator_id", info.ImpersonatorID)
+			}
+			if info.TenantID != 0 {
+				attrs = append(attrs, "tenant_id", info.TenantID)
 			}
 			switch {
 			case rec.Status >= 500:

@@ -15,15 +15,18 @@ type RequestEntry struct {
 	DurationMS    float64
 	RequestBytes  int64
 	ResponseBytes int64
-	UserID        *int64
-	TenantID      *int64
-	BranchID      *int64
-	IP            string
-	UserAgent     string
-	Headers       map[string][]string
-	RequestBody   json.RawMessage
-	ResponseBody  json.RawMessage
-	CreatedAt     time.Time
+	UserID        *int64 // the identity the request ran as
+	// ImpersonatorID is who was really calling when acting as a user
+	// (X-Acting-User); UserID is then the target.
+	ImpersonatorID *int64
+	TenantID       *int64
+	BranchID       *int64
+	IP             string
+	UserAgent      string
+	Headers        map[string][]string
+	RequestBody    json.RawMessage
+	ResponseBody   json.RawMessage
+	CreatedAt      time.Time
 }
 
 // QueryEntry is one captured SQL statement.

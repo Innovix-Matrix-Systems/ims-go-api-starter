@@ -75,6 +75,18 @@ can sign in. Links use `AUTH_EMAIL_VERIFY_URL` and expire after `AUTH_EMAIL_VERI
 | a tenant admin | `POST /api/v1/user/change-password` | `user.update` |
 | platform staff | `PATCH /api/v1/internal/user/change-password` | internal permission |
 
+## Acting as a user
+
+A holder of `user.impersonate` can send `X-Acting-User: <user id>` on tenant routes to make that
+one request run as the user: their permissions, tenant and branch. No token is issued and the
+user's sessions and `last_login_at` are untouched; stop by not sending the header. Profile,
+password, avatar and branch-switch endpoints refuse with 403 `IMPERSONATION_FORBIDDEN` while
+acting, and every request is written to the system audit log. Rules and refusals are in the
+[tenancy guide](tenancy.md#how-a-request-is-resolved).
+
+In code, `authn.IdentityFromContext(ctx)` is the target; `identity.Impersonated()` and
+`identity.ImpersonatorID` tell you someone else is calling.
+
 ## In code
 
 ```go

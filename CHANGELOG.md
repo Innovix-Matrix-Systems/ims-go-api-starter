@@ -6,12 +6,66 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-21
+
+Act as a user, a system audit log, public tenant routes, request telemetry that knows who made each
+request, and `make rename` to turn the template into your own app.
+
+**Upgrading from 0.1.0:** run `ims migrate` (migrations `00025` and `00026`), then
+`ims permission:sync` and `ims db:seed` (idempotent; it gives the Developer role
+`user.impersonate`). Internal accounts that read `GET /api/v1/activity` now need
+`activity.view.all`. Code calling `tenancy.Exempt()` passes the responder:
+`tenancy.Exempt(responder)`.
+
 ### Added
 
+<!-- rename:keep -->
+- **`make rename`.** Turns a project made from the template into your own app in one step:
+  `make rename MODULE=github.com/acme/shop-api [NAME=] [BINARY=] [TITLE=] [DRY=1]` rewrites the
+  module path, binary and CLI name, deploy names and paths, display title and `IMS_` deploy
+  variables, renames the systemd units, and regenerates code and docs. Seeded e-mails and credit
+  links are kept; it refuses uncommitted changes and a project that was already renamed.
+<!-- rename:end -->
+- **Act as a user.** `X-Acting-User: <user id>` runs one tenant request as that user (their
+  permissions, tenant and branch), for holders of the new `user.impersonate` permission
+  (Super-Admin, Developer, or any internal role it is assigned to). Admins, platform accounts and
+  inactive users cannot be targets; profile, password, avatar and branch-switch changes are refused
+  while acting (`IMPERSONATION_FORBIDDEN`).
+- **System audit log.** Activity entries without a tenant are the system log. Internal users with
+  the new `activity.view.all` read every tenant and the system log at `GET /api/v1/activity`,
+  filtered with `tenant_id=<id>` or `tenant_id=system`, plus `impersonator_id` and `impersonated`.
+- **Act-as audit trail.** `impersonation.started` (fail-closed), `impersonation.request` for every
+  request and `impersonation.denied` are system entries. Entries written while acting carry the
+  staff member (`impersonator_id`, `impersonator_name`); tenants see only `by_staff: true`.
+- **Public tenant routes.** `tenancy.Public` resolves the tenant from `X-Tenant-Code` (and
+  optionally `X-Branch-Id`) before sign-in; first endpoint `GET /api/v1/public/tenant`. Modules add
+  their own with `RegisterPublicTenantRoutes`.
 - **Documentation site at [ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com).**
   - Innovix Matrix System credited in the hero, a footer on every page, the home page and the
     README.
   - The search dialog suggests pages and example searches before you type.
+
+### Fixed
+
+- **Request telemetry records who made the request.** Captured requests always had an empty
+  `user_id` and `tenant_id`: telemetry read them from its own outer request context, which the
+  authentication and tenancy layers never write to. They now fill an `httpx.RequestInfo` holder
+  that telemetry and the access log read after the handler. Requests made while acting as a user
+  also record `impersonator_id` (migration `00026`), shown as an "acting" chip in the dashboard;
+  the access log gains `user_id`, `tenant_id` and `impersonator_id`.
+
+- **Dashboard date filters use your calendar day.** The audit log and files pages sent the picked
+  date as a bare `YYYY-MM-DD`, which the API reads as a UTC day, so near midnight (00:00-06:00 in
+  UTC+6) "today" missed that night's entries. They now send the local day as RFC 3339 bounds with
+  the browser's offset. The audit-log test built "today" from local time and failed in the same
+  window; it now checks both forms.
+
+### Changed
+
+- Internal accounts without `activity.view.all` now get 403 on `GET /api/v1/activity` instead of
+  every tenant's entries.
+- `tenancy.Exempt` takes the responder and refuses `X-Acting-User` with 422.
+- `CORS_ALLOWED_HEADERS` default includes `X-Acting-User`.
 
 ## [0.1.0] - 2026-11-20
 
@@ -54,5 +108,6 @@ The first versioned release: the full starter, its developer dashboard and its d
   per-tenant lock every query runs on the locked transaction.
 - A failed backup run reports `destinations: []` instead of `null`.
 
-[Unreleased]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/releases/tag/v0.1.0

@@ -48,7 +48,7 @@ func (q *Queries) GetDevLogByID(ctx context.Context, id int64) (DevLog, error) {
 }
 
 const getDevRequestByID = `-- name: GetDevRequestByID :one
-SELECT id, request_id, method, path, route, status, duration_ms, request_bytes, response_bytes, user_id, tenant_id, branch_id, ip, user_agent, headers, request_body, response_body, created_at FROM dev_requests WHERE id = $1
+SELECT id, request_id, method, path, route, status, duration_ms, request_bytes, response_bytes, user_id, tenant_id, branch_id, ip, user_agent, headers, request_body, response_body, created_at, impersonator_id FROM dev_requests WHERE id = $1
 `
 
 func (q *Queries) GetDevRequestByID(ctx context.Context, id int64) (DevRequest, error) {
@@ -73,6 +73,7 @@ func (q *Queries) GetDevRequestByID(ctx context.Context, id int64) (DevRequest, 
 		&i.RequestBody,
 		&i.ResponseBody,
 		&i.CreatedAt,
+		&i.ImpersonatorID,
 	)
 	return i, err
 }
@@ -211,32 +212,33 @@ func (q *Queries) InsertDevQueueEvent(ctx context.Context, arg InsertDevQueueEve
 
 const insertDevRequest = `-- name: InsertDevRequest :one
 INSERT INTO dev_requests (request_id, method, path, route, status, duration_ms, request_bytes,
-                          response_bytes, user_id, tenant_id, branch_id, ip, user_agent, headers,
-                          request_body, response_body, created_at)
+                          response_bytes, user_id, impersonator_id, tenant_id, branch_id, ip, user_agent,
+                          headers, request_body, response_body, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12, $13, $14,
-        $15, $16, $17)
+        $15, $16, $17, $18)
 RETURNING id
 `
 
 type InsertDevRequestParams struct {
-	RequestID     string             `json:"request_id"`
-	Method        string             `json:"method"`
-	Path          string             `json:"path"`
-	Route         string             `json:"route"`
-	Status        int32              `json:"status"`
-	DurationMs    float64            `json:"duration_ms"`
-	RequestBytes  int64              `json:"request_bytes"`
-	ResponseBytes int64              `json:"response_bytes"`
-	UserID        *int64             `json:"user_id"`
-	TenantID      *int64             `json:"tenant_id"`
-	BranchID      *int64             `json:"branch_id"`
-	Ip            *string            `json:"ip"`
-	UserAgent     *string            `json:"user_agent"`
-	Headers       []byte             `json:"headers"`
-	RequestBody   []byte             `json:"request_body"`
-	ResponseBody  []byte             `json:"response_body"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	RequestID      string             `json:"request_id"`
+	Method         string             `json:"method"`
+	Path           string             `json:"path"`
+	Route          string             `json:"route"`
+	Status         int32              `json:"status"`
+	DurationMs     float64            `json:"duration_ms"`
+	RequestBytes   int64              `json:"request_bytes"`
+	ResponseBytes  int64              `json:"response_bytes"`
+	UserID         *int64             `json:"user_id"`
+	ImpersonatorID *int64             `json:"impersonator_id"`
+	TenantID       *int64             `json:"tenant_id"`
+	BranchID       *int64             `json:"branch_id"`
+	Ip             *string            `json:"ip"`
+	UserAgent      *string            `json:"user_agent"`
+	Headers        []byte             `json:"headers"`
+	RequestBody    []byte             `json:"request_body"`
+	ResponseBody   []byte             `json:"response_body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
 func (q *Queries) InsertDevRequest(ctx context.Context, arg InsertDevRequestParams) (int64, error) {
@@ -250,6 +252,7 @@ func (q *Queries) InsertDevRequest(ctx context.Context, arg InsertDevRequestPara
 		arg.RequestBytes,
 		arg.ResponseBytes,
 		arg.UserID,
+		arg.ImpersonatorID,
 		arg.TenantID,
 		arg.BranchID,
 		arg.Ip,
@@ -520,7 +523,7 @@ func (q *Queries) ListDevQueueEventsByRequestID(ctx context.Context, requestID *
 }
 
 const listDevRequests = `-- name: ListDevRequests :many
-SELECT id, request_id, method, path, route, status, duration_ms, request_bytes, response_bytes, user_id, tenant_id, branch_id, ip, user_agent, headers, request_body, response_body, created_at FROM dev_requests
+SELECT id, request_id, method, path, route, status, duration_ms, request_bytes, response_bytes, user_id, tenant_id, branch_id, ip, user_agent, headers, request_body, response_body, created_at, impersonator_id FROM dev_requests
 WHERE ($1::bigint = 0 OR id < $1::bigint)
   AND ($2::text = '' OR method = $2::text)
   AND ($3::integer = 0 OR status = $3::integer)
@@ -580,6 +583,7 @@ func (q *Queries) ListDevRequests(ctx context.Context, arg ListDevRequestsParams
 			&i.RequestBody,
 			&i.ResponseBody,
 			&i.CreatedAt,
+			&i.ImpersonatorID,
 		); err != nil {
 			return nil, err
 		}

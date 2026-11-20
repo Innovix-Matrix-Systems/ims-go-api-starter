@@ -35,7 +35,24 @@ import Terminal from '@components/Terminal.astro'
    cp .env.example .env
    ```
 
-3. **Install the tools once.** `air` (hot reload) and `golangci-lint`, then the dashboard's
+3. {/* rename:keep */}**Give it your names.** One command rewrites the starter's names everywhere: the Go module
+   path, the binary and CLI (`ims` → `shop`), the deploy names and paths, the display title and
+   the `IMS_` deploy variables. It also renames the systemd units and regenerates the code and docs.
+   It refuses to run with uncommitted changes, so the rename is one reviewable commit.
+
+   ```bash
+   make rename MODULE=github.com/acme/shop-api DRY=1                            # preview
+   make rename MODULE=github.com/acme/shop-api BINARY=shop TITLE="Acme Shop"   # NAME, BINARY, TITLE are optional
+   git add -A && git commit -m "chore: rename the starter to shop-api"
+   ```
+
+   `NAME` defaults to the last part of the module (`shop-api`), `BINARY` to the name, and `TITLE`
+   to the name in title case (`Shop API`). Left as they are: the seeded `@ims.com` accounts and the
+   credit links. Run it once; it refuses a project that has already been renamed. The commands
+   below use the starter's names: substitute yours.
+   {/* rename:end */}
+
+4. **Install the tools once.** `air` (hot reload) and `golangci-lint`, then the dashboard's
    packages.
 
    ```bash
@@ -43,20 +60,20 @@ import Terminal from '@components/Terminal.astro'
    npm --prefix web/dev ci
    ```
 
-4. **Start Postgres** — skip this if you already have one running.
+5. **Start Postgres** — skip this if you already have one running.
 
    ```bash
    make db-up        # docker compose: creates ims_go_api and ims_go_api_test
    ```
 
-5. **Create the schema and seed data.** Migrations first, then permissions, the default tenant,
+6. **Create the schema and seed data.** Migrations first, then permissions, the default tenant,
    roles and two accounts.
 
    ```bash
    make migrate seed
    ```
 
-6. **Run everything with hot reload.**
+7. **Run everything with hot reload.**
 
    ```bash
    make dev
@@ -93,7 +110,8 @@ The password comes from `AUTH_DEFAULT_PASSWORD`. The API reference (Scalar, from
 
 ![The developer dashboard overview](../images/dev-dashboard.png)
 
-Call the API from a terminal:
+Call the API from a terminal. Sign in and use the system side with just the token, the way an
+admin panel does:
 
 <Tabs>
 <TabItem label="bash">
@@ -101,9 +119,10 @@ Call the API from a terminal:
 ```bash
 TOKEN=$(curl -s localhost:8080/api/v1/login -H 'Content-Type: application/json' \
   -d '{"email":"superadmin@ims.com","password":"123456","device":"cli"}' | jq -r .data.token)
+AUTH=(-H "Authorization: Bearer $TOKEN")
 
-curl -s localhost:8080/api/v1/branch -H "Authorization: Bearer $TOKEN" \
-  -H "X-Acting-Tenant: 1" -H "X-Acting-Branch: 1" | jq
+curl -s localhost:8080/api/v1/tenant "${AUTH[@]}" | jq    # system panel: every tenant
+curl -s localhost:8080/api/v1/branch "${AUTH[@]}" | jq    # a tenant resource, read across all tenants
 ```
 
 </TabItem>
@@ -112,17 +131,55 @@ curl -s localhost:8080/api/v1/branch -H "Authorization: Bearer $TOKEN" \
 ```powershell
 $login = Invoke-RestMethod http://localhost:8080/api/v1/login -Method Post `
   -ContentType 'application/json' -Body '{"email":"superadmin@ims.com","password":"123456","device":"cli"}'
-$headers = @{ Authorization = "Bearer $($login.data.token)"; 'X-Acting-Tenant' = '1'; 'X-Acting-Branch' = '1' }
-Invoke-RestMethod http://localhost:8080/api/v1/branch -Headers $headers
+$auth = @{ Authorization = "Bearer $($login.data.token)" }
+
+Invoke-RestMethod http://localhost:8080/api/v1/tenant -Headers $auth    # system panel: every tenant
+Invoke-RestMethod http://localhost:8080/api/v1/branch -Headers $auth    # a tenant resource, read across all tenants
 ```
 
 </TabItem>
 </Tabs>
 
-<Aside title="Why the X-Acting headers?">
-  The super admin belongs to no tenant. To read or write a tenant's data it **impersonates** one
-  with `X-Acting-Tenant` / `X-Acting-Branch`. A tenant user never sends them — their tenant comes
-  from their account. See [Tenancy](../guides/tenancy.md).
+To work **inside one tenant**, add the acting headers. Reads narrow to that tenant, and writes to
+tenant resources need them (without them the super admin gets 403):
+
+<Tabs>
+<TabItem label="bash">
+
+```bash
+ACT=(-H "X-Acting-Tenant: 1" -H "X-Acting-Branch: 1")
+
+curl -s localhost:8080/api/v1/branch "${AUTH[@]}" "${ACT[@]}" | jq    # tenant 1 only
+curl -s localhost:8080/api/v1/branch "${AUTH[@]}" "${ACT[@]}" \
+  -H 'Content-Type: application/json' -d '{"name":"Uptown"}' | jq      # a write inside tenant 1
+```
+
+</TabItem>
+<TabItem label="PowerShell">
+
+```powershell
+$act = $auth + @{ 'X-Acting-Tenant' = '1'; 'X-Acting-Branch' = '1' }
+
+Invoke-RestMethod http://localhost:8080/api/v1/branch -Headers $act    # tenant 1 only
+Invoke-RestMethod http://localhost:8080/api/v1/branch -Method Post -Headers $act `
+  -ContentType 'application/json' -Body '{"name":"Uptown"}'          # a write inside tenant 1
+```
+
+</TabItem>
+</Tabs>
+
+<Aside title="When does the super admin send acting headers?">
+  Only to work inside one tenant, or as one user. Signing in and the system routes (tenants, internal
+  users and roles, packages, internal settings, the system audit log) never use them, and reads
+  of tenant resources without them span every tenant.
+
+  - `X-Acting-Tenant` (+ `X-Acting-Branch`): **view or work inside one tenant**, still as yourself.
+    Writes to tenant resources need both.
+  - `X-Acting-User: <user id>`: **act as one user**, with their permissions, tenant and branch.
+    Every request is recorded in the system audit log.
+
+  A tenant user never sends any of them: their tenant comes from their account. See
+  [Tenancy](../guides/tenancy.md#how-a-request-is-resolved).
 </Aside>
 
 ## Background work

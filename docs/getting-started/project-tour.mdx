@@ -9,6 +9,7 @@ import { FileTree, Aside } from '@astrojs/starlight/components'
 - api/
   - openapi.yaml the HTTP contract — canonical, served at /docs
 - cmd/app/main.go the single entry point (`ims`)
+- cmd/rename/ `make rename`: turns the template into your app (logic in internal/rename)
 - docs/ these pages, as plain Markdown
 - internal/
   - app/ composition root
@@ -75,8 +76,9 @@ Three folders are generated and **committed**. CI regenerates them and fails on 
 
 <Aside type="tip" title="Building your own product on it?">
   Start with GitHub's **[Use this template](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/generate)** button rather than a fork: you get a repository of
-  your own with a clean history. Then keep `docs/` (it documents your codebase) and rename the
-  module path in `go.mod`. If you don't want to publish a docs site, delete `website/`; nothing
+  your own with a clean history. Then run `make rename MODULE=github.com/you/your-app` to give it
+  your module path, binary and names (see the [quick start](./quick-start.mdx)), and keep `docs/`:
+  it documents your codebase. If you don't want to publish a docs site, delete `website/`; nothing
   else depends on it.
 </Aside>
 

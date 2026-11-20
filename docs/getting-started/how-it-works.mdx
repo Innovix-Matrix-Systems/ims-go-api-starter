@@ -104,8 +104,9 @@ Every route lives in one of these groups (`internal/app/routes.go`):
 | Group | Middleware | Examples |
 | --- | --- | --- |
 | Public | none | `/up`, `/api/health`, login, password reset, public packages, gateway callbacks |
+| Public tenant | `X-Tenant-Code` → resolve tenant (no token) | `/api/v1/public/tenant` and each module's `RegisterPublicTenantRoutes` |
 | Authenticated | bearer token | logout |
-| Tenant-resolved | token → resolve tenant & branch | users, branches, roles, settings, flags, files of a tenant, billing status |
+| Tenant-resolved | token → resolve tenant & branch (acting headers apply here) | users, branches, roles, settings, flags, activity, billing status |
 | Tenant-exempt | token → exempt (+ internal-only) | tenants, permissions, internal users/roles, packages, internal billing |
 | Dashboard | dashboard enabled → token → exempt → `dev.view` | `/dev`, `/dev/api/*` (mutations add `dev.manage`) |
 

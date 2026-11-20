@@ -28,7 +28,7 @@ command or record.
 | Panel | Shows |
 | --- | --- |
 | **Overview** | active and failed jobs, recent exceptions and commands, the latest requests, queue depth |
-| **Telescope** | every captured request — headers, bodies (redacted), the SQL it ran, cache calls, jobs it enqueued, timing |
+| **Telescope** | every captured request — headers, bodies (redacted), the SQL it ran, cache calls, jobs it enqueued, timing, the user and tenant (an "acting" chip when staff acted as the user) |
 | **Logs** | warn-and-above log lines with full-text search, level and date filters |
 | **Exceptions** | panics and 5xx with stack traces and the request that caused them |
 

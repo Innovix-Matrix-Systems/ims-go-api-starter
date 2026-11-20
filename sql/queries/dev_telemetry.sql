@@ -1,10 +1,10 @@
 -- name: InsertDevRequest :one
 INSERT INTO dev_requests (request_id, method, path, route, status, duration_ms, request_bytes,
-                          response_bytes, user_id, tenant_id, branch_id, ip, user_agent, headers,
-                          request_body, response_body, created_at)
+                          response_bytes, user_id, impersonator_id, tenant_id, branch_id, ip, user_agent,
+                          headers, request_body, response_body, created_at)
 VALUES (@request_id, @method, @path, @route, @status, @duration_ms, @request_bytes,
-        @response_bytes, @user_id, @tenant_id, @branch_id, @ip, @user_agent, @headers,
-        @request_body, @response_body, @created_at)
+        @response_bytes, @user_id, @impersonator_id, @tenant_id, @branch_id, @ip, @user_agent,
+        @headers, @request_body, @response_body, @created_at)
 RETURNING id;
 
 -- name: InsertDevQuery :exec

@@ -20,7 +20,7 @@ import {
   StatCard,
   type Tone,
 } from '../components/ui'
-import { formatDateTime, formatDuration, relativeTime } from '../format'
+import { formatDateTime, formatDuration, localDayEnd, localDayStart, relativeTime } from '../format'
 
 interface AuditSearch {
   q?: string
@@ -161,8 +161,8 @@ function AuditPage() {
           action: filters.action,
           actor_id: filters.who,
           status: filters.status,
-          from: filters.from,
-          to: filters.to,
+          from: localDayStart(filters.from),
+          to: localDayEnd(filters.to),
         },
         signal,
         unwrap: false,

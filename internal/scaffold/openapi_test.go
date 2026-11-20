@@ -24,6 +24,7 @@ components:
     Search: {name: search, in: query, schema: {type: string}}
     ActingTenant: {name: X-Acting-Tenant, in: header, schema: {type: integer}}
     ActingBranch: {name: X-Acting-Branch, in: header, schema: {type: integer}}
+    ActingUser: {name: X-Acting-User, in: header, schema: {type: integer}}
   responses:
     BadRequest: {description: bad}
     Unauthorized: {description: unauthorized}

@@ -84,7 +84,7 @@ func (c *Config) loadOps() error {
 			AllowedOrigins: splitCSV(getString("CORS_ALLOWED_ORIGINS", "")),
 			AllowedMethods: splitCSV(getString("CORS_ALLOWED_METHODS", "GET,POST,PATCH,PUT,DELETE,OPTIONS")),
 			AllowedHeaders: splitCSV(getString("CORS_ALLOWED_HEADERS",
-				"Authorization,Content-Type,Accept,Accept-Language,X-Acting-Tenant,X-Acting-Branch,X-Tenant-Code,X-Branch-Id,X-Request-Id")),
+				"Authorization,Content-Type,Accept,Accept-Language,X-Acting-Tenant,X-Acting-Branch,X-Acting-User,X-Tenant-Code,X-Branch-Id,X-Request-Id")),
 			MaxAge: time.Duration(maxAgeSecs) * time.Second,
 		},
 	}

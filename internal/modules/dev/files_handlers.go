@@ -205,6 +205,10 @@ func parseOptionalBool(raw, field string) (*bool, error) {
 	return &value, nil
 }
 
+// parseOptionalTime reads an RFC 3339 timestamp, or a bare YYYY-MM-DD date
+// taken as that whole day in UTC (endOfDay picks its last instant). Clients
+// filtering by a person's calendar day send RFC 3339 bounds with their offset,
+// as the dashboard does.
 func parseOptionalTime(raw, field string, endOfDay bool) (*time.Time, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -216,7 +220,7 @@ func parseOptionalTime(raw, field string, endOfDay bool) (*time.Time, error) {
 	parsed, err := time.Parse("2006-01-02", raw)
 	if err != nil {
 		return nil, apperr.Validation(map[string][]string{
-			field: {"The date must be YYYY-MM-DD or RFC 3339."},
+			field: {"The date must be YYYY-MM-DD (a UTC day) or RFC 3339."},
 		})
 	}
 	if endOfDay {

@@ -8,6 +8,7 @@ import { DataTable } from '../components/DataTable'
 import { Select } from '../components/inputs'
 import {
   Button,
+  Chip,
   EmptyState,
   ErrorBox,
   Icon,
@@ -115,7 +116,17 @@ function RequestsPage() {
         header: 'User',
         accessorFn: (row) => row.user_id ?? 0,
         cell: ({ row }) => (
-          <span className="small muted">{row.original.user_id ?? '—'}</span>
+          <span className="small muted">
+            {row.original.user_id ?? '—'}
+            {row.original.impersonator_id != null && (
+              <>
+                {' '}
+                <span title={`Acting as user ${row.original.user_id} on behalf of user ${row.original.impersonator_id}`}>
+                  <Chip tone="purple">acting · {row.original.impersonator_id}</Chip>
+                </span>
+              </>
+            )}
+          </span>
         ),
       },
       {

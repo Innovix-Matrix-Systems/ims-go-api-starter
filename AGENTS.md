@@ -56,6 +56,18 @@ go test -count=1 -race -p 2 ./...   # -p 2 locally: parallel race builds can exh
 Finish work with the `verify-changes` skill. Commit only when the user asks; then one commit per
 feature with a message that says what changed and why.
 
+<!-- rename:keep -->
+## Renaming a project made from the template
+
+`make rename MODULE=github.com/acme/shop-api [NAME=] [BINARY=] [TITLE=] [DRY=1]` (`cmd/rename`,
+logic in `internal/rename`) rewrites the module path, the `ims` binary/CLI/user, the
+`ims-go-api(-starter)` names, the `IMS Go API Starter`/`IMS` titles and the `IMS_` deploy
+variables in every tracked file, renames the systemd units, then runs `go mod tidy`, `make
+generate` and `make docs-gen`. It keeps `@ims.com` seed e-mails and Innovix credit links, refuses a
+dirty tree, and runs once. When you add a file or name that carries the starter's name, check it
+with `make rename MODULE=github.com/acme/x DRY=1`.
+<!-- rename:end -->
+
 ## Repository map
 
 ```text
@@ -197,7 +209,9 @@ Business validation lives in services: `apperr.Validation(map[string][]string{..
 
 **Tenancy** — `tenancy.From(r)` gives the `Scope`; `scope.Filter()` is what repositories use for
 single-row reads: one tenant, or every tenant only for internal/global reads. A zero `Filter`
-matches **no** tenant rows (fails closed). Impersonators send `X-Acting-Tenant` /
+matches **no** tenant rows (fails closed). `X-Acting-User` (`user.impersonate`) runs the request as
+another user (`Identity.ImpersonatorID` is the caller; mount `authn.DenyImpersonated` on account
+changes). Public pre-sign-in routes use `tenancy.Public` (`X-Tenant-Code`). Impersonators send `X-Acting-Tenant` /
 `X-Acting-Branch`.
 
 > **Tenant isolation is explicit — there is no RLS.** Every tenant-scoped query MUST filter on
@@ -209,10 +223,16 @@ matches **no** tenant rows (fails closed). Impersonators send `X-Acting-Tenant` 
 not re-check permissions. Password reset and e-mail verification use single-use hashed tokens in
 the cache (`authn.Recovery`); responses never reveal whether an e-mail exists.
 
+**Who made a request, outside the chain** — middleware that wraps authentication (access log,
+telemetry) cannot see context values added inside it. They read `httpx.RequestInfoFrom(ctx)`,
+which `authn.Authenticate` (`httpx.NoteUser`) and `tenancy` (`httpx.NoteScope`) fill in.
+
 **Activity log** — services call `s.activity.Record(ctx, activity.Entry{TenantID, Action:
 "branch.created", Subject: "branch", SubjectID, Changes})` after a change succeeds. A nil recorder
 records nothing; actor, IP and request id come from the context; secret-looking keys are redacted.
-Read at `GET /api/v1/activity` (`activity.view`).
+Read at `GET /api/v1/activity` (`activity.view`: own tenant; `activity.view.all`: every tenant
+and the system log, the rows with no tenant). Entries written while acting as a user carry the
+impersonator; act-as itself is logged as `impersonation.*` system rows.
 
 **Pagination** — `page`/`per_page` (default 10, max 100) via `httpx.PageParams`, whitelisted
 ordering via `httpx.OrderParams`, `h.Paginated(...)` with `httpx.NewPagination`. Feeds
@@ -280,7 +300,10 @@ Keep this list accurate; add to it when you make a non-obvious choice (also upda
 - Backups are local-first with optional S3/R2 copies.
 - Dashboard: handlers call services (`dev/services.go`), mutations need `dev.manage` on the route,
   every mutation and dashboard sign-in is audited (`dev_actions`, with IP and browser).
-- Tenant `is_active` is not enforced at request time yet (dashboard shows it read-only).
+- Tenant `is_active` is not enforced at request time yet (dashboard shows it read-only); public
+  tenant routes (`tenancy.Public`) do enforce it.
+- Act as a user per request (`X-Acting-User`), not with login-as tokens; act-as is written to the
+  system audit log (start is fail-closed, every request is logged).
 
 ## When a task is ambiguous
 

@@ -28,7 +28,8 @@ Everything lives under `/api/v1`. Breaking changes get a new version prefix; add
 | `Authorization: Bearer <id>\|<secret>` | every authenticated request |
 | `Content-Type: application/json` | request bodies (multipart for uploads) |
 | `Accept-Language: en \| bn` | localised messages |
-| `X-Acting-Tenant`, `X-Acting-Branch` | platform accounts acting inside a tenant (impersonation) |
+| `X-Acting-Tenant`, `X-Acting-Branch` | platform accounts working inside one tenant (needed for writes to tenant resources; without them, reads span every tenant) |
+| `X-Acting-User` | acting as one user, with their permissions and tenant (`user.impersonate`; recorded in the system audit log) |
 | `X-Tenant-Code`, `X-Branch-Id` | public routes that need a tenant |
 | `X-Request-ID` (response) | the request's id — quote it in bug reports |
 
@@ -69,7 +70,7 @@ Pagination parameters: `page` + `per_page` (default 10, max 100) for management 
 | 415 | unsupported content type |
 | 422 | validation failed (`errors`) |
 | 429 | rate limited (`retry_after`) |
-| 503 | not ready (health) or a gateway is unavailable |
+| 503 | not ready (health), a gateway is unavailable, or acting as a user while the audit log cannot be written |
 
 Full detail: [Validation & errors](../guides/validation-and-errors.md) and
 [Handlers & routes](../guides/handlers-and-routes.md).

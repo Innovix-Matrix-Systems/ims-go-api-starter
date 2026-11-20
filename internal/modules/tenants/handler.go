@@ -5,9 +5,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
 // InsertUpdateRequest is the tenant create/update payload.
@@ -166,4 +168,29 @@ func (h *Handler) destroy(w http.ResponseWriter, r *http.Request) {
 // can is route middleware requiring a permission (Laravel's can:...).
 func (h *Handler) can(permission string) func(http.Handler) http.Handler {
 	return authz.Require(h.checker, permission, h.Responder)
+}
+
+// PublicBranch is the branch a public request resolved to.
+type PublicBranch struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// PublicResponse is what a sign-in page needs to brand itself.
+type PublicResponse struct {
+	Name   string       `json:"name"`
+	Code   string       `json:"code"`
+	Branch PublicBranch `json:"branch"`
+}
+
+func (h *Handler) publicTenant(w http.ResponseWriter, r *http.Request) {
+	tenant, ok := tenancy.PublicTenantFrom(r.Context())
+	if !ok {
+		h.Error(w, r, apperr.New(apperr.TenantContextNotResolved, "The tenant could not be resolved."))
+		return
+	}
+	h.Data(w, r, http.StatusOK, PublicResponse{
+		Name: tenant.Name, Code: tenant.Code,
+		Branch: PublicBranch{ID: tenant.BranchID, Name: tenant.BranchName},
+	})
 }

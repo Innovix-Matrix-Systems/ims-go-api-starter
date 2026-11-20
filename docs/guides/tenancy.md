@@ -48,8 +48,18 @@ impersonation.
 **Tenant users** must have a `tenant_id` and an active branch. The branch-belongs-to-tenant check
 is cached for five minutes (`branch_check:*`) and invalidated when branches change.
 
-**Impersonators** — the super admin, or anyone with `user.tenant.switch` — choose a tenant per
-request with headers:
+**Impersonators** come in two kinds, both per request (no session, nothing stored):
+
+|  | View as a tenant | Act as a user |
+| --- | --- | --- |
+| Header | `X-Acting-Tenant` (+ `X-Acting-Branch`) | `X-Acting-User: <user id>` |
+| Who may send it | `user.tenant.switch` | `user.impersonate` |
+| Identity in the context | still the caller | the target (`Identity.ImpersonatorID` = the caller) |
+| Permissions checked | the caller's | the target's |
+| Tenant and branch | the acting headers | the target's own tenant and active branch |
+| Use it for | cross-tenant administration, support reads | "do what Jane would do", reproducing a user's bug |
+
+View as a tenant:
 
 | Headers | Result |
 | --- | --- |
@@ -57,10 +67,51 @@ request with headers:
 | `X-Acting-Tenant: 7` | act as tenant 7, across all of its branches |
 | `X-Acting-Tenant: 7` + `X-Acting-Branch: 12` | act as branch 12 of tenant 7 |
 
-**Tenant-exempt routes** (`tenancy.Exempt()`) skip resolution — tenants, permissions, packages,
+Act as a user (`tenancy.Resolve` swaps the identity, so permission gates, scoping, handlers and
+the activity recorder all see the target):
+
+- `user.impersonate` is a system permission: Super-Admin (bypass) and Developer (seeded) have it,
+  other internal roles get it by assignment, tenant roles never can.
+- Refused with 403 `IMPERSONATION_FORBIDDEN`: yourself, a missing or inactive user, a tenantless
+  platform account, a user who holds `user.impersonate` (no sideways escalation, no chains), and a
+  caller without the permission.
+- Combined with `X-Acting-Tenant` or `X-Acting-Branch`: 422. On tenant-exempt routes: 422. The
+  session routes (`/logout`) ignore it, so you never sign the target out.
+- Account changes are refused while acting (`authn.DenyImpersonated`): profile update, avatar,
+  password, branch switch. Mount it on any new endpoint that changes the account itself.
+- Everything is audited in the system log: see the [activity log](activity-log.md#acting-as-a-user).
+
+**Tenant-exempt routes** (`tenancy.Exempt(responder)`) skip resolution — tenants, permissions, packages,
 internal users. `tenancy.InternalOnly` additionally rejects tenant-bound identities, so a granted
 system permission alone can never reach cross-tenant endpoints.
 
+
+## Public routes (before sign-in)
+
+Pages shown before sign-in (tenant branding, a public catalogue, a booking form) resolve the
+tenant from headers instead of a user:
+
+```http
+GET /api/v1/public/tenant
+X-Tenant-Code: 3f2a…
+X-Branch-Id: 12            (optional; default: the tenant's first branch)
+```
+
+`tenancy.Public` answers a missing, unknown, deleted or inactive tenant with the same 422
+`TENANT_CONTEXT_NOT_RESOLVED`, so codes cannot be probed by the error text. A branch of another
+tenant is 422 too. The scope it produces has `Public: true`; services can refuse writes that must
+not happen anonymously. Lookups are cached for five minutes (`tenant_code:*`) and invalidated by
+the tenants service on update and delete.
+
+Add a module's own public routes with a hook mounted in the public group of
+`internal/app/routes.go`:
+
+```go
+// RegisterPublicTenantRoutes mounts routes used before sign-in.
+func (h *Handler) RegisterPublicTenantRoutes(r chi.Router) {
+	r.Get("/public/catalogue", h.publicCatalogue) // tenancy.From(r) is the resolved tenant
+}
+```
 
 ## Writes: the service stamps the tenant
 
@@ -91,7 +142,8 @@ another tenant.
 | `$model->skipTenantStamping = true` | pass a different tenant ID explicitly (seeders, jobs) |
 | `Model::forAllTenants()` | `tenancy.Unscoped()` (trusted code only) |
 | `tenant.resolve` middleware | `tenancy.Resolve(...)` |
-| `tenant.exempt` middleware | `tenancy.Exempt()` (+ `tenancy.InternalOnly` for system-only routes) |
+| `tenant.exempt` middleware | `tenancy.Exempt(responder)` (+ `tenancy.InternalOnly` for system-only routes) |
+| `ResolvePublicTenantMiddleware` (`X-Tenant-Code`) | `tenancy.Public(...)` |
 | `X-Acting-Tenant` / `X-Acting-Branch` | the same headers, the same rules |
 
 ## Queue jobs carry the scope
@@ -115,5 +167,6 @@ app.As(other).Get(fmt.Sprintf("/api/v1/branch/%d", id)).Status(t, http.StatusNot
 
 ## Known gap
 
-`tenants.is_active` is stored and shown, but **not yet enforced** at request time — deactivating
-a tenant does not block its users today.
+`tenants.is_active` is stored and shown, but **not yet enforced** for signed-in requests —
+deactivating a tenant does not block its users today. Public tenant routes (`tenancy.Public`) do
+enforce it: an inactive tenant answers 422 there.

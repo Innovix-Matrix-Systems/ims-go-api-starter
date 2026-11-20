@@ -1,6 +1,6 @@
 # IMS Go API Starter
 
-![Version](https://img.shields.io/badge/version-0.1.0-ff5c1a)
+![Version](https://img.shields.io/badge/version-0.1.2-ff5c1a)
 [![Docs](https://img.shields.io/badge/docs-ims--go--api--starter.innovixmatrixsystem.com-ff5c1a)](https://ims-go-api-starter.innovixmatrixsystem.com)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
@@ -22,10 +22,11 @@ guides for every feature, the dashboard tour, operations runbooks and the design
   (`r.With(h.can("product.create"))`), services, repositories, one config file per section — and
   `ims gen module` scaffolds the whole stack.
 - **Multi-tenant and safe by default.** Tenant + branch isolation in SQL (fails closed), RBAC,
-  impersonation, per-tenant plan limits, and a test that fails any route without a permission.
+  staff acting as a tenant or as a user (every request audited), per-tenant plan limits, and a
+  test that fails any route without a permission.
 - **Everything an API needs.** Auth with OTP, password reset and e-mail verification · billing
   with feature limits (bKash, cash, bank) · settings · feature flags with percentage rollout ·
-  activity log · notifications · files on local/S3/R2/MinIO · import/export · backups ·
+  activity log with a system audit log · public tenant routes · notifications · files on local/S3/R2/MinIO · import/export · backups ·
   River queue · cron scheduler · RFC 9457 errors · OpenAPI.
 - **A dashboard you will actually use.** Requests, logs, exceptions, queue, one-click commands,
   an inspector (health, routes, roles, config), tenants, settings, flags, files, sessions and an audit log —
@@ -35,8 +36,19 @@ guides for every feature, the dashboard tour, operations runbooks and the design
 
 ## Quick start
 
+<!-- rename:keep -->
 Building a product on it? Press **[Use this template](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/generate)** on GitHub to get a repository of your own
-(clean history, not a fork), then clone it.
+(clean history, not a fork), clone it, and give it your names in one step:
+
+```bash
+make rename MODULE=github.com/acme/shop-api BINARY=shop TITLE="Acme Shop"   # DRY=1 to preview
+git add -A && git commit -m "chore: rename the starter to shop-api"
+```
+
+That rewrites the Go module path, the binary and CLI name, the deploy names and paths, the
+display title and the `IMS_` deploy variables, renames the systemd units, and regenerates code and
+docs. Seeded e-mails and the credits are left alone.
+<!-- rename:end -->
 
 ```bash
 cp .env.example .env          # local configuration (git-ignored)

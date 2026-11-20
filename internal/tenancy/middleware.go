@@ -27,10 +27,15 @@ type ResolveOptions struct {
 	Cache     cache.Store
 	Checker   *authz.Checker
 	Responder *httpx.Responder
+	// Audit records act-as (X-Acting-User) in the system audit log. Nil
+	// records nothing (unit tests).
+	Audit ImpersonationAudit
 }
 
 // Resolve determines the effective tenant/branch scope for authenticated
 // requests, honoring impersonation headers and cached membership checks.
+// X-Acting-User runs the request as another user (acting_user.go);
+// X-Acting-Tenant / X-Acting-Branch keep the caller and change the tenant.
 func Resolve(opts ResolveOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -38,6 +43,11 @@ func Resolve(opts ResolveOptions) func(http.Handler) http.Handler {
 			identity, ok := authn.IdentityFromContext(ctx)
 			if !ok {
 				opts.Responder.Error(w, r, apperr.New(apperr.Unauthorized, "Authentication is required."))
+				return
+			}
+
+			if raw := r.Header.Get(ActingUserHeader); raw != "" {
+				actAsUser(opts, next, w, r, identity, raw)
 				return
 			}
 
@@ -94,35 +104,48 @@ func Resolve(opts ResolveOptions) func(http.Handler) http.Handler {
 				return
 			}
 
-			tenantID := identity.TenantID
-			if tenantID == 0 {
-				opts.Responder.Error(w, r, apperr.New(apperr.Forbidden, "No tenant is assigned to this account."))
-				return
-			}
-			branchID := identity.EffectiveBranchID()
-			if branchID == 0 {
-				opts.Responder.Error(w, r, apperr.New(apperr.Forbidden, "No active branch is assigned to this account."))
-				return
-			}
-			belongs, err := branchBelongsToTenant(ctx, opts, tenantID, branchID)
-			if err != nil {
-				opts.Responder.Error(w, r, err)
-				return
-			}
-			if !belongs {
-				opts.Responder.Error(w, r, apperr.New(apperr.Forbidden, "The assigned branch does not belong to the tenant."))
-				return
-			}
-			serve(next, w, r, Scope{TenantID: tenantID, BranchID: branchID})
+			resolveTenantUser(opts, next, w, r, identity)
 		})
 	}
 }
 
+// resolveTenantUser scopes a request to the identity's own tenant and active
+// branch: the path for tenant users, and for anyone acting as one.
+func resolveTenantUser(opts ResolveOptions, next http.Handler, w http.ResponseWriter, r *http.Request, identity *authn.Identity) {
+	tenantID := identity.TenantID
+	if tenantID == 0 {
+		opts.Responder.Error(w, r, apperr.New(apperr.Forbidden, "No tenant is assigned to this account."))
+		return
+	}
+	branchID := identity.EffectiveBranchID()
+	if branchID == 0 {
+		opts.Responder.Error(w, r, apperr.New(apperr.Forbidden, "No active branch is assigned to this account."))
+		return
+	}
+	belongs, err := branchBelongsToTenant(r.Context(), opts, tenantID, branchID)
+	if err != nil {
+		opts.Responder.Error(w, r, err)
+		return
+	}
+	if !belongs {
+		opts.Responder.Error(w, r, apperr.New(apperr.Forbidden, "The assigned branch does not belong to the tenant."))
+		return
+	}
+	serve(next, w, r, Scope{TenantID: tenantID, BranchID: branchID})
+}
+
 // Exempt marks requests that operate outside tenant scoping (global/internal
 // endpoints such as tenant management or permission administration).
-func Exempt() func(http.Handler) http.Handler {
+//
+// X-Acting-User is refused here (422): exempt routes are not resolved per
+// tenant, so the request would otherwise silently run as the caller.
+func Exempt(responder *httpx.Responder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get(ActingUserHeader) != "" {
+				responder.Error(w, r, apperr.New(apperr.TenantContextNotResolved, "Acting as a user is only available on tenant routes."))
+				return
+			}
 			scope := Scope{Internal: true}
 			if existing, ok := FromContext(r.Context()); ok {
 				scope = existing
@@ -161,6 +184,9 @@ func BranchCheckKey(tenantID, branchID int64) string {
 // InvalidateBranchCheck drops a cached membership check after branch mutation.
 func InvalidateBranchCheck(ctx context.Context, store cache.Store, tenantID, branchID int64) {
 	_ = store.Delete(ctx, BranchCheckKey(tenantID, branchID))
+	// Public routes cache the branch name and the tenant's first branch.
+	_ = store.Delete(ctx, publicBranchKey(tenantID, branchID))
+	_ = store.Delete(ctx, firstBranchKey(tenantID))
 }
 
 // InvalidateTenantCheck drops a cached tenant-existence check after a tenant is
@@ -174,6 +200,7 @@ func tenantCheckKey(tenantID int64) string {
 }
 
 func serve(next http.Handler, w http.ResponseWriter, r *http.Request, scope Scope) {
+	httpx.NoteScope(r.Context(), scope.EffectiveTenantID(), scope.EffectiveBranchID())
 	next.ServeHTTP(w, r.WithContext(WithScope(r.Context(), scope)))
 }
 

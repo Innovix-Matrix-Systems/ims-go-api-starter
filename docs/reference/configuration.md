@@ -195,7 +195,7 @@ effective values with secrets masked.
 | `SECURITY_HEADERS_ENABLED` | `true` | baseline hardening response headers |
 | `CORS_ALLOWED_ORIGINS` | — | *Optional.* comma-separated; empty disables CORS entirely |
 | `CORS_ALLOWED_METHODS` | `GET,POST,PATCH,PUT,DELETE,OPTIONS` | *Optional.* |
-| `CORS_ALLOWED_HEADERS` | `Authorization,Content-Type,Accept,Accept-Language,X-Acting-Tenant,X-Acting-Branch,X-Tenant-Code,X-Branch-Id,X-Request-Id` | *Optional.* |
+| `CORS_ALLOWED_HEADERS` | `Authorization,Content-Type,Accept,Accept-Language,X-Acting-Tenant,X-Acting-Branch,X-Acting-User,X-Tenant-Code,X-Branch-Id,X-Request-Id` | *Optional.* |
 | `CORS_MAX_AGE` | `600` | *Optional.* seconds |
 
 ## Developer dashboard

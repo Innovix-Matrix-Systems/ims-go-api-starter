@@ -12,26 +12,31 @@ import (
 )
 
 const insertActivity = `-- name: InsertActivity :exec
-INSERT INTO activity_log (tenant_id, actor_id, action, subject_type, subject_id, changes, ip, request_id)
-VALUES ($1, $2, $3, $4, $5,
-        $6, $7, $8)
+INSERT INTO activity_log (tenant_id, actor_id, impersonator_id, impersonator_name, action, subject_type,
+                          subject_id, changes, ip, request_id)
+VALUES ($1, $2, $3, $4,
+        $5, $6, $7, $8, $9, $10)
 `
 
 type InsertActivityParams struct {
-	TenantID    *int64  `json:"tenant_id"`
-	ActorID     *int64  `json:"actor_id"`
-	Action      string  `json:"action"`
-	SubjectType string  `json:"subject_type"`
-	SubjectID   *int64  `json:"subject_id"`
-	Changes     []byte  `json:"changes"`
-	Ip          *string `json:"ip"`
-	RequestID   *string `json:"request_id"`
+	TenantID         *int64  `json:"tenant_id"`
+	ActorID          *int64  `json:"actor_id"`
+	ImpersonatorID   *int64  `json:"impersonator_id"`
+	ImpersonatorName *string `json:"impersonator_name"`
+	Action           string  `json:"action"`
+	SubjectType      string  `json:"subject_type"`
+	SubjectID        *int64  `json:"subject_id"`
+	Changes          []byte  `json:"changes"`
+	Ip               *string `json:"ip"`
+	RequestID        *string `json:"request_id"`
 }
 
 func (q *Queries) InsertActivity(ctx context.Context, arg InsertActivityParams) error {
 	_, err := q.db.Exec(ctx, insertActivity,
 		arg.TenantID,
 		arg.ActorID,
+		arg.ImpersonatorID,
+		arg.ImpersonatorName,
 		arg.Action,
 		arg.SubjectType,
 		arg.SubjectID,
@@ -43,54 +48,69 @@ func (q *Queries) InsertActivity(ctx context.Context, arg InsertActivityParams) 
 }
 
 const listActivity = `-- name: ListActivity :many
-SELECT a.id, a.tenant_id, a.actor_id, a.action, a.subject_type, a.subject_id, a.changes,
-       a.ip, a.request_id, a.created_at, u.name AS actor_name
+SELECT a.id, a.tenant_id, a.actor_id, a.impersonator_id, a.impersonator_name, a.action, a.subject_type,
+       a.subject_id, a.changes, a.ip, a.request_id, a.created_at, u.name AS actor_name
 FROM activity_log a
 LEFT JOIN users u ON u.id = a.actor_id
-WHERE ($1::boolean OR a.tenant_id = $2)
-  AND ($3::text IS NULL OR a.subject_type = $3)
-  AND ($4::bigint IS NULL OR a.subject_id = $4)
-  AND ($5::bigint IS NULL OR a.actor_id = $5)
-  AND ($6::timestamptz IS NULL
-       OR (a.created_at, a.id) < ($6::timestamptz, $7::bigint))
+WHERE CASE
+        WHEN $1::boolean THEN a.tenant_id IS NULL
+        ELSE ($2::boolean OR a.tenant_id = $3::bigint)
+      END
+  AND ($4::text IS NULL OR a.subject_type = $4)
+  AND ($5::bigint IS NULL OR a.subject_id = $5)
+  AND ($6::bigint IS NULL OR a.actor_id = $6)
+  AND ($7::bigint IS NULL OR a.impersonator_id = $7)
+  AND (NOT $8::boolean OR a.impersonator_id IS NOT NULL OR a.action LIKE 'impersonation.%')
+  AND ($9::timestamptz IS NULL
+       OR (a.created_at, a.id) < ($9::timestamptz, $10::bigint))
 ORDER BY a.created_at DESC, a.id DESC
-LIMIT $8
+LIMIT $11
 `
 
 type ListActivityParams struct {
-	AllTenants  bool               `json:"all_tenants"`
-	TenantID    *int64             `json:"tenant_id"`
-	SubjectType *string            `json:"subject_type"`
-	SubjectID   *int64             `json:"subject_id"`
-	ActorID     *int64             `json:"actor_id"`
-	BeforeAt    pgtype.Timestamptz `json:"before_at"`
-	BeforeID    *int64             `json:"before_id"`
-	RowLimit    int32              `json:"row_limit"`
+	SystemOnly       bool               `json:"system_only"`
+	AllTenants       bool               `json:"all_tenants"`
+	TenantID         *int64             `json:"tenant_id"`
+	SubjectType      *string            `json:"subject_type"`
+	SubjectID        *int64             `json:"subject_id"`
+	ActorID          *int64             `json:"actor_id"`
+	ImpersonatorID   *int64             `json:"impersonator_id"`
+	ImpersonatedOnly bool               `json:"impersonated_only"`
+	BeforeAt         pgtype.Timestamptz `json:"before_at"`
+	BeforeID         *int64             `json:"before_id"`
+	RowLimit         int32              `json:"row_limit"`
 }
 
 type ListActivityRow struct {
-	ID          int64              `json:"id"`
-	TenantID    *int64             `json:"tenant_id"`
-	ActorID     *int64             `json:"actor_id"`
-	Action      string             `json:"action"`
-	SubjectType string             `json:"subject_type"`
-	SubjectID   *int64             `json:"subject_id"`
-	Changes     []byte             `json:"changes"`
-	Ip          *string            `json:"ip"`
-	RequestID   *string            `json:"request_id"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	ActorName   *string            `json:"actor_name"`
+	ID               int64              `json:"id"`
+	TenantID         *int64             `json:"tenant_id"`
+	ActorID          *int64             `json:"actor_id"`
+	ImpersonatorID   *int64             `json:"impersonator_id"`
+	ImpersonatorName *string            `json:"impersonator_name"`
+	Action           string             `json:"action"`
+	SubjectType      string             `json:"subject_type"`
+	SubjectID        *int64             `json:"subject_id"`
+	Changes          []byte             `json:"changes"`
+	Ip               *string            `json:"ip"`
+	RequestID        *string            `json:"request_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ActorName        *string            `json:"actor_name"`
 }
 
-// Newest first, keyset-paginated on (created_at, id). all_tenants is only
-// set for platform accounts; otherwise rows are limited to one tenant.
+// Newest first, keyset-paginated on (created_at, id). The service picks the
+// tenant predicate: system_only = the system audit log (tenant_id IS NULL);
+// otherwise all_tenants, or exactly tenant_id. all_tenants and system_only
+// are only set for activity.view.all readers.
 func (q *Queries) ListActivity(ctx context.Context, arg ListActivityParams) ([]ListActivityRow, error) {
 	rows, err := q.db.Query(ctx, listActivity,
+		arg.SystemOnly,
 		arg.AllTenants,
 		arg.TenantID,
 		arg.SubjectType,
 		arg.SubjectID,
 		arg.ActorID,
+		arg.ImpersonatorID,
+		arg.ImpersonatedOnly,
 		arg.BeforeAt,
 		arg.BeforeID,
 		arg.RowLimit,
@@ -106,6 +126,8 @@ func (q *Queries) ListActivity(ctx context.Context, arg ListActivityParams) ([]L
 			&i.ID,
 			&i.TenantID,
 			&i.ActorID,
+			&i.ImpersonatorID,
+			&i.ImpersonatorName,
 			&i.Action,
 			&i.SubjectType,
 			&i.SubjectID,

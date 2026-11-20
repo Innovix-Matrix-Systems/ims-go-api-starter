@@ -109,9 +109,10 @@ go run ./cmd/app backup:list
 ```
 
 `DEV_DASHBOARD_ENABLED` defaults to true outside production; set it to `false` to make `/dev` and
-`/dev/api/*` return 404. The hidden `Developer` account holds only the developer-dashboard
-permissions (`dev.view`, `dev.manage`) — it cannot administer tenants, users or billing data
-through the API. Still rotate its password outside local use.
+`/dev/api/*` return 404. The hidden `Developer` account holds the developer-dashboard
+permissions (`dev.view`, `dev.manage`) and `user.impersonate` — it cannot administer tenants,
+users or billing data through the API, but it can act as a tenant user (`X-Acting-User`), and every
+such request is written to the system audit log. Still rotate its password outside local use.
 
 To watch a job end-to-end, trigger a background user export (`POST /api/v1/user/export-background`),
 watch Shell B process it, then check `queue:stats` and the job status.

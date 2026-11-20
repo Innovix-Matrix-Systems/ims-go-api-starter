@@ -97,8 +97,8 @@ numbered so code comments and reviews can refer to them. Each says **what** was 
 27. **Dashboard audit.** Every dashboard mutation and dashboard sign-in (including failures, never
     the password) is written to `dev_actions` with IP and browser, kept for
     `DEV_DASHBOARD_AUDIT_RETENTION_DAYS`.
-28. **Inactive tenants.** `tenants.is_active` is stored and shown but not yet enforced at request
-    time.
+28. **Inactive tenants.** `tenants.is_active` is stored and shown but not yet enforced for
+    signed-in requests; public tenant routes (`tenancy.Public`) refuse an inactive tenant.
 29. **One version, one file.** `VERSION` (semver, no `v`) is the single source of truth. Release
     builds stamp it with `-ldflags`; every other build reports `<version>-dev`, so a local binary is
     never mistaken for a release. See [Releases](../operations/releases.md).
@@ -106,3 +106,12 @@ numbered so code comments and reviews can refer to them. Each says **what** was 
     only the site shell (Astro Starlight) that renders it, so code and docs change in the same pull
     request. Reference pages (CLI, configuration, permissions, Make targets) are generated from the
     code by `ims gen docs` and checked by `make gen-check`, like sqlc and OpenAPI output.
+31. **Act as a user, per request.** `X-Acting-User` swaps the identity inside `tenancy.Resolve`
+    for one request instead of issuing a login-as token, so there is no second session to expire
+    or revoke. Whoever holds `user.impersonate` may use it (Super-Admin, Developer, assigned staff
+    roles); targets that could act as others are refused. Account changes are blocked while
+    acting.
+32. **System audit log in `activity_log`.** Rows with no tenant are the system log; reading them
+    (and every tenant) needs `activity.view.all`. Act-as is written there: the start
+    (fail-closed), every request, and refusals. Entries written while acting carry the
+    impersonator; tenants see only `by_staff`.

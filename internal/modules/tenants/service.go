@@ -81,7 +81,12 @@ func (s *Service) Create(ctx context.Context, actorID int64, input CreateInput) 
 func (s *Service) Update(ctx context.Context, actorID, id int64, input UpdateInput) (*Tenant, error) {
 	input.ID = id
 	input.ActorID = &actorID
-	return s.repo.Update(ctx, input)
+	tenant, err := s.repo.Update(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	tenancy.InvalidateTenantCode(ctx, s.cache, tenant.Code)
+	return tenant, nil
 }
 
 // Delete soft-deletes a tenant and its branches in one transaction; the seeded
@@ -91,7 +96,11 @@ func (s *Service) Delete(ctx context.Context, actorID, id int64) error {
 	if id == s.cfg.DefaultTenantID {
 		return apperr.New(apperr.OperationNotAllowed, "The default tenant cannot be deleted.")
 	}
-	err := s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
+	current, err := s.repo.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	err = s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
 		if _, err := q.SoftDeleteBranchesForTenant(ctx, id); err != nil {
 			return err
 		}
@@ -115,6 +124,7 @@ func (s *Service) Delete(ctx context.Context, actorID, id int64) error {
 		return database.MapError("tenants.delete", err)
 	}
 	tenancy.InvalidateTenantCheck(ctx, s.cache, id)
+	tenancy.InvalidateTenantCode(ctx, s.cache, current.Code)
 	return nil
 }
 

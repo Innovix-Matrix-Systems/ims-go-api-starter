@@ -23,7 +23,7 @@ import {
   type IconName,
   type Tone,
 } from '../components/ui'
-import { formatBytes, formatDateTime, relativeTime } from '../format'
+import { formatBytes, formatDateTime, localDayEnd, localDayStart, relativeTime } from '../format'
 
 export const Route = createFileRoute('/_app/files')({
   component: FilesPage,
@@ -127,8 +127,8 @@ function FilesPage() {
           disk: disk || undefined,
           attached: attached === '' ? undefined : attached,
           tenant_id: tenantId || undefined,
-          created_from: createdFrom || undefined,
-          created_to: createdTo || undefined,
+          created_from: localDayStart(createdFrom),
+          created_to: localDayEnd(createdTo),
           order_by: orderBy,
           order_direction: orderDir,
           page,

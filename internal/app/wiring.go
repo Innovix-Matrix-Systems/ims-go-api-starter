@@ -178,6 +178,7 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 			Cache:     store,
 			Checker:   checker,
 			Responder: responder,
+			Audit:     platform.Activity,
 		},
 		Platform:      platform,
 		System:        systemModule,
