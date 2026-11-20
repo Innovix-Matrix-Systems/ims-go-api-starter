@@ -26,7 +26,7 @@ all of them with the seeded roles that hold each.
 | Role | Scope | Holds |
 | --- | --- | --- |
 | **Super-Admin** | platform (system role) | bypasses every check — `Checker.Can` returns true |
-| **Developer** | platform | the `dev.*` permissions (developer dashboard) |
+| **Developer** | platform | the `dev.*` permissions (developer dashboard) and `user.impersonate` (act as a tenant user) |
 | **Admin** | per tenant | the tenant-level groups: `role`, `branch`, `user`, `setting`, `activity` |
 | custom roles | per tenant | whatever a tenant admin assigns |
 

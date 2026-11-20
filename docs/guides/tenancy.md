@@ -81,7 +81,7 @@ the activity recorder all see the target):
   password, branch switch. Mount it on any new endpoint that changes the account itself.
 - Everything is audited in the system log: see the [activity log](activity-log.md#acting-as-a-user).
 
-**Tenant-exempt routes** (`tenancy.Exempt()`) skip resolution — tenants, permissions, packages,
+**Tenant-exempt routes** (`tenancy.Exempt(responder)`) skip resolution — tenants, permissions, packages,
 internal users. `tenancy.InternalOnly` additionally rejects tenant-bound identities, so a granted
 system permission alone can never reach cross-tenant endpoints.
 
@@ -167,5 +167,6 @@ app.As(other).Get(fmt.Sprintf("/api/v1/branch/%d", id)).Status(t, http.StatusNot
 
 ## Known gap
 
-`tenants.is_active` is stored and shown, but **not yet enforced** at request time — deactivating
-a tenant does not block its users today.
+`tenants.is_active` is stored and shown, but **not yet enforced** for signed-in requests —
+deactivating a tenant does not block its users today. Public tenant routes (`tenancy.Public`) do
+enforce it: an inactive tenant answers 422 there.

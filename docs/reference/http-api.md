@@ -70,7 +70,7 @@ Pagination parameters: `page` + `per_page` (default 10, max 100) for management 
 | 415 | unsupported content type |
 | 422 | validation failed (`errors`) |
 | 429 | rate limited (`retry_after`) |
-| 503 | not ready (health) or a gateway is unavailable |
+| 503 | not ready (health), a gateway is unavailable, or acting as a user while the audit log cannot be written |
 
 Full detail: [Validation & errors](../guides/validation-and-errors.md) and
 [Handlers & routes](../guides/handlers-and-routes.md).

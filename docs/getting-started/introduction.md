@@ -28,13 +28,13 @@ Telescope plus Horizon plus a little Nova) is embedded in it.
 | --- | --- |
 | HTTP | chi router, RFC 9457 problem errors, envelopes, pagination, rate limiting, OpenAPI as the contract |
 | Identity | opaque tokens per device, OTP, login throttling, password reset, e-mail verification |
-| Tenancy | tenants and branches, explicit `tenant_id` filters that fail closed, impersonation |
-| Access | permission catalog in Go, roles per tenant, Super-Admin, route-level checks |
+| Tenancy | tenants and branches, explicit `tenant_id` filters that fail closed, staff acting as a tenant or a user, public tenant routes |
+| Access | permission catalog in Go, roles per tenant, Super-Admin, route-level checks, a tenant activity log and a system audit log |
 | Billing | packages with features and limits, subscriptions, bKash/cash/bank payments, approvals |
 | Platform | cache (memory/file/redis/database), River queue, cron scheduler, storage disks, mail, i18n |
 | Data | sqlc type-safe SQL, goose migrations, transactions, advisory-lock quotas |
 | Ops | health and metrics, backups to S3/R2, systemd deploy with gated migrations, rollback |
-| DX | `ims gen module`, `testkit`, hot reload, developer dashboard, AI-agent skills |
+| DX | `ims gen module`, `make rename`, `testkit`, hot reload, developer dashboard, AI-agent skills |
 
 ## The ideas behind it
 

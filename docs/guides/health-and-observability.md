@@ -50,6 +50,9 @@ looks roughly like:
 level=INFO msg="http request" request_id=01JD… method=POST route=/api/v1/branch status=201 duration=8.4ms user_id=3 tenant_id=1
 ```
 
+`user_id` is who the request ran as. While staff act as a user (`X-Acting-User`), it is that
+user, and `impersonator_id` names the staff member.
+
 Secrets are redacted from logs and captured payloads (tokens, passwords, anything matching
 `DEV_DASHBOARD_REDACT_KEYS`).
 
@@ -60,7 +63,7 @@ When the developer dashboard is enabled, a collector captures — sampled with
 
 | Category | What |
 | --- | --- |
-| `http` | requests: method, route, status, timing, headers, bodies |
+| `http` | requests: method, route, status, timing, headers, bodies; the user, tenant and branch it ran as, and the impersonator when acting as a user |
 | `sql` | queries per request with timing |
 | `cache` | hits, misses, writes |
 | `queue` | jobs enqueued (linked to the request) |

@@ -86,7 +86,7 @@ The `activity.prune` task deletes entries older than `ACTIVITY_RETENTION_DAYS` (
 
 | Activity log | Dashboard audit log |
 | --- | --- |
-| tenant changes made through the API | developer-dashboard actions and sign-ins |
-| read by tenant admins at `/api/v1/activity` | read in the dashboard's **Audit log** |
+| changes made through the API, and act-as (system log) | developer-dashboard actions and sign-ins |
+| read at `/api/v1/activity`: tenant admins their tenant, `activity.view.all` everything | read in the dashboard's **Audit log** |
 | `activity_log` table | `dev_actions` table |
 | `ACTIVITY_RETENTION_DAYS` | `DEV_DASHBOARD_AUDIT_RETENTION_DAYS` |

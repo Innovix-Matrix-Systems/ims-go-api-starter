@@ -97,8 +97,8 @@ numbered so code comments and reviews can refer to them. Each says **what** was 
 27. **Dashboard audit.** Every dashboard mutation and dashboard sign-in (including failures, never
     the password) is written to `dev_actions` with IP and browser, kept for
     `DEV_DASHBOARD_AUDIT_RETENTION_DAYS`.
-28. **Inactive tenants.** `tenants.is_active` is stored and shown but not yet enforced at request
-    time.
+28. **Inactive tenants.** `tenants.is_active` is stored and shown but not yet enforced for
+    signed-in requests; public tenant routes (`tenancy.Public`) refuse an inactive tenant.
 29. **One version, one file.** `VERSION` (semver, no `v`) is the single source of truth. Release
     builds stamp it with `-ldflags`; every other build reports `<version>-dev`, so a local binary is
     never mistaken for a release. See [Releases](../operations/releases.md).
