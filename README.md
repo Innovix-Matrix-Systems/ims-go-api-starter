@@ -82,8 +82,10 @@ commands also run from the dashboard.
 
 ## Learn more
 
-The full documentation lives in [`docs/`](docs/README.md) and is published as a site (Astro
-Starlight, `website/`) with every release — run `make docs` to read it locally.
+**📖 Documentation: [ims-go-api-starter.innovixmatrixsystem.workers.dev](https://ims-go-api-starter.innovixmatrixsystem.workers.dev)**
+
+The pages live in [`docs/`](docs/README.md) and are published as that site (Astro Starlight,
+`website/`) with every release. Run `make docs` to read them locally.
 
 | | |
 | --- | --- |
@@ -96,3 +98,13 @@ Starlight, `website/`) with every release — run `make docs` to read it locally
 
 Requires PostgreSQL 16+, Go 1.26.11+ and Node.js 20.19+ (dashboard). Every setting lives in `.env`
 (documented in `.env.example`; `ims config:show` prints the effective values with secrets masked).
+
+## Who's behind it
+
+Built and maintained by **[Innovix Matrix System](https://innovixmatrixsystem.com)**, a software
+studio in Dhaka, Bangladesh. We run our own products on it. More open-source starters:
+[PocketBase BaaS](https://github.com/Innovix-Matrix-Systems/ims-pocketbase-baas-starter) ·
+[NestJS API](https://github.com/Innovix-Matrix-Systems/ims-nest-api-starter) ·
+[Laravel API](https://github.com/Innovix-Matrix-Systems/ims-laravel-api-starter) ·
+[Laravel admin](https://github.com/Innovix-Matrix-Systems/ims-laravel-admin-starter).
+Need a team to build on it? [Get in touch](https://innovixmatrixsystem.com).

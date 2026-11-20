@@ -49,8 +49,13 @@ export default defineConfig({
       components: {
         SiteTitle: './src/components/SiteTitle.astro',
         Hero: './src/components/Hero.astro',
+        Footer: './src/components/Footer.astro',
       },
-      head: [{ tag: 'meta', attrs: { name: 'docs-version', content: version } }],
+      social: [{ icon: 'github', label: 'Innovix Matrix System on GitHub', href: 'https://github.com/Innovix-Matrix-Systems' }],
+      head: [
+        { tag: 'meta', attrs: { name: 'docs-version', content: version } },
+        { tag: 'meta', attrs: { name: 'author', content: 'Innovix Matrix System' } },
+      ],
       sidebar: [
         {
           label: 'Start here',

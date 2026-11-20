@@ -1,0 +1,35 @@
+// Who builds and maintains the starter. Used by the footer, the hero and the
+// home page; change it here once.
+export const company = {
+  name: 'Innovix Matrix System',
+  website: 'https://innovixmatrixsystem.com',
+  github: 'https://github.com/Innovix-Matrix-Systems',
+  email: 'innovixmatrixsystem@gmail.com',
+  location: 'Dhaka, Bangladesh',
+  pitch:
+    'A software studio building custom software, web platforms and mobile apps. We use this starter for our own products, and we can help you ship yours on it.',
+}
+
+// The organisation's public starters (private repositories would 404 for readers).
+export const starters = [
+  {
+    name: 'PocketBase BaaS starter',
+    stack: 'PocketBase · Go',
+    href: 'https://github.com/Innovix-Matrix-Systems/ims-pocketbase-baas-starter',
+  },
+  {
+    name: 'NestJS API starter',
+    stack: 'NestJS · PostgreSQL · BullMQ',
+    href: 'https://github.com/Innovix-Matrix-Systems/ims-nest-api-starter',
+  },
+  {
+    name: 'Laravel API starter',
+    stack: 'Laravel',
+    href: 'https://github.com/Innovix-Matrix-Systems/ims-laravel-api-starter',
+  },
+  {
+    name: 'Laravel admin starter',
+    stack: 'Laravel · Filament',
+    href: 'https://github.com/Innovix-Matrix-Systems/ims-laravel-admin-starter',
+  },
+]
