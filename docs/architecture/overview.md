@@ -11,7 +11,8 @@ and AI agents.
 
 One static binary (`cmd/app`) that serves HTTP, runs queue workers, runs the scheduler, applies
 migrations and hosts administrative commands. No containers are required; production runs it
-under systemd with an `EnvironmentFile`.
+under systemd with an `EnvironmentFile`. The same binary also ships as one Docker image (one command
+per role), see [Docker](../operations/docker.md).
 
 ```text
 cmd/app ──► internal/cli (Cobra tree, command registry, lazy dependency providers)

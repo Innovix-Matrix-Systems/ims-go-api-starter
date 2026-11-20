@@ -24,14 +24,18 @@ import Terminal from '@components/Terminal.astro'
 
 <Steps>
 
-1. **Clone and configure.** Copy the example environment; every value has a working local default.
+1. **Make it your repository.** On GitHub, press **Use this template → Create a new repository**.
+   You get your own repository with a clean history, not a fork that points back here. (Just
+   trying it out? Clone this repository directly.)
+
+2. **Clone and configure.** Copy the example environment; every value has a working local default.
 
    ```bash
-   git clone <your-fork-url> ims-go-api && cd ims-go-api
+   git clone <your-repository-url> ims-go-api && cd ims-go-api
    cp .env.example .env
    ```
 
-2. **Install the tools once.** `air` (hot reload) and `golangci-lint`, then the dashboard's
+3. **Install the tools once.** `air` (hot reload) and `golangci-lint`, then the dashboard's
    packages.
 
    ```bash
@@ -39,20 +43,20 @@ import Terminal from '@components/Terminal.astro'
    npm --prefix web/dev ci
    ```
 
-3. **Start Postgres** — skip this if you already have one running.
+4. **Start Postgres** — skip this if you already have one running.
 
    ```bash
    make db-up        # docker compose: creates ims_go_api and ims_go_api_test
    ```
 
-4. **Create the schema and seed data.** Migrations first, then permissions, the default tenant,
+5. **Create the schema and seed data.** Migrations first, then permissions, the default tenant,
    roles and two accounts.
 
    ```bash
    make migrate seed
    ```
 
-5. **Run everything with hot reload.**
+6. **Run everything with hot reload.**
 
    ```bash
    make dev

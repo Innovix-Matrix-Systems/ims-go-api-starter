@@ -327,6 +327,24 @@ rule at work:
 The list supports `?search=`, `?page=` and `?per_page=` and answers with `data`, `links` and
 `meta` for pagination.
 
+### Or try it in the API reference
+
+You don't need curl at all. The generator already added a **Products** section to
+`api/openapi.yaml` in step 1, and the app serves that file as an interactive reference (Scalar) at
+**[localhost:8080/docs](http://localhost:8080/docs)**:
+
+1. Open `/docs`, find **Auth → Authenticate with email and password** and send it with the super-admin credentials. Copy the
+   `token` from the response.
+2. Click **Authentication** at the top and paste the token as the Bearer token. It is kept across
+   page reloads.
+3. Open **Products → Create a product**, fill `X-Acting-Tenant: 1` and `X-Acting-Branch: 1` in the
+   headers, edit the body and press **Send**.
+
+The page is generated from the same spec that `make openapi-check` compares with the router, so
+whatever you see there is what the API really accepts. Your frontend team can use it the same
+way, or generate a typed client from `/docs/openapi.yaml`. `DOCS_ENABLED=false` turns it off
+in production.
+
 ## 8. Write the tests
 
 The generator already wrote **unit tests** (`service_test.go`) that check the service scopes to

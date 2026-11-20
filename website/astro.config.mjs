@@ -48,6 +48,7 @@ export default defineConfig({
       tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 3 },
       components: {
         SiteTitle: './src/components/SiteTitle.astro',
+        Hero: './src/components/Hero.astro',
       },
       head: [{ tag: 'meta', attrs: { name: 'docs-version', content: version } }],
       sidebar: [
@@ -111,6 +112,7 @@ export default defineConfig({
           items: [
             'operations/local-development',
             'operations/deploy',
+            'operations/docker',
             'operations/migrations',
             'operations/backups',
             'operations/rollback',

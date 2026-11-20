@@ -4,9 +4,6 @@ description: Laravel's developer experience, Go's performance. A multi-tenant AP
 template: splash
 hero:
   tagline: Laravel's developer experience, Go's performance. A multi-tenant API that ships as one CGO-free binary — it serves the API, runs migrations, queue workers and the scheduler, and embeds a Telescope-style developer dashboard.
-  image:
-    file: ./images/dev-dashboard.png
-    alt: The developer dashboard overview page
   actions:
     - text: Get started
       link: /getting-started/quick-start/
@@ -60,8 +57,8 @@ import Terminal from '@components/Terminal.astro'
     skills that know the codebase.
   </Card>
   <Card title="One binary in production" icon="seti:go">
-    No containers. systemd runs the API, the worker and the scheduler from the same binary;
-    migrations are a gated release step.
+    No containers needed: systemd runs the API, the worker and the scheduler from the same
+    binary. Prefer Docker? One image and a `compose.yaml` run the same stack.
   </Card>
 </CardGrid>
 

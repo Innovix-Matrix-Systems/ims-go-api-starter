@@ -22,7 +22,7 @@ recipes live in
   branch isolation, RBAC, billing with feature limits, settings + feature flags (with percentage
   rollout), activity log, cache drivers, swappable storage disks (local/S3/R2/MinIO), River
   queue, cron scheduler, Cobra CLI — all in **one binary** (`cmd/app`), deployed with systemd
-  (no containers).
+  (no containers required; `Dockerfile` + `compose.yaml` run the same binary, built in CI).
 - **Developer dashboard** (`/dev`, React SPA embedded via `go:embed`): Telescope-style requests,
   logs, exceptions, queue, backups, commands, inspector (system health, routes, roles, config,
   packages), audit log, tenants, sessions, settings, feature flags, files, developers, playground;

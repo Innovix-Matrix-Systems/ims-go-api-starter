@@ -6,7 +6,7 @@
 
 **Laravel's developer experience, Go's performance.** A multi-tenant API starter that ships as
 **one CGO-free binary**: it serves the API, runs migrations, queue workers and the scheduler, and
-embeds a Telescope-style **developer dashboard** — no containers required.
+embeds a Telescope-style **developer dashboard**. No containers required, Docker-ready when you want it.
 
 | Developer dashboard (`/dev`) | API reference (`/docs`) |
 | --- | --- |
@@ -31,6 +31,9 @@ embeds a Telescope-style **developer dashboard** — no containers required.
 
 ## Quick start
 
+Building a product on it? Press **Use this template** on GitHub to get a repository of your own
+(clean history, not a fork), then clone it.
+
 ```bash
 cp .env.example .env          # local configuration (git-ignored)
 make tools                    # air + golangci-lint (once)
@@ -43,6 +46,9 @@ make dev                      # dashboard on :8080/dev + API with hot reload
 Open **<http://localhost:8080/dev/>** and sign in as `superadmin@ims.com` or `developer@ims.com`
 (password `123456`, set by `AUTH_DEFAULT_PASSWORD`); the API reference is at **/docs**. Run
 `make queue` and `make schedule` in two more shells for background jobs and cron tasks.
+
+Prefer containers? `docker compose up -d --build` runs Postgres, the API, the worker and the
+scheduler from one image (see [Docker](docs/operations/docker.md)).
 
 ## Build a feature
 
@@ -84,7 +90,7 @@ Starlight, `website/`) with every release — run `make docs` to read it locally
 | [Quick start](docs/getting-started/quick-start.mdx) · [How it works](docs/getting-started/how-it-works.mdx) | Run it, then understand the one rule every request follows |
 | [Tutorial: your first module](docs/tutorial/first-module.mdx) | Build a products module step by step |
 | [Guides](docs/guides/modules.md) | Modules, handlers, database, tenancy, auth, testing, billing, queue, storage, … |
-| [Operations](docs/operations/deploy.md) | Local development, deploy, migrations, backups, rollback, releases |
+| [Operations](docs/operations/deploy.md) · [Docker](docs/operations/docker.md) | Local development, deploy (systemd or Docker), migrations, backups, rollback, releases |
 | [Design decisions](docs/architecture/decisions.md) | What we chose, and why |
 | [AGENTS.md](AGENTS.md) | Working guide for humans and AI agents |
 

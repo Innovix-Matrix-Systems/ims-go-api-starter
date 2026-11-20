@@ -54,14 +54,45 @@ request with headers:
 | Headers | Result |
 | --- | --- |
 | none | a **global, read-only** view of all tenants (tenant 0); writes are refused with 403 |
-| `X-Acting-Tenant: 7` | act as tenant 7 (its default branch) |
+| `X-Acting-Tenant: 7` | act as tenant 7, across all of its branches |
 | `X-Acting-Tenant: 7` + `X-Acting-Branch: 12` | act as branch 12 of tenant 7 |
 
 **Tenant-exempt routes** (`tenancy.Exempt()`) skip resolution — tenants, permissions, packages,
 internal users. `tenancy.InternalOnly` additionally rejects tenant-bound identities, so a granted
 system permission alone can never reach cross-tenant endpoints.
 
-**Public** tenant resolution (before login) accepts `X-Tenant-Code` (+ optional `X-Branch-Id`).
+
+## Writes: the service stamps the tenant
+
+In a Laravel app with a `TenantAware` trait, a model hook stamps `tenant_id` on every insert and
+update. Here the stamp is one explicit argument. The service takes the tenant from the scope,
+never from the request body, and passes it to the insert:
+
+```go
+// internal/modules/branches/service.go, shortened
+func (s *Service) Create(ctx context.Context, scope tenancy.Scope, actorID int64, input CreateParams) (*Branch, error) {
+	tenantID := scope.EffectiveTenantID() // the stamp
+	if tenantID == 0 {
+		return nil, apperr.New(apperr.TenantContextNotResolved, "A tenant context is required.")
+	}
+	return s.repo.Create(ctx, CreateInput{TenantID: tenantID, Name: input.Name, ActorID: &actorID})
+}
+```
+
+Updates and deletes go through `scope.Filter()`, so they can only touch rows the caller's tenant
+already owns. Request DTOs never carry a `tenant_id` field, so a client cannot override the stamp.
+That covers what the update hook protects against in an ORM: no stale model can move a row to
+another tenant.
+
+| Laravel (`TenantAware`, middleware) | Here |
+| --- | --- |
+| `TenantScope` global scope on reads | `scope.Filter()` / `WHERE tenant_id = @tenant_id` in the query |
+| `creating` / `updating` hooks stamp `tenant_id` | the service passes `scope.EffectiveTenantID()` to the insert |
+| `$model->skipTenantStamping = true` | pass a different tenant ID explicitly (seeders, jobs) |
+| `Model::forAllTenants()` | `tenancy.Unscoped()` (trusted code only) |
+| `tenant.resolve` middleware | `tenancy.Resolve(...)` |
+| `tenant.exempt` middleware | `tenancy.Exempt()` (+ `tenancy.InternalOnly` for system-only routes) |
+| `X-Acting-Tenant` / `X-Acting-Branch` | the same headers, the same rules |
 
 ## Queue jobs carry the scope
 

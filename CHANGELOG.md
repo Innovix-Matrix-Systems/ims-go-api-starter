@@ -18,6 +18,11 @@ The first versioned release: the full starter, its developer dashboard and its d
   step-by-step tutorial, guides for every feature, the dashboard tour, operations runbooks,
   architecture and design decisions. Published to Cloudflare Workers when a GitHub Release is
   published.
+- **Docker support.**
+  - What ships: a multi-stage `Dockerfile`, one image that runs every role, and a `compose.yaml`
+    that runs PostgreSQL, the migration step, the API, the worker and the scheduler.
+  - Optional: systemd stays the reference deploy.
+  - CI builds the image and boots the stack on every push.
 - **Generated reference pages.** `ims gen docs` renders the CLI, configuration, permissions and Make
   references from the code; `make gen-check` fails when they are stale.
 - **Core API.** Multi-tenant tenants and branches with explicit SQL scoping that fails closed;

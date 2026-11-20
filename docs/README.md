@@ -12,7 +12,7 @@ preview at <http://localhost:4321>.
 | **Features** | [Billing](guides/billing.md) · [Settings](guides/settings.md) · [Feature flags](guides/feature-flags.md) · [Queue & scheduler](guides/queue-and-scheduler.md) · [Files & storage](guides/files-and-storage.md) · [Activity log](guides/activity-log.md) · [Notifications](guides/notifications.md) · [Import & export](guides/import-export.md) · [Mail & i18n](guides/mail-and-i18n.md) · [Health & observability](guides/health-and-observability.md) |
 | **Developer dashboard** | [Tour](dashboard/overview.md) · [Extending](dashboard/extending.md) |
 | **Reference** | [HTTP API](reference/http-api.md) · [CLI](reference/cli.md) · [Configuration](reference/configuration.md) · [Permissions](reference/permissions.md) · [Make targets](reference/make.md) |
-| **Operations** | [Local development](operations/local-development.md) · [Deploy](operations/deploy.md) · [Migrations](operations/migrations.md) · [Backups](operations/backups.md) · [Rollback](operations/rollback.md) · [Releases](operations/releases.md) |
+| **Operations** | [Local development](operations/local-development.md) · [Deploy](operations/deploy.md) · [Docker](operations/docker.md) · [Migrations](operations/migrations.md) · [Backups](operations/backups.md) · [Rollback](operations/rollback.md) · [Releases](operations/releases.md) |
 | **Architecture** | [Overview](architecture/overview.md) · [Design decisions](architecture/decisions.md) |
 | **Project** | [Contributing](project/contributing.md) · [Working with AI agents](project/ai-agents.md) · [Changelog](../CHANGELOG.md) |
 
