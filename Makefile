@@ -33,7 +33,7 @@ else
 endif
 
 .DEFAULT_GOAL := help
-.PHONY: help tools env build build-all dev dev-api run serve queue schedule test test-race test-cover test-integration \
+.PHONY: help tools rename env build build-all dev dev-api run serve queue schedule test test-race test-cover test-integration \
         vet format format-check lint lint-fix tidy check \
         sqlc openapi openapi-gen openapi-check generate gen-check skills-sync skills-check \
         db-up db-down migrate migrate-status migrate-rollback seed fresh \
@@ -44,6 +44,7 @@ help:
 	@echo IMS Go API Starter - developer commands
 	@echo --- Setup ---
 	@echo   make tools             Install dev tools: air, golangci-lint
+	@echo   make rename MODULE=... Rename the starter to your app (once, after creating it)
 	@echo --- Develop ---
 	@echo   make dev               Run SPA :8080 (Vite HMR) + API :8081 (air)
 	@echo   make dev-api           Run the API only with air
@@ -95,6 +96,22 @@ help:
 tools: ## Install the developer tools used by `dev` and `lint`.
 	go install github.com/air-verse/air@$(AIR_VERSION)
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_VERSION)
+
+# MODULE above is the current module; a MODULE given on the command line is the
+# new one. NAME, BINARY and TITLE default from it; DRY=1 previews, FORCE=1 allows
+# uncommitted changes. A real run then regenerates code and docs (the generated
+# OpenAPI contract embeds the spec, which a text rename cannot reach).
+rename: ## Rename the starter to your app: make rename MODULE=github.com/acme/shop-api [NAME=] [BINARY=] [TITLE=] [DRY=1]
+ifeq ($(origin MODULE),command line)
+	go run ./cmd/rename --module "$(MODULE)" --name "$(NAME)" --binary "$(BINARY)" --title "$(TITLE)" $(if $(DRY),--dry-run) $(if $(FORCE),--force)
+ifndef DRY
+	go mod tidy
+	$(MAKE) generate docs-gen MODULE=$(MODULE)
+endif
+else
+	@echo Usage: make rename MODULE=github.com/acme/shop-api [NAME=shop-api] [BINARY=shop] [TITLE="Shop API"] [DRY=1]
+	@exit 1
+endif
 
 env: ## Warn when .env is missing.
 	@$(if $(wildcard .env),echo Using existing .env file.,echo No .env found - copy .env.example to .env to customise local config.)

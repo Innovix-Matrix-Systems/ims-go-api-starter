@@ -56,6 +56,18 @@ go test -count=1 -race -p 2 ./...   # -p 2 locally: parallel race builds can exh
 Finish work with the `verify-changes` skill. Commit only when the user asks; then one commit per
 feature with a message that says what changed and why.
 
+<!-- rename:keep -->
+## Renaming a project made from the template
+
+`make rename MODULE=github.com/acme/shop-api [NAME=] [BINARY=] [TITLE=] [DRY=1]` (`cmd/rename`,
+logic in `internal/rename`) rewrites the module path, the `ims` binary/CLI/user, the
+`ims-go-api(-starter)` names, the `IMS Go API Starter`/`IMS` titles and the `IMS_` deploy
+variables in every tracked file, renames the systemd units, then runs `go mod tidy`, `make
+generate` and `make docs-gen`. It keeps `@ims.com` seed e-mails and Innovix credit links, refuses a
+dirty tree, and runs once. When you add a file or name that carries the starter's name, check it
+with `make rename MODULE=github.com/acme/x DRY=1`.
+<!-- rename:end -->
+
 ## Repository map
 
 ```text

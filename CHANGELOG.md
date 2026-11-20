@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+<!-- rename:keep -->
+- **`make rename`.** Turns a project made from the template into your own app in one step:
+  `make rename MODULE=github.com/acme/shop-api [NAME=] [BINARY=] [TITLE=] [DRY=1]` rewrites the
+  module path, binary and CLI name, deploy names and paths, display title and `IMS_` deploy
+  variables, renames the systemd units, and regenerates code and docs. Seeded e-mails and credit
+  links are kept; it refuses uncommitted changes and a project that was already renamed.
+<!-- rename:end -->
+
 ## [0.1.2] - 2026-11-21
 
 Act as a user, a system audit log, public tenant routes, and request telemetry that knows who made

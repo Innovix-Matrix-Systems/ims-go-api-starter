@@ -35,7 +35,25 @@ import Terminal from '@components/Terminal.astro'
    cp .env.example .env
    ```
 
-3. **Install the tools once.** `air` (hot reload) and `golangci-lint`, then the dashboard's
+{/* rename:keep */}
+3. **Give it your names.** One command rewrites the starter's names everywhere: the Go module
+   path, the binary and CLI (`ims` → `shop`), the deploy names and paths, the display title and
+   the `IMS_` deploy variables. It also renames the systemd units and regenerates the code and docs.
+   It refuses to run with uncommitted changes, so the rename is one reviewable commit.
+
+   ```bash
+   make rename MODULE=github.com/acme/shop-api DRY=1                            # preview
+   make rename MODULE=github.com/acme/shop-api BINARY=shop TITLE="Acme Shop"   # NAME, BINARY, TITLE are optional
+   git add -A && git commit -m "chore: rename the starter to shop-api"
+   ```
+
+   `NAME` defaults to the last part of the module (`shop-api`), `BINARY` to the name, and `TITLE`
+   to the name in title case (`Shop API`). Left as they are: the seeded `@ims.com` accounts and the
+   credit links. Run it once; it refuses a project that has already been renamed. The commands
+   below use the starter's names: substitute yours.
+   {/* rename:end */}
+
+4. **Install the tools once.** `air` (hot reload) and `golangci-lint`, then the dashboard's
    packages.
 
    ```bash
@@ -43,20 +61,20 @@ import Terminal from '@components/Terminal.astro'
    npm --prefix web/dev ci
    ```
 
-4. **Start Postgres** — skip this if you already have one running.
+5. **Start Postgres** — skip this if you already have one running.
 
    ```bash
    make db-up        # docker compose: creates ims_go_api and ims_go_api_test
    ```
 
-5. **Create the schema and seed data.** Migrations first, then permissions, the default tenant,
+6. **Create the schema and seed data.** Migrations first, then permissions, the default tenant,
    roles and two accounts.
 
    ```bash
    make migrate seed
    ```
 
-6. **Run everything with hot reload.**
+7. **Run everything with hot reload.**
 
    ```bash
    make dev

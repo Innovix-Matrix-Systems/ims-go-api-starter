@@ -31,8 +31,19 @@ embeds a Telescope-style **developer dashboard**. No containers required, Docker
 
 ## Quick start
 
+<!-- rename:keep -->
 Building a product on it? Press **Use this template** on GitHub to get a repository of your own
-(clean history, not a fork), then clone it.
+(clean history, not a fork), clone it, and give it your names in one step:
+
+```bash
+make rename MODULE=github.com/acme/shop-api BINARY=shop TITLE="Acme Shop"   # DRY=1 to preview
+git add -A && git commit -m "chore: rename the starter to shop-api"
+```
+
+That rewrites the Go module path, the binary and CLI name, the deploy names and paths, the
+display title and the `IMS_` deploy variables, renames the systemd units, and regenerates code and
+docs. Seeded e-mails and the credits are left alone.
+<!-- rename:end -->
 
 ```bash
 cp .env.example .env          # local configuration (git-ignored)
