@@ -82,6 +82,7 @@ export default defineConfig({
           items: [
             { slug: 'tutorial/first-module', badge: { text: '30 min', variant: 'tip' } },
             { slug: 'tutorial/connect-an-ai-agent', badge: { text: '15 min', variant: 'tip' } },
+            { slug: 'tutorial/sign-in-with-github', badge: { text: '15 min', variant: 'tip' } },
           ],
         },
         {

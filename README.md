@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/ci.yml/badge.svg)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/ci.yml)
 [![Docs deploy](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/docs-deploy.yml/badge.svg)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/docs-deploy.yml)
-![Version](https://img.shields.io/badge/version-0.1.5-ff5c1a)
+![Version](https://img.shields.io/badge/version-0.1.6-ff5c1a)
 [![Docs](https://img.shields.io/badge/docs-website-ff5c1a)](https://ims-go-api-starter.innovixmatrixsystem.com)
 [![Use this template](https://img.shields.io/badge/use%20this-template-2ea44f?logo=github)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/generate)
 <br>
@@ -42,6 +42,7 @@ a guide for every feature, the dashboard tour, operations runbooks and the desig
 | Area | What you get | Guide |
 | --- | --- | --- |
 | Auth | Login with OTP, password reset, e-mail verification, sessions, personal access tokens, lockout | [Authentication](docs/guides/authentication.md) |
+| Social login | Sign in with Google or GitHub, the same token as a password login; stateless, providers are one-file drivers | [Social login](docs/guides/social-login.md) |
 | Access | RBAC with a permission catalog, staff acting as a tenant or as a user (audited) | [Permissions](docs/guides/permissions.md) |
 | Tenancy | Tenants and branches, isolation in SQL, public tenant routes | [Tenancy](docs/guides/tenancy.md) |
 | AI agents | MCP server as a connector, OAuth 2.1 (PKCE, CIMD or registered clients), tools from OpenAPI `x-mcp` | [MCP](docs/guides/mcp.md) |
