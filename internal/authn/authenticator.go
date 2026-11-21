@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -126,7 +127,17 @@ func (a *OpaqueAuthenticator) Verify(ctx context.Context, raw string) (*Identity
 
 	a.touchLastUsed(ctx, row)
 
+	scopes, audience := parseAbilities(row.Abilities)
+	var grantID int64
+	if row.OauthGrantID != nil {
+		grantID = *row.OauthGrantID
+	}
+
 	return &Identity{
+		Scopes:         scopes,
+		Audience:       audience,
+		OAuthGrantID:   grantID,
+		ExpiresAt:      row.ExpiresAt.Time,
 		UserID:         record.ID,
 		TokenID:        row.ID,
 		Name:           record.Name,
@@ -150,8 +161,12 @@ func (a *OpaqueAuthenticator) Revoke(ctx context.Context, userID int64, device s
 	return nil
 }
 
-// RevokeAll deletes every token for the user (password change, ban).
+// RevokeAll deletes every token for the user (password change, ban), and
+// revokes their MCP connections so a refresh token cannot bring one back.
 func (a *OpaqueAuthenticator) RevokeAll(ctx context.Context, userID int64) error {
+	if err := a.revokeConnections(ctx, userID); err != nil {
+		return err
+	}
 	if _, err := a.queries.DeleteTokensForUser(ctx, dbgen.DeleteTokensForUserParams{
 		TokenableType: ModelTypeUser,
 		TokenableID:   userID,
@@ -161,8 +176,12 @@ func (a *OpaqueAuthenticator) RevokeAll(ctx context.Context, userID int64) error
 	return nil
 }
 
-// RevokeOthers deletes every token of the user except keepTokenID.
+// RevokeOthers deletes every token of the user except keepTokenID, MCP
+// connections included.
 func (a *OpaqueAuthenticator) RevokeOthers(ctx context.Context, userID, keepTokenID int64) error {
+	if err := a.revokeConnections(ctx, userID); err != nil {
+		return err
+	}
 	if _, err := a.queries.DeleteOtherTokensForUser(ctx, dbgen.DeleteOtherTokensForUserParams{
 		TokenableType: ModelTypeUser,
 		TokenableID:   userID,
@@ -171,6 +190,54 @@ func (a *OpaqueAuthenticator) RevokeOthers(ctx context.Context, userID, keepToke
 		return database.MapError("authn.revoke_other_tokens", err)
 	}
 	return nil
+}
+
+// revokeConnections revokes the user's OAuth grants and drops their refresh
+// tokens; their access tokens go with the user's other tokens.
+func (a *OpaqueAuthenticator) revokeConnections(ctx context.Context, userID int64) error {
+	ids, err := a.queries.RevokeUserOAuthGrants(ctx, userID)
+	if err != nil {
+		return database.MapError("authn.revoke_connections", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if _, err := a.queries.DeleteOAuthGrantRefreshTokens(ctx, ids); err != nil {
+		return database.MapError("authn.revoke_connections", err)
+	}
+	if _, err := a.queries.DeleteOAuthGrantTokens(ctx, ids); err != nil {
+		return database.MapError("authn.revoke_connections", err)
+	}
+	return nil
+}
+
+// AbilityAudiencePrefix marks the audience entry in an MCP token's abilities.
+const AbilityAudiencePrefix = "aud:"
+
+// EncodeAbilities is the abilities column of an MCP access token: its scopes
+// and the resource it was issued for.
+func EncodeAbilities(scopes []string, audience string) string {
+	list := append(append([]string{}, scopes...), AbilityAudiencePrefix+audience)
+	encoded, _ := json.Marshal(list)
+	return string(encoded)
+}
+
+func parseAbilities(raw *string) (scopes []string, audience string) {
+	if raw == nil || *raw == "" {
+		return nil, ""
+	}
+	var list []string
+	if json.Unmarshal([]byte(*raw), &list) != nil {
+		return nil, ""
+	}
+	for _, ability := range list {
+		if strings.HasPrefix(ability, AbilityAudiencePrefix) {
+			audience = strings.TrimPrefix(ability, AbilityAudiencePrefix)
+			continue
+		}
+		scopes = append(scopes, ability)
+	}
+	return scopes, audience
 }
 
 func (a *OpaqueAuthenticator) touchLastUsed(ctx context.Context, row dbgen.PersonalAccessToken) {

@@ -38,6 +38,8 @@ var routesWithoutPermission = map[string]bool{
 	// self-service: the caller's own session, profile and inbox
 	"POST /api/v1/logout":                                 true,
 	"GET /api/v1/user/profile":                            true,
+	"GET /api/v1/user/connections":                        true, // the caller's own MCP connections
+	"DELETE /api/v1/user/connections/{id}":                true,
 	"POST /api/v1/user/profile/update":                    true,
 	"POST /api/v1/user/profile/update-avatar":             true,
 	"POST /api/v1/user/profile/change-password":           true,

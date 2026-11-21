@@ -8,7 +8,9 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/mcp"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/dev"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/oauth"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/docs"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/ratelimit"
@@ -78,7 +80,14 @@ func (d *Dependencies) Router() http.Handler {
 		})
 	})
 
-	r.Route("/api/v1", func(r chi.Router) {
+	// MCP connector (phase 22): the OAuth authorization server and /mcp.
+	// Registered unconditionally so the route table stays stable; with
+	// MCP_ENABLED off they answer 404.
+	d.OAuth.RegisterEndpoints(r, d.Config.MCP.Enabled)
+	mcpEndpoint := &lateHandler{}
+	r.With(oauth.Gate(d.Config.MCP.Enabled, d.Responder)).Handle(mcp.Path, mcpEndpoint)
+
+	apiRouter := r.Route("/api/v1", func(r chi.Router) {
 		d.System.RegisterRoutes(r)
 		d.Auth.RegisterPublicRoutes(r)
 		d.Billing.RegisterPublicRoutes(r)
@@ -121,6 +130,8 @@ func (d *Dependencies) Router() http.Handler {
 				// permission metadata carries no tenant data.
 				d.Files.RegisterRoutes(r)
 				d.Permissions.RegisterRoutes(r)
+				// The caller's own MCP connections.
+				d.OAuth.RegisterRoutes(r)
 
 				// System-only exempt families: tenant-bound identities are
 				// rejected before their handlers run, so a granted system
@@ -134,10 +145,13 @@ func (d *Dependencies) Router() http.Handler {
 					d.Notifications.RegisterRoutesExempt(r)
 					d.Settings.RegisterInternalRoutes(r)
 					d.Flags.RegisterInternalRoutes(r)
+					d.OAuth.RegisterInternalRoutes(r)
 				})
 			})
 		})
 	})
+
+	mcpEndpoint.set(d.mcpHandler(apiRouter))
 
 	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 		d.Responder.Error(w, r, apperr.New(apperr.ResourceNotFound, "The requested resource was not found."))
@@ -155,3 +169,11 @@ func (d *Dependencies) up(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
+
+// lateHandler lets /mcp be registered before the /api/v1 router it
+// dispatches into exists.
+type lateHandler struct{ h http.Handler }
+
+func (l *lateHandler) set(h http.Handler) { l.h = h }
+
+func (l *lateHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) { l.h.ServeHTTP(w, r) }

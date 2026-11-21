@@ -14,10 +14,12 @@ import "context"
 // A request is handled on one goroutine, so no locking is needed. Handlers
 // that start their own goroutines must not write to it.
 type RequestInfo struct {
-	UserID         int64 // the identity the request ran as (the target when acting as a user)
-	ImpersonatorID int64 // who was really calling, when acting as a user
-	TenantID       int64 // the effective tenant (0 = none or every tenant)
-	BranchID       int64 // the effective branch (0 = none)
+	UserID         int64  // the identity the request ran as (the target when acting as a user)
+	ImpersonatorID int64  // who was really calling, when acting as a user
+	TenantID       int64  // the effective tenant (0 = none or every tenant)
+	BranchID       int64  // the effective branch (0 = none)
+	MCPTool        string // the tool, when the request was an MCP tool call
+	MCPClient      string // the agent that called it ("Claude", "Cursor"…)
 }
 
 type requestInfoKey struct{}
@@ -53,4 +55,30 @@ func NoteScope(ctx context.Context, tenantID, branchID int64) {
 		info.TenantID = tenantID
 		info.BranchID = branchID
 	}
+}
+
+// MCPCall is the MCP tool call a sub-request serves. The dispatcher puts it
+// in the sub-request's context; the activity log stamps it on what the tool
+// changed, and the access log and telemetry tag the /mcp request with it.
+type MCPCall struct {
+	Tool   string
+	Client string
+}
+
+type mcpCallKey struct{}
+
+// WithMCPCall marks ctx as serving one MCP tool call and notes it on the
+// request's holder.
+func WithMCPCall(ctx context.Context, call MCPCall) context.Context {
+	if info := RequestInfoFrom(ctx); info != nil {
+		info.MCPTool = call.Tool
+		info.MCPClient = call.Client
+	}
+	return context.WithValue(ctx, mcpCallKey{}, call)
+}
+
+// MCPCallFrom returns the tool call ctx serves, if any.
+func MCPCallFrom(ctx context.Context) (MCPCall, bool) {
+	call, ok := ctx.Value(mcpCallKey{}).(MCPCall)
+	return call, ok
 }

@@ -33,6 +33,10 @@ Everything lives under `/api/v1`. Breaking changes get a new version prefix; add
 | `X-Tenant-Code`, `X-Branch-Id` | public routes that need a tenant |
 | `X-Request-ID` (response) | the request's id — quote it in bug reports |
 
+The MCP server is the exception: `/mcp` takes an MCP access token from its OAuth flow
+(`/oauth/authorize`, `/oauth/token`), never a session token, and `/api/v1` refuses MCP tokens.
+See [MCP server](../guides/mcp.md).
+
 ## Responses
 
 | Case | Shape |

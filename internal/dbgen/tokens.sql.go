@@ -30,7 +30,7 @@ func (q *Queries) CountPrunableSessionTokens(ctx context.Context, idleDays int32
 const createToken = `-- name: CreateToken :one
 INSERT INTO personal_access_tokens (tokenable_type, tokenable_id, name, device, token, abilities, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, tokenable_type, tokenable_id, name, device, token, abilities, last_used_at, expires_at, created_at, updated_at
+RETURNING id, tokenable_type, tokenable_id, name, device, token, abilities, last_used_at, expires_at, created_at, updated_at, oauth_grant_id
 `
 
 type CreateTokenParams struct {
@@ -66,6 +66,7 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Perso
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OauthGrantID,
 	)
 	return i, err
 }
@@ -190,7 +191,7 @@ func (q *Queries) DeleteTokensForUser(ctx context.Context, arg DeleteTokensForUs
 }
 
 const getToken = `-- name: GetToken :one
-SELECT id, tokenable_type, tokenable_id, name, device, token, abilities, last_used_at, expires_at, created_at, updated_at FROM personal_access_tokens
+SELECT id, tokenable_type, tokenable_id, name, device, token, abilities, last_used_at, expires_at, created_at, updated_at, oauth_grant_id FROM personal_access_tokens
 WHERE id = $1
 `
 
@@ -209,12 +210,13 @@ func (q *Queries) GetToken(ctx context.Context, id int64) (PersonalAccessToken, 
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.OauthGrantID,
 	)
 	return i, err
 }
 
 const listSessionTokens = `-- name: ListSessionTokens :many
-SELECT id, tokenable_type, tokenable_id, name, device, token, abilities, last_used_at, expires_at, created_at, updated_at FROM personal_access_tokens
+SELECT id, tokenable_type, tokenable_id, name, device, token, abilities, last_used_at, expires_at, created_at, updated_at, oauth_grant_id FROM personal_access_tokens
 WHERE tokenable_type = 'user'
   AND tokenable_id = $1
 ORDER BY last_used_at DESC NULLS LAST, id DESC
@@ -241,6 +243,7 @@ func (q *Queries) ListSessionTokens(ctx context.Context, userID int64) ([]Person
 			&i.ExpiresAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.OauthGrantID,
 		); err != nil {
 			return nil, err
 		}

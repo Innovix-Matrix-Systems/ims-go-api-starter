@@ -12,6 +12,14 @@ import (
 func Authenticate(auth Authenticator, responder *httpx.Responder) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// An MCP tool call's sub-request: the /mcp endpoint already
+			// verified the token and placed the identity here.
+			if identity, ok := dispatchedIdentity(r.Context()); ok {
+				httpx.NoteUser(r.Context(), identity.UserID, 0)
+				next.ServeHTTP(w, r.WithContext(WithIdentity(r.Context(), identity)))
+				return
+			}
+
 			header := r.Header.Get("Authorization")
 			if !strings.HasPrefix(header, "Bearer ") {
 				responder.Error(w, r, apperr.New(apperr.TokenMissing, "Authentication is required."))
@@ -26,6 +34,12 @@ func Authenticate(auth Authenticator, responder *httpx.Responder) func(http.Hand
 			identity, err := auth.Verify(r.Context(), raw)
 			if err != nil {
 				responder.Error(w, r, err)
+				return
+			}
+			// An MCP access token works only on /mcp: a leaked agent token
+			// cannot call the REST API or the dashboard.
+			if identity.IsMCP() {
+				responder.Error(w, r, apperr.New(apperr.TokenInvalid, "The provided access token is invalid."))
 				return
 			}
 			if !identity.IsActive {

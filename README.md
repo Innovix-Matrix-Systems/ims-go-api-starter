@@ -26,7 +26,7 @@ guides for every feature, the dashboard tour, operations runbooks and the design
   test that fails any route without a permission.
 - **Everything an API needs.** Auth with OTP, password reset and e-mail verification · billing
   with feature limits (bKash, cash, bank) · settings · feature flags with percentage rollout ·
-  activity log with a system audit log · public tenant routes · notifications · files on local/S3/R2/MinIO · import/export · backups ·
+  activity log with a system audit log · public tenant routes · MCP server for AI agents (as a connector) · notifications · files on local/S3/R2/MinIO · import/export · backups ·
   River queue · cron scheduler · RFC 9457 errors · OpenAPI.
 - **A dashboard you will actually use.** Requests, logs, exceptions, queue, one-click commands,
   an inspector (health, routes, roles, config), tenants, settings, flags, files, sessions and an audit log —

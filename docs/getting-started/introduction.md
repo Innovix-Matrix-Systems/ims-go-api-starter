@@ -34,6 +34,7 @@ Telescope plus Horizon plus a little Nova) is embedded in it.
 | Platform | cache (memory/file/redis/database), River queue, cron scheduler, storage disks, mail, i18n |
 | Data | sqlc type-safe SQL, goose migrations, transactions, advisory-lock quotas |
 | Ops | health and metrics, backups to S3/R2, systemd deploy with gated migrations, rollback |
+| AI agents | an MCP server added as a connector (claude.ai, Claude Code, ChatGPT, Cursor), with built-in OAuth; tools are OpenAPI operations marked `x-mcp` |
 | DX | `ims gen module`, `make rename`, `testkit`, hot reload, developer dashboard, AI-agent skills |
 
 ## The ideas behind it

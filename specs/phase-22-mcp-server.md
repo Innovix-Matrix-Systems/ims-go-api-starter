@@ -1,6 +1,6 @@
 # Phase 22 — MCP server as a connector
 
-**Status:** Accepted (rev 3, 2026-11-21: rebuilt around connectors; manual client registration alongside CIMD; tool
+**Status:** Done (2026-11-21; rev 3, 2026-11-21: rebuilt around connectors; manual client registration alongside CIMD; tool
 coverage moved to a later spec)
 **Source:** project-owner request (2026-11-20): "MCP is now a must for a lot of systems"; rev 2
 (2026-11-21): "make sure that it is a connector … I do not want a registration … we are only
@@ -400,35 +400,35 @@ allowed) is **a later spec**.
 ## Scope checklist
 
 ### A. Authorization server
-- [ ] Migration: `oauth_grants`, `oauth_codes`, `oauth_refresh_tokens`, `personal_access_tokens.oauth_grant_id`.
-- [ ] `internal/modules/oauth`: metadata, authorize (sign-in, OTP, consent with the tenant picker),
+- [x] Migration: `oauth_grants`, `oauth_codes`, `oauth_refresh_tokens`, `personal_access_tokens.oauth_grant_id`.
+- [x] `internal/modules/oauth`: metadata, authorize (sign-in, OTP, consent with the tenant picker),
       token (code + refresh with rotation and reuse detection), revoke.
-- [ ] CIMD fetcher with SSRF guards, validation, cache and the optional host allowlist.
-- [ ] Manual clients: `oauth_clients`, the `oauth_client.manage` permission, the `/api/v1/oauth-client`
+- [x] CIMD fetcher with SSRF guards, validation, cache and the optional host allowlist.
+- [x] Manual clients: `oauth_clients`, the `oauth_client.manage` permission, the `/api/v1/oauth-client`
       endpoints with OpenAPI, `ims oauth:client`, secret hashing and rotation, `MCP_OAUTH_CIMD_ENABLED`.
-- [ ] Loopback redirect matching that ignores the port.
-- [ ] Templates (en/bn), CSRF, cookie, security headers.
-- [ ] `GET/DELETE /api/v1/user/connections`; revoke on password change, deactivation, logout-all.
+- [x] Loopback redirect matching that ignores the port.
+- [x] Templates (en/bn), CSRF, cookie, security headers.
+- [x] `GET/DELETE /api/v1/user/connections`; revoke on password change, deactivation, logout-all.
 
 ### B. MCP endpoint and dispatcher
-- [ ] Add `github.com/modelcontextprotocol/go-sdk` v1.8.x.
-- [ ] `internal/mcp`: server (stateless), catalog from `x-mcp`, dispatcher, result mapping, scope
+- [x] Add `github.com/modelcontextprotocol/go-sdk` v1.8.x.
+- [x] `internal/mcp`: server (stateless), catalog from `x-mcp`, dispatcher, result mapping, scope
       check with `insufficient_scope`.
-- [ ] `authn`: the dispatch marker; refuse `mcp:*` tokens on `/api/v1` and `/dev`.
-- [ ] `internal/app`: keep the `/api/v1` sub-router; mount `/mcp`, `/oauth/*` and the well-known
+- [x] `authn`: the dispatch marker; refuse `mcp:*` tokens on `/api/v1` and `/dev`.
+- [x] `internal/app`: keep the `/api/v1` sub-router; mount `/mcp`, `/oauth/*` and the well-known
       routes when `MCP_ENABLED`; Origin check; per-token limiter.
-- [ ] `x-mcp` on the five basic operations; catalog tests.
+- [x] `x-mcp` on the five basic operations; catalog tests.
 
 ### C. Audit and observability
-- [ ] `source=mcp`, tool and client on activity entries; `oauth.authorized` / `oauth.revoked`.
-- [ ] Telemetry and access log `via=mcp`; dashboard chip; metrics.
+- [x] `source=mcp`, tool and client on activity entries; `oauth.authorized` / `oauth.revoked`.
+- [x] Telemetry and access log `via=mcp`; dashboard chip; metrics.
 
 ### Docs
-- [ ] `docs/guides/mcp.md`, "Connect an AI agent": enabling it; adding the connector in claude.ai /
+- [x] `docs/guides/mcp.md`, "Connect an AI agent": enabling it; adding the connector in claude.ai /
       Desktop, Claude Code, ChatGPT, Cursor and VS Code; testing locally (Claude Code on localhost,
       hosted Claude through a tunnel); platform accounts and the tenant picker; exposing an
       operation with `x-mcp`; security.
-- [ ] Configuration reference, HTTP API reference (new routes), home page feature list,
+- [x] Configuration reference, HTTP API reference (new routes), home page feature list,
       architecture diagram, CHANGELOG.
 
 ## Out of scope (later specs)
@@ -512,3 +512,47 @@ allowed) is **a later spec**.
 3. **Lifetimes:** access token 1 h, refresh token 30 days, sliding.
 4. **Read-only by default:** the consent page asks for changes separately ("Allow changes"),
    unticked even when the client asks for `mcp:write`: the user decides.
+
+## Deviations (as built, 2026-11-21)
+
+1. **CLI names** are `ims oauth:client:create|list|rotate|delete`, in the style of the other
+   commands (`backup:run`), not `ims oauth:client create`.
+2. **Consent is not remembered.** Every authorization shows the consent page (one click). A
+   remembered consent would skip the read/write choice and, for platform accounts, the tenant pick.
+3. **Platform connections work in the picked tenant's first branch.** There is no branch picker.
+4. **No `auth.login` entry** for the authorize page's sign-in (the REST login writes none either);
+   `oauth.authorized` is the record. Platform accounts' `oauth.authorized` / `oauth.revoked` go to
+   the system log, tenant users' to their tenant.
+5. **Telemetry needs no new column.** MCP calls are the requests on route `/mcp`; the access log
+   adds `via=mcp mcp_tool=…`, and the dashboard shows the MCP chip from the route. Metrics:
+   `ims_mcp_tool_calls_total{tool,outcome}` only, since the metrics registry has counters, not
+   custom histograms.
+6. **`/oauth/token` has no limiter of its own.** The global per-IP limit applies, and the sign-in
+   page uses the login throttles and lockout.
+7. **No password-reset link** on the sign-in page: the config has no single front-end reset page
+   (`AUTH_PASSWORD_RESET_URL` is a per-token template). `NewPages` takes a URL for products that
+   have one.
+8. **The 401 challenge carries no `scope`.** The SDK's `RequireBearerToken` writes the header;
+   clients take the scopes from the protected resource metadata (`scopes_supported`), which the
+   spec allows.
+9. **Activity stamp key** is `_via` in an entry's changes: `{"source": "mcp", "tool", "client"}`.
+10. **Loopback redirects match any loopback host**, not only any port: `localhost`, `127.0.0.1`
+    and `::1` are the same computer, and tools differ in which one they use (`mcp-remote` returns
+    to `127.0.0.1` even for a client registered with `localhost`). Found connecting Claude Desktop.
+11. **`make dev` forwards `/mcp`, `/oauth` and `/.well-known`** from the dashboard dev server
+    (`web/dev/vite.config.ts`), so the connector works on `localhost:8080` like the rest of the
+    API. Found connecting Claude Desktop.
+12. **`ims gen module`** writes the hint as a YAML comment (`# x-mcp: {tool: list_…}`) on the list
+    operation, and `ims gen openapi` keeps a mark someone enabled inside the generated region.
+
+Verified live against a local instance with Claude Code's real client metadata document
+(`https://claude.ai/oauth/claude-code-client-metadata`): 39 of 39 checks, covering discovery, sign-in,
+consent, code exchange and reuse, the five tools, 2025-11-25 and 2026-07-28 requests, token separation,
+read-only scope challenge, refresh rotation and reuse, disconnect, a registered confidential client
+(HTTP Basic, deactivation), refusals that never redirect, and the audit entries. claude.ai through a
+tunnel was not exercised in this session.
+
+Then connected for real from Claude Desktop (through `mcp-remote` with a registered public client)
+against `make dev`: sign-in, consent with the tenant picker, `whoami`, `list_branches`, `list_users`,
+`create_branch` (activity entry with `_via` naming Claude Desktop) and a validation refusal. The
+steps are the [Connect an AI agent](../docs/tutorial/connect-an-ai-agent.mdx) tutorial.

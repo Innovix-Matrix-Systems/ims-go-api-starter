@@ -40,7 +40,7 @@ go run ./cmd/app gen module --name=product \
   title="ims gen module"
   lines={[
     { cmd: 'go run ./cmd/app gen module --name=product --fields="name:string,sku:string,price:decimal,stock:int,is_active:bool,notes:text?"' },
-    { out: 'wrote migrations/00025_create_products.sql', tone: 'dim' },
+    { out: 'wrote migrations/00028_create_products.sql', tone: 'dim' },
     { out: 'wrote sql/queries/products.sql', tone: 'dim' },
     { out: 'wrote internal/modules/product/model.go', tone: 'dim' },
     { out: 'wrote internal/modules/product/repository.go', tone: 'dim' },
@@ -63,7 +63,7 @@ What you got:
 
 <FileTree>
 - migrations/
-  - 00025_create_products.sql the table, tenant index, soft delete
+  - 00028_create_products.sql the table, tenant index, soft delete
 - sql/queries/
   - products.sql tenant-filtered CRUD queries
 - internal/
@@ -99,7 +99,7 @@ Every route declares its permission. The generated module is **tenant-scoped**: 
 The migration is yours to edit until it has been applied. Add a unique index on the SKU, per
 tenant, ignoring soft-deleted rows (so a deleted product's SKU can be reused):
 
-```sql title="migrations/00025_create_products.sql" ins={2}
+```sql title="migrations/00028_create_products.sql" ins={2}
 CREATE INDEX products_tenant_id_idx ON products (tenant_id);
 CREATE UNIQUE INDEX products_tenant_sku_unique ON products (tenant_id, lower(sku)) WHERE deleted_at IS NULL;
 ```
@@ -108,7 +108,7 @@ Apply it:
 
 ```bash
 go run ./cmd/app migrate
-go run ./cmd/app migrate:status   # 00025_create_products.sql: applied
+go run ./cmd/app migrate:status   # 00028_create_products.sql: applied
 ```
 
 <Aside type="caution" title="Never edit an applied migration">
@@ -434,6 +434,19 @@ Open [localhost:8080/dev/](http://localhost:8080/dev/) and look at what you buil
 - **Inspector → Roles & permissions** shows the new `product` group.
 - The tenant's **activity feed** (`GET /api/v1/activity`) has a `product.created` entry with you as
   the actor.
+
+### Optional: let AI agents list products
+
+The generator left a commented line on the list operation in `api/openapi.yaml`. Uncomment it:
+
+```yaml
+      operationId: listProducts
+      x-mcp: {tool: list_products}
+```
+
+With `MCP_ENABLED=true`, an agent connected to `/mcp` (Claude Code, claude.ai, Cursor) now has a
+`list_products` tool. It runs through the same route, permission and tenant filter as the REST
+call, so it needs no Go code. See [MCP server](../guides/mcp.md).
 
 ## 10. Finish like a pro
 

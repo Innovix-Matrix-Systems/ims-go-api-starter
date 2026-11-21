@@ -85,7 +85,7 @@ import Terminal from '@components/Terminal.astro'
   title="make dev"
   lines={[
     { cmd: 'make migrate seed' },
-    { out: 'goose: successfully migrated database to version: 24', tone: 'dim' },
+    { out: 'goose: successfully migrated database to version: 27', tone: 'dim' },
     { out: 'River schema: v8 (0 pending)', tone: 'dim' },
     { out: 'seeded permissions, tenant "Default", roles Admin + Developer', tone: 'ok' },
     { out: 'accounts: superadmin@ims.com, developer@ims.com', tone: 'ok' },
@@ -197,4 +197,5 @@ make schedule    # ims schedule
 - Understand the request path: [How it works](./how-it-works.mdx).
 - Find your way around the folders: [Project tour](./project-tour.mdx).
 - Build something: [Your first module](../tutorial/first-module.mdx).
+- Let an AI agent use your API: [Connect an AI agent](../tutorial/connect-an-ai-agent.mdx).
 - Something not working? [Local development & troubleshooting](../operations/local-development.md).

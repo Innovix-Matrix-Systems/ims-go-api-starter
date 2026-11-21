@@ -49,6 +49,24 @@ func (p *Platform) schedule() []scheduler.Task {
 			},
 		},
 		{
+			ID:          "oauth.prune",
+			Spec:        "15 * * * *",
+			Description: "Deletes expired MCP authorization codes and spent refresh tokens.",
+			Timeout:     5 * time.Minute,
+			Run: func(ctx context.Context) error {
+				codes, err := queries.DeleteExpiredOAuthCodes(ctx)
+				if err != nil {
+					return err
+				}
+				refresh, err := queries.DeleteExpiredOAuthRefreshTokens(ctx)
+				if err != nil {
+					return err
+				}
+				logger.Info("oauth codes and refresh tokens pruned", "codes", codes, "refresh_tokens", refresh)
+				return nil
+			},
+		},
+		{
 			ID:          "billing.expire-subscriptions",
 			Spec:        "0 */6 * * *",
 			Description: "Marks overdue subscriptions as expired.",

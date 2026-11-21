@@ -51,6 +51,57 @@ func NewService(users UserLookup, auth Authenticator, otp *OTPService, throttle 
 // only after the password matches, so login cannot be used to enumerate
 // accounts or their state.
 func (s *Service) Login(ctx context.Context, email, password, device, ip string) (*LoginResult, error) {
+	record, err := s.checkPassword(ctx, email, password, ip)
+	if err != nil {
+		return nil, err
+	}
+
+	if s.cfg.OTPEnabled {
+		if _, err := s.otp.Send(ctx, record.ID, record.Email); err != nil {
+			return nil, err
+		}
+		return &LoginResult{
+			User:    record,
+			Status:  StatusOTPRequired,
+			Message: "An OTP has been sent to your registered contact.",
+		}, nil
+	}
+	return s.completeLogin(ctx, record, device, email, ip)
+}
+
+// SignIn checks credentials like Login, with the same throttles and account
+// checks, but issues no token: the OAuth sign-in page (MCP connectors) uses
+// it and then issues its own. otpRequired is true when an OTP was sent and
+// SignInOTP must follow.
+func (s *Service) SignIn(ctx context.Context, email, password, ip string) (record *UserRecord, otpRequired bool, err error) {
+	record, err = s.checkPassword(ctx, email, password, ip)
+	if err != nil {
+		return nil, false, err
+	}
+	if s.cfg.OTPEnabled {
+		if _, err := s.otp.Send(ctx, record.ID, record.Email); err != nil {
+			return nil, false, err
+		}
+		return record, true, nil
+	}
+	s.clearThrottles(ctx, email, ip)
+	return record, false, nil
+}
+
+// SignInOTP completes SignIn when an OTP was required. It issues no token.
+func (s *Service) SignInOTP(ctx context.Context, email, code, ip string) (*UserRecord, error) {
+	record, err := s.checkOTP(ctx, email, code, ip)
+	if err != nil {
+		return nil, err
+	}
+	s.clearThrottles(ctx, email, ip)
+	return record, nil
+}
+
+// OTPEnabled reports whether sign-in asks for a one-time code.
+func (s *Service) OTPEnabled() bool { return s.cfg.OTPEnabled }
+
+func (s *Service) checkPassword(ctx context.Context, email, password, ip string) (*UserRecord, error) {
 	if err := s.checkThrottles(ctx, email, ip); err != nil {
 		return nil, err
 	}
@@ -69,22 +120,19 @@ func (s *Service) Login(ctx context.Context, email, password, device, ip string)
 	if err := s.verifyBeforeLogin(record); err != nil {
 		return nil, err
 	}
-
-	if s.cfg.OTPEnabled {
-		if _, err := s.otp.Send(ctx, record.ID, record.Email); err != nil {
-			return nil, err
-		}
-		return &LoginResult{
-			User:    record,
-			Status:  StatusOTPRequired,
-			Message: "An OTP has been sent to your registered contact.",
-		}, nil
-	}
-	return s.completeLogin(ctx, record, device, email, ip)
+	return record, nil
 }
 
 // VerifyOTP completes a login started with an OTP challenge.
 func (s *Service) VerifyOTP(ctx context.Context, email, code, device, ip string) (*LoginResult, error) {
+	record, err := s.checkOTP(ctx, email, code, ip)
+	if err != nil {
+		return nil, err
+	}
+	return s.completeLogin(ctx, record, device, email, ip)
+}
+
+func (s *Service) checkOTP(ctx context.Context, email, code, ip string) (*UserRecord, error) {
 	if err := s.checkThrottles(ctx, email, ip); err != nil {
 		return nil, err
 	}
@@ -106,7 +154,7 @@ func (s *Service) VerifyOTP(ctx context.Context, email, code, device, ip string)
 		s.hitThrottles(ctx, email, ip)
 		return nil, err
 	}
-	return s.completeLogin(ctx, record, device, email, ip)
+	return record, nil
 }
 
 // Logout revokes the caller's token for one device.

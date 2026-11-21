@@ -142,6 +142,12 @@ function RequestDetailPage() {
                 <dt>User</dt>
                 <dd>
                   {request.user_id ?? '—'}
+                  {request.route === '/mcp' && (
+                    <>
+                      {' '}
+                      <Chip tone="blue">via MCP connector</Chip>
+                    </>
+                  )}
                   {request.impersonator_id != null && (
                     <>
                       {' '}

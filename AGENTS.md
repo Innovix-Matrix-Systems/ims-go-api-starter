@@ -193,6 +193,7 @@ Rules of the layering (enforced by review and `route_permissions_integration_tes
 | Authenticated + tenant-resolved | `auth` → `tenant.resolve` | tenant-scoped resources (users, branches, roles, settings, flags, activity, billing status) |
 | Authenticated + tenant-exempt | `auth` → `tenant.exempt` (+ `tenant.internal`) | global management (tenants, permissions, internal users/roles, packages, approvals) |
 | Dashboard `/dev/api` | `dev.enabled` → `auth` → `tenant.exempt` → `can:dev.view` | dashboard JSON API; mutations add `can:dev.manage` |
+| MCP `/mcp`, `/oauth/*`, `/.well-known/oauth-*` | `mcp.enabled` → (for `/mcp`) MCP bearer token → scope check | the MCP connector; tools dispatch into `/api/v1` |
 
 Global middleware (outermost first): `request-id → public-origin (non-local) → real-ip →
 security-headers → cors → access-log → recover → telescope → metrics → timeout → throttle →
@@ -233,6 +234,13 @@ records nothing; actor, IP and request id come from the context; secret-looking 
 Read at `GET /api/v1/activity` (`activity.view`: own tenant; `activity.view.all`: every tenant
 and the system log, the rows with no tenant). Entries written while acting as a user carry the
 impersonator; act-as itself is logged as `impersonation.*` system rows.
+
+**MCP tools** — an OpenAPI operation marked `x-mcp: {tool: name}` is an MCP tool; no Go code.
+`internal/mcp` serves it through the `/api/v1` router in-process (identity via
+`authn.Dispatched`, never the token), so every gate applies. MCP access tokens
+(`Identity.IsMCP()`) work only on `/mcp`; `authn.Authenticate` refuses them elsewhere. The OAuth
+server is `internal/modules/oauth` (CIMD clients or registered ones). Don't add MCP-only
+endpoints: add the REST operation, then mark it.
 
 **Pagination** — `page`/`per_page` (default 10, max 100) via `httpx.PageParams`, whitelisted
 ordering via `httpx.OrderParams`, `h.Paginated(...)` with `httpx.NewPagination`. Feeds
