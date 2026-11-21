@@ -5,8 +5,9 @@
  * the data, the job queue, the cache and the sessions; files go to a disk.
  *
  * One 7-second cycle tells two stories:
- *   0.0–2.6s  a request: app → API (auth, tenant, permission) → PostgreSQL,
- *             and the dashboard records it.
+ *   0.0–2.6s  a request: an app, or an AI agent through /mcp (OAuth 2.1),
+ *             → API (auth, tenant, permission) → PostgreSQL, and the
+ *             dashboard records it.
  *   3.0–6.2s  a job: the scheduler enqueues it in PostgreSQL, the worker
  *             picks it up and writes a file, and the dashboard records it.
  *
@@ -18,8 +19,9 @@ const cycle = 7
 
 // [id, path, start s, end s, tone]
 const packets: [string, string, number, number, 'req' | 'job' | 'obs'][] = [
-  ['you-dash', 'M312 52 V108', 0.1, 0.8, 'obs'],
-  ['app-api', 'M110 52 V108', 0.2, 1.0, 'req'],
+  ['you-dash', 'M342 52 V108', 0.1, 0.8, 'obs'],
+  ['app-api', 'M82 52 V108', 0.2, 1.0, 'req'],
+  ['agent-api', 'M188 52 V108', 0.4, 1.0, 'req'],
   ['api-db', 'M196 144 H210 V292', 1.2, 2.2, 'req'],
   ['api-dash', 'M196 124 H224', 2.2, 2.6, 'obs'],
   ['sched-db', 'M116 228 V292', 3.0, 3.7, 'job'],
@@ -33,6 +35,13 @@ const keys = (start: number, end: number) => {
   const b = (end / cycle).toFixed(3)
   return { keyTimes: `0;${a};${b};1`, opacity: `0;1;0`, opacityTimes: `0;${a};${b}` }
 }
+
+// Who calls the binary: [x, title, subtitle]
+const callers: [number, string, string][] = [
+  [24, 'Web & mobile', 'REST · /api/v1'],
+  [152, 'AI agents', 'MCP · OAuth 2.1'],
+  [280, 'Your browser', '/dev · /docs'],
+]
 
 // [x, y, w, title, subtitle, pulse at s]
 const chips: [number, number, number, string, string, number][] = [
@@ -48,17 +57,27 @@ const chips: [number, number, number, string, string, number][] = [
     <title id="arch-title">How the IMS Go API Starter is put together</title>
     <desc id="arch-desc">
       One Go binary runs the HTTP API, the developer dashboard, the scheduler and the queue workers.
-      Apps call the API, which checks authentication, tenant and permission before reading
+      Apps call the REST API and AI agents call it through MCP, signed in with OAuth 2.1; every
+      call checks authentication, tenant and permission before reading
       PostgreSQL. The scheduler enqueues jobs in PostgreSQL, the workers run them and write files
       to local or S3 storage, and the dashboard records every request and job.
     </desc>
 
     <!-- callers -->
     <g class="box">
-      <rect x="30" y="12" width="160" height="40" rx="8" />
-      <text x="110" y="37" class="label">Web &amp; mobile apps</text>
-      <rect x="232" y="12" width="160" height="40" rx="8" />
-      <text x="312" y="37" class="label">You, in a browser</text>
+      {
+        callers.map(([x, title, sub]) => (
+          <>
+            <rect x={x} y="6" width="116" height="46" rx="8" />
+            <text x={x + 58} y="26" class="label">
+              {title}
+            </text>
+            <text x={x + 58} y="42" class="store-sub">
+              {sub}
+            </text>
+          </>
+        ))
+      }
     </g>
 
     <!-- the binary -->
