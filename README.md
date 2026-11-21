@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/ci.yml/badge.svg)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/ci.yml)
 [![Docs deploy](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/docs-deploy.yml/badge.svg)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/docs-deploy.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/Innovix-Matrix-Systems/ims-go-api-starter)](https://goreportcard.com/report/github.com/Innovix-Matrix-Systems/ims-go-api-starter)
 ![Version](https://img.shields.io/badge/version-0.1.5-ff5c1a)
 [![Docs](https://img.shields.io/badge/docs-website-ff5c1a)](https://ims-go-api-starter.innovixmatrixsystem.com)
 [![Use this template](https://img.shields.io/badge/use%20this-template-2ea44f?logo=github)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/generate)
@@ -14,7 +13,6 @@
 ![OAuth](https://img.shields.io/badge/OAuth-2.1-EB5424)
 ![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
 ![CGO free](https://img.shields.io/badge/CGO-free-00ADD8)
-[![Last commit](https://img.shields.io/github/last-commit/Innovix-Matrix-Systems/ims-go-api-starter)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/commits/main)
 
 **Laravel's developer experience, Go's performance.** A multi-tenant API starter that ships as
 **one CGO-free binary**: it serves the API, runs migrations, queue workers and the scheduler, and
@@ -150,3 +148,7 @@ studio in Dhaka, Bangladesh. We run our own products on it. More open-source sta
 [Laravel admin](https://github.com/Innovix-Matrix-Systems/ims-laravel-admin-starter).
 Need a team to build on it? Write to **[hello@innovixmatrixsystem.com](mailto:hello@innovixmatrixsystem.com)**.
 Questions about the starter: [support@innovixmatrixsystem.com](mailto:support@innovixmatrixsystem.com).
+
+## License
+
+This project is licensed under the [MIT License](LICENSE.md).
