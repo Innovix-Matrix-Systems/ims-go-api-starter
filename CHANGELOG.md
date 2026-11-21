@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Social login with Google and GitHub.** `POST /api/v1/social/{provider}/login` takes a Google
+  `id_token` or a GitHub authorization `code`, verifies it with the provider and signs in the
+  existing user with that verified e-mail, with the same token and response as `POST /login`
+  (no OTP step). `GET /api/v1/social/providers` lists what is enabled. Off until
+  `SOCIAL_PROVIDERS` is set; no migration. Providers are drivers in `internal/authn/social`, so
+  more are one file each (see `docs/guides/social-login.md`). New error code
+  `SOCIAL_ACCOUNT_NOT_FOUND` (403).
+- **Logins in the activity log.** Every API login, password or social, successful or not, is an
+  `auth.login` entry with its `method`. Successful ones are in the user's tenant; failed ones are
+  system rows.
+
 ## [0.1.5] - 2026-11-21
 
 An MCP server that AI apps add as a connector, with a built-in OAuth 2.1 authorization server.

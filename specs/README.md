@@ -37,7 +37,7 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 20 | [phase-20-dev-dashboard-finish.md](phase-20-dev-dashboard-finish.md) | Done — inspector, commands, form kit, settings view, dev service layer, tests on testkit |
 | 21 | [phase-21-impersonation-public-tenant.md](phase-21-impersonation-public-tenant.md) | **Done** (2026-11-21) — act-as-user impersonation (`X-Acting-User`), system audit log (`activity.view.all`), public tenant resolution (`X-Tenant-Code`) |
 | 22 | [phase-22-mcp-server.md](phase-22-mcp-server.md) | **Done** (2026-11-21) — MCP server as a connector: `/mcp`, built-in OAuth 2.1 with CIMD (no registration) and manually registered clients, tools dispatched through the router, five basic tools |
-| 23 | [phase-23-social-login.md](phase-23-social-login.md) | Draft — sign in with Google, Microsoft, Apple, GitHub, Facebook (`golang.org/x/oauth2` + `go-oidc`); web redirect and mobile token flows; linking by verified e-mail |
+| 23 | [phase-23-social-login.md](phase-23-social-login.md) | **Done** (2026-11-21) — social login with Google (`id_token`) and GitHub (`code`): provider-verified e-mail → the normal login token, stateless, no OTP; provider drivers in `internal/authn/social`; every login in the activity log |
 
 Remediation phases 12–17 are derived from [docs/codebase-review.md](../docs/codebase-review.md)
 (the full-codebase review at commit `1f55eeb`); each spec lists the finding IDs it resolves.

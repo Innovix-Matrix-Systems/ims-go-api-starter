@@ -130,3 +130,12 @@ numbered so code comments and reviews can refer to them. Each says **what** was 
     `mcp:*` scopes and an audience, tied to its connection; only `/mcp` accepts it and
     `authn.Authenticate` refuses it everywhere else, while `/mcp` refuses session tokens. A leaked
     agent token can't call the REST API, and a leaked session can't drive an agent.
+36. **Social login is a provider check, not a second login system.** Google or GitHub only proves
+    an e-mail address; the user is found by that verified address and signed in through the same
+    checks and token as a password login, so tenancy, roles and permissions are untouched. The
+    client runs the provider's flow and the API verifies one stateless POST: no link table, no
+    server-side redirect state, no stored provider tokens, no OTP step. Providers are drivers in
+    `internal/authn/social`. An unverified provider e-mail never signs anyone in.
+37. **Every API login is in the activity log.** `authn.Service` reports finished attempts through
+    `authn.LoginAudit` (implemented by `activity.Recorder`, like `tenancy.ImpersonationAudit`), so
+    `authn` imports no module. Successful logins are tenant rows; failed ones are system rows.

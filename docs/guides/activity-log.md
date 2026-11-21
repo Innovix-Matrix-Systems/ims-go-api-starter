@@ -55,6 +55,15 @@ roles, system settings, act-as. Who reads what:
 | Internal user with `activity.view.all` | every tenant and the system log | `?tenant_id=7`, `?tenant_id=system`, `?impersonator_id=`, `?impersonated=true` |
 | Internal user without `activity.view.all` | nothing: 403 | |
 
+## Logins
+
+Every API login is an `auth.login` entry with `method` (`password`, or the
+[social provider](social-login.md): `google`, `github`), `email`, `device` and `status`. A
+successful login is a row in the user's tenant, so tenant admins see their users sign in. A failed
+one is a system row with the `error` code, since the attempt may not belong to any account. An OTP
+login is recorded once, when the code is verified. `authn.Service` reports the attempts through
+the `authn.LoginAudit` interface, which `activity.Recorder` implements.
+
 ## Acting as a user
 
 Everything done with `X-Acting-User` is recorded three ways:
@@ -86,7 +95,7 @@ The `activity.prune` task deletes entries older than `ACTIVITY_RETENTION_DAYS` (
 
 | Activity log | Dashboard audit log |
 | --- | --- |
-| changes made through the API, and act-as (system log) | developer-dashboard actions and sign-ins |
+| changes made through the API, API logins, and act-as (system log) | developer-dashboard actions and sign-ins |
 | read at `/api/v1/activity`: tenant admins their tenant, `activity.view.all` everything | read in the dashboard's **Audit log** |
 | `activity_log` table | `dev_actions` table |
 | `ACTIVITY_RETENTION_DAYS` | `DEV_DASHBOARD_AUDIT_RETENTION_DAYS` |

@@ -107,6 +107,7 @@ export default defineConfig({
             'guides/files-and-storage',
             'guides/activity-log',
             'guides/mcp',
+            'guides/social-login',
             'guides/notifications',
             'guides/import-export',
             'guides/mail-and-i18n',

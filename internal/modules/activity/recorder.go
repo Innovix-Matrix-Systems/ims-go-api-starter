@@ -10,6 +10,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
@@ -17,7 +18,10 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/tenancy"
 )
 
-var _ tenancy.ImpersonationAudit = (*Recorder)(nil)
+var (
+	_ tenancy.ImpersonationAudit = (*Recorder)(nil)
+	_ authn.LoginAudit           = (*Recorder)(nil)
+)
 
 // Entry is one thing that happened.
 //
@@ -42,6 +46,9 @@ const (
 	ActionImpersonationRequest = "impersonation.request"
 	ActionImpersonationDenied  = "impersonation.denied"
 )
+
+// ActionLogin is an API login attempt (password, OTP or social; phase 23).
+const ActionLogin = "auth.login"
 
 // MCPChangesKey holds, in an entry's changes, the MCP tool call that made
 // the change: {"source": "mcp", "tool": …, "client": …}.
@@ -169,6 +176,28 @@ func (r *Recorder) ImpersonationDenied(ctx context.Context, callerID, targetID i
 	if err := r.insert(ctx, entry, 0, ""); err != nil && r.logger != nil {
 		r.logger.WarnContext(ctx, "activity log write failed", "action", entry.Action, "error", err)
 	}
+}
+
+// Login implements authn.LoginAudit. A successful login is a row in the
+// user's tenant, so tenant admins see their users sign in; a failed one is a
+// system row, since the attempt may not belong to any account.
+func (r *Recorder) Login(ctx context.Context, event authn.LoginEvent) {
+	if r == nil {
+		return
+	}
+	entry := Entry{Action: ActionLogin, Subject: "user", Changes: map[string]any{
+		"method": event.Method,
+		"email":  event.Email,
+		"device": event.Device,
+		"status": "ok",
+	}}
+	if event.Err != nil {
+		entry.Changes["status"] = "failed"
+		entry.Changes["error"] = string(apperr.CodeOf(event.Err))
+	} else {
+		entry.TenantID, entry.ActorID, entry.SubjectID = event.User.TenantID, event.User.ID, event.User.ID
+	}
+	r.Record(ctx, entry)
 }
 
 func impersonationEntry(action string, event tenancy.Impersonation, changes map[string]any) Entry {

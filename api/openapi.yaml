@@ -303,6 +303,58 @@ paths:
         "422": *validationFailed
         "429": *tooManyRequests
 
+  /api/v1/social/providers:
+    get:
+      tags: [Auth]
+      summary: List the enabled social login providers
+      description: >-
+        The providers SOCIAL_PROVIDERS enables, in display order, for the login screen. Empty when
+        social login is off.
+      operationId: authSocialProviders
+      security: []
+      responses:
+        "200":
+          description: The enabled providers.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/SocialProviderListEnvelope"}
+
+  /api/v1/social/{provider}/login:
+    post:
+      tags: [Auth]
+      summary: Sign in with a social provider
+      description: >-
+        The client signs in at the provider and sends what it got: an `id_token` for Google, the
+        authorization `code` (with its `code_verifier` and `redirect_uri`) for GitHub. The API
+        verifies it with the provider, finds the user with that verified e-mail address and answers
+        like `POST /login`, always with a token (no OTP step). Refused with 403
+        `ACCOUNT_UNVERIFIED` when the provider has not verified the address, 403
+        `SOCIAL_ACCOUNT_NOT_FOUND` when no user has it, and 404 for a provider that is not enabled.
+      operationId: authSocialLogin
+      security: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema: {type: string, example: google}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/SocialLoginRequest"}
+      responses:
+        "200":
+          description: Login result with an issued token.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LoginEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+        "429": *tooManyRequests
+        "503": *serviceUnavailable
+
   /api/v1/forgot-password:
     post:
       tags: [Auth]
@@ -5233,6 +5285,34 @@ components:
         email: superadmin@ims.com
         otp: "123456"
         device: cli
+
+    SocialLoginRequest:
+      type: object
+      required: [device]
+      properties:
+        id_token: {type: string, maxLength: 8192, description: "OpenID Connect providers (Google)."}
+        code: {type: string, maxLength: 512, description: "Code providers (GitHub): the code from the provider's redirect."}
+        code_verifier: {type: string, minLength: 43, maxLength: 128, description: The PKCE verifier the client used.}
+        redirect_uri: {type: string, format: uri, maxLength: 2048, description: The redirect URI the client used.}
+        device: {type: string, maxLength: 100}
+      example:
+        id_token: eyJhbGciOiJSUzI1NiIs...
+        device: web
+
+    SocialProvider:
+      type: object
+      required: [name, display_name]
+      properties:
+        name: {type: string, example: google}
+        display_name: {type: string, example: Google}
+
+    SocialProviderListEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/SocialProvider"}
 
     LoginEnvelope:
       type: object

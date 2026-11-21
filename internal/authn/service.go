@@ -8,6 +8,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn/social"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 )
 
@@ -17,12 +18,31 @@ const (
 	StatusOTPRequired = "OTP_REQUIRED"
 )
 
+// MethodPassword is the LoginEvent method of a password login; a social
+// login uses the provider's name ("google").
+const MethodPassword = "password"
+
 // LoginResult is the outcome of a successful login or OTP dispatch.
 type LoginResult struct {
 	User    *UserRecord
 	Status  string
 	Message string
 	Token   *Token
+}
+
+// LoginEvent is one API login attempt, for the activity log.
+type LoginEvent struct {
+	Method string // MethodPassword or a social provider name
+	Email  string
+	Device string
+	User   *UserRecord // the signed-in user; nil when the attempt failed
+	Err    error
+}
+
+// LoginAudit records login attempts. The activity module implements it;
+// authn only decides when to call it.
+type LoginAudit interface {
+	Login(ctx context.Context, event LoginEvent)
 }
 
 // Service implements the login, OTP verification and logout workflows.
@@ -33,6 +53,8 @@ type Service struct {
 	throttle  *Throttle
 	cfg       config.Auth
 	dummyHash []byte
+	social    *social.Registry
+	audit     LoginAudit
 }
 
 // NewService creates the authentication workflow service.
@@ -43,6 +65,18 @@ func NewService(users UserLookup, auth Authenticator, otp *OTPService, throttle 
 	return &Service{users: users, auth: auth, otp: otp, throttle: throttle, cfg: cfg, dummyHash: dummy}
 }
 
+// WithSocial enables social login with the given providers.
+func (s *Service) WithSocial(registry *social.Registry) *Service {
+	s.social = registry
+	return s
+}
+
+// WithAudit records every finished login attempt (password, OTP and social).
+func (s *Service) WithAudit(audit LoginAudit) *Service {
+	s.audit = audit
+	return s
+}
+
 // Login authenticates credentials and issues a device token (or dispatches an
 // OTP when enabled).
 //
@@ -50,7 +84,9 @@ func NewService(users UserLookup, auth Authenticator, otp *OTPService, throttle 
 // status, body and (via the dummy hash) timing; account-status checks run
 // only after the password matches, so login cannot be used to enumerate
 // accounts or their state.
-func (s *Service) Login(ctx context.Context, email, password, device, ip string) (*LoginResult, error) {
+func (s *Service) Login(ctx context.Context, email, password, device, ip string) (result *LoginResult, err error) {
+	defer func() { s.recordLogin(ctx, MethodPassword, email, device, result, err) }()
+
 	record, err := s.checkPassword(ctx, email, password, ip)
 	if err != nil {
 		return nil, err
@@ -124,7 +160,9 @@ func (s *Service) checkPassword(ctx context.Context, email, password, ip string)
 }
 
 // VerifyOTP completes a login started with an OTP challenge.
-func (s *Service) VerifyOTP(ctx context.Context, email, code, device, ip string) (*LoginResult, error) {
+func (s *Service) VerifyOTP(ctx context.Context, email, code, device, ip string) (result *LoginResult, err error) {
+	defer func() { s.recordLogin(ctx, MethodPassword, email, device, result, err) }()
+
 	record, err := s.checkOTP(ctx, email, code, ip)
 	if err != nil {
 		return nil, err
@@ -157,6 +195,71 @@ func (s *Service) checkOTP(ctx context.Context, email, code, ip string) (*UserRe
 	return record, nil
 }
 
+// SocialProviders returns the enabled social login providers.
+func (s *Service) SocialProviders() []social.Provider {
+	return s.social.List()
+}
+
+// SocialLogin signs in the user an outside provider vouches for. The
+// provider proves the e-mail address; everything after that is ours and the
+// same as a password login: the account checks and a device token. Tenant,
+// branch and roles come from our user record, as always. There is no OTP
+// step: the provider has already authenticated the user.
+//
+// Failed attempts count against the IP only: there is no account to key the
+// per-account counter on until the provider has answered, and a provider's
+// proof cannot be guessed like a password.
+func (s *Service) SocialLogin(ctx context.Context, provider string, proof social.Proof, device, ip string) (result *LoginResult, err error) {
+	p, ok := s.social.Get(provider)
+	if !ok {
+		return nil, apperr.New(apperr.ResourceNotFound, "This sign-in method is not available.")
+	}
+	var email string
+	defer func() { s.recordLogin(ctx, p.Name(), email, device, result, err) }()
+
+	if err := s.checkThrottle(ctx, ipThrottleKey(ip)); err != nil {
+		return nil, err
+	}
+	identity, err := p.Verify(ctx, proof)
+	if err != nil {
+		_ = s.throttle.Hit(ctx, ipThrottleKey(ip))
+		return nil, err
+	}
+	email = identity.Email
+	// Never sign in on an address the provider has not verified: anyone can
+	// open an account there with someone else's address.
+	if email == "" || !identity.EmailVerified {
+		_ = s.throttle.Hit(ctx, ipThrottleKey(ip))
+		return nil, apperr.New(apperr.AccountUnverified, p.DisplayName()+" has not verified the e-mail address of this account.")
+	}
+
+	record, err := s.users.FindByEmail(ctx, email)
+	if err != nil && !apperr.Is(err, apperr.ResourceNotFound) {
+		return nil, err
+	}
+	if record == nil {
+		_ = s.throttle.Hit(ctx, ipThrottleKey(ip))
+		return nil, apperr.New(apperr.SocialAccountNotFound, "No account uses this e-mail address. Ask your administrator for access.")
+	}
+	if err := s.verifyBeforeLogin(record); err != nil {
+		return nil, err
+	}
+	return s.completeLogin(ctx, record, device, email, ip)
+}
+
+// recordLogin reports a finished attempt: a token issued, or an error. An
+// OTP challenge is not finished yet; VerifyOTP reports it.
+func (s *Service) recordLogin(ctx context.Context, method, email, device string, result *LoginResult, err error) {
+	if s.audit == nil || (err == nil && result.Token == nil) {
+		return
+	}
+	event := LoginEvent{Method: method, Email: email, Device: device, Err: err}
+	if err == nil {
+		event.User = result.User
+	}
+	s.audit.Login(ctx, event)
+}
+
 // Logout revokes the caller's token for one device.
 func (s *Service) Logout(ctx context.Context, userID int64, device string) error {
 	return s.auth.Revoke(ctx, userID, device)
@@ -184,15 +287,16 @@ func (s *Service) completeLogin(ctx context.Context, record *UserRecord, device,
 // budget, and password spraying one account from many IPs is bounded by the
 // per-IP counter.
 func (s *Service) checkThrottles(ctx context.Context, email, ip string) error {
-	tooMany, retryAfter, err := s.throttle.TooMany(ctx, accountThrottleKey(email))
+	if err := s.checkThrottle(ctx, accountThrottleKey(email)); err != nil {
+		return err
+	}
+	return s.checkThrottle(ctx, ipThrottleKey(ip))
+}
+
+func (s *Service) checkThrottle(ctx context.Context, key string) error {
+	tooMany, retryAfter, err := s.throttle.TooMany(ctx, key)
 	if err != nil {
 		return apperr.Wrap(apperr.InternalServerError, "check login attempts", err)
-	}
-	if !tooMany {
-		tooMany, retryAfter, err = s.throttle.TooMany(ctx, ipThrottleKey(ip))
-		if err != nil {
-			return apperr.Wrap(apperr.InternalServerError, "check login attempts", err)
-		}
 	}
 	if !tooMany {
 		return nil
