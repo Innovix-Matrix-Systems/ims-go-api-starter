@@ -10,6 +10,7 @@ import (
 	webdev "github.com/Innovix-Matrix-Systems/ims-go-api-starter/web/dev"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn/social"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/mcp"
@@ -155,7 +156,9 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	authenticator := platform.Authenticator
 	otpService := authn.NewOTPService(store, cfg.Auth, logger, cfg.IsDebug()).WithMailer(mail.EngineEnqueuer{Engine: platform.Queue})
 	throttle := authn.NewThrottle(store, cfg.Auth.LoginMaxAttempts, cfg.Auth.LoginDecay)
-	authService := authn.NewService(identityRepo, authenticator, otpService, throttle, cfg.Auth)
+	authService := authn.NewService(identityRepo, authenticator, otpService, throttle, cfg.Auth).
+		WithSocial(social.New(cfg.Social)).
+		WithAudit(platform.Activity)
 	userService := platform.Identity
 
 	// MCP connector: the authorization server and the tool catalog.

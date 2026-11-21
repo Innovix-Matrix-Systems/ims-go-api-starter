@@ -6,6 +6,8 @@ import "github.com/go-chi/chi/v5"
 func (h *Handler) RegisterPublicRoutes(r chi.Router) {
 	r.Post("/login", h.login)
 	r.Post("/verify-otp", h.verifyOTP)
+	r.Get("/social/providers", h.socialProviders)
+	r.Post("/social/{provider}/login", h.socialLogin)
 	if h.recovery != nil {
 		r.Post("/forgot-password", h.forgotPassword)
 		r.Post("/reset-password", h.resetPassword)

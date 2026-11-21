@@ -27,7 +27,7 @@ Telescope plus Horizon plus a little Nova) is embedded in it.
 | Area | Highlights |
 | --- | --- |
 | HTTP | chi router, RFC 9457 problem errors, envelopes, pagination, rate limiting, OpenAPI as the contract |
-| Identity | opaque tokens per device, OTP, login throttling, password reset, e-mail verification |
+| Identity | opaque tokens per device, OTP, login throttling, password reset, e-mail verification, sign-in with Google or GitHub (providers are drivers), every login in the activity log |
 | Tenancy | tenants and branches, explicit `tenant_id` filters that fail closed, staff acting as a tenant or a user, public tenant routes |
 | Access | permission catalog in Go, roles per tenant, Super-Admin, route-level checks, a tenant activity log and a system audit log |
 | Billing | packages with features and limits, subscriptions, bKash/cash/bank payments, approvals |

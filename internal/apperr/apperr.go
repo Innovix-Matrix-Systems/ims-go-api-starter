@@ -27,6 +27,7 @@ const (
 	AccountUnverified        Code = "ACCOUNT_UNVERIFIED"
 	AccountDeactivated       Code = "ACCOUNT_DEACTIVATED"
 	AccountLocked            Code = "ACCOUNT_LOCKED"
+	SocialAccountNotFound    Code = "SOCIAL_ACCOUNT_NOT_FOUND"
 	OTPInvalid               Code = "OTP_INVALID"
 	OTPExpired               Code = "OTP_EXPIRED"
 	Forbidden                Code = "FORBIDDEN"
@@ -74,6 +75,7 @@ var defaultStatuses = map[Code]int{
 	AccountUnverified:        http.StatusForbidden,
 	AccountDeactivated:       http.StatusForbidden,
 	AccountLocked:            http.StatusTooManyRequests,
+	SocialAccountNotFound:    http.StatusForbidden,
 	OTPInvalid:               http.StatusBadRequest,
 	OTPExpired:               http.StatusBadRequest,
 	Forbidden:                http.StatusForbidden,
@@ -222,4 +224,14 @@ func Is(err error, code Code) bool {
 		return target.Code == code
 	}
 	return false
+}
+
+// CodeOf returns the code of the application error err is or wraps, and
+// INTERNAL_SERVER_ERROR for any other error.
+func CodeOf(err error) Code {
+	var target *Error
+	if errors.As(err, &target) {
+		return target.Code
+	}
+	return InternalServerError
 }

@@ -30,11 +30,13 @@ Send it as `Authorization: Bearer 42|q9…`. Tokens expire after `AUTH_TOKEN_EXP
 | --- | --- |
 | `POST /api/v1/login` | e-mail + password (+ device) → token, or an OTP challenge |
 | `POST /api/v1/verify-otp` | completes an OTP login |
+| `POST /api/v1/social/{provider}/login` | a Google or GitHub sign-in → the same token ([social login](social-login.md)) |
 | `POST /api/v1/logout` | revokes the current token |
 | `GET /api/v1/user/profile` | the signed-in user |
 
 The engine sits behind an `authn.Authenticator` interface (`Issue/Verify/Revoke/RevokeAll`), so a
-JWT driver can be added without touching handlers.
+JWT driver can be added without touching handlers. Every login, successful or not, is an
+`auth.login` entry in the [activity log](activity-log.md).
 
 ## Login checks
 
@@ -44,6 +46,7 @@ JWT driver can be added without touching handlers.
   inactive or unverified accounts.
 - **OTP** (`AUTH_OTP_ENABLED`): a 6-digit code (`AUTH_OTP_LENGTH`) valid for
   `AUTH_OTP_EXPIRY_MINUTES`, stored only in the cache and delivered by mail through the queue.
+  Password login only: a social login is already authenticated by the provider.
 
 ## Password reset
 

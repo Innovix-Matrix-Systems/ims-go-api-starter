@@ -27,6 +27,8 @@ var routesWithoutPermission = map[string]bool{
 	// public
 	"POST /api/v1/login":                           true,
 	"POST /api/v1/verify-otp":                      true,
+	"GET /api/v1/social/providers":                 true,
+	"POST /api/v1/social/{provider}/login":         true,
 	"POST /api/v1/forgot-password":                 true,
 	"POST /api/v1/reset-password":                  true,
 	"POST /api/v1/email/verification-notification": true,

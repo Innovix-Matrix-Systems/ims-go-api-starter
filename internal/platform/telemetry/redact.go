@@ -25,6 +25,7 @@ var defaultSensitiveKeys = []string{
 	"access_token",
 	"refresh_token",
 	"id_token",
+	"code_verifier",
 	"otp",
 	"secret",
 	"client_secret",

@@ -6,6 +6,38 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-22
+
+Sign in with Google or GitHub, and every login in the activity log.
+
+**Upgrading from 0.1.5:** nothing to run: no migration, no new permission. Social login is off
+until you set `SOCIAL_PROVIDERS`; see the [social login guide](docs/guides/social-login.md).
+
+### Added
+
+- **Social login with Google and GitHub.** `POST /api/v1/social/{provider}/login` takes a Google
+  `id_token` or a GitHub authorization `code` (with the client's PKCE verifier and redirect URI),
+  verifies it with the provider and signs in the existing user with that verified e-mail, with
+  the same token and response as `POST /login` (no OTP step). `GET /api/v1/social/providers`
+  lists what is enabled. Stateless: the front end or mobile SDK runs the provider's flow; the API
+  stores nothing. New settings `SOCIAL_PROVIDERS`, `SOCIAL_GOOGLE_CLIENT_IDS`,
+  `SOCIAL_GITHUB_CLIENT_ID` and `SOCIAL_GITHUB_CLIENT_SECRET`, checked at startup. New error code
+  `SOCIAL_ACCOUNT_NOT_FOUND` (403).
+- **Social login providers are drivers** in `internal/authn/social`: one file each, built on an
+  OpenID Connect verifier (`go-oidc`) or an OAuth code exchange (`golang.org/x/oauth2`). The
+  guide has the recipe for adding Microsoft, Apple, GitLab or others.
+- **Logins in the activity log.** Every API login (password, OTP or social), successful or not, is
+  an `auth.login` entry with its `method`, `device` and `status`. Successful ones are in the user's
+  tenant; failed ones are system rows with the error code.
+- **Docs:** a [social login guide](docs/guides/social-login.md) (how it works, GitHub and Google
+  setup, front end and mobile, production, troubleshooting) and a 15-minute tutorial,
+  [Sign in with GitHub locally](docs/tutorial/sign-in-with-github.mdx).
+
+### Changed
+
+- `code_verifier` is redacted in telemetry and the activity log, like `id_token` and
+  `access_token`.
+
 ## [0.1.5] - 2026-11-21
 
 An MCP server that AI apps add as a connector, with a built-in OAuth 2.1 authorization server.
@@ -142,7 +174,8 @@ The first versioned release: the full starter, its developer dashboard and its d
   per-tenant lock every query runs on the locked transaction.
 - A failed backup run reports `destinations: []` instead of `null`.
 
-[Unreleased]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.2...v0.1.5
 [0.1.2]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/releases/tag/v0.1.0

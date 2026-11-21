@@ -88,7 +88,8 @@ internal/
               storage, backup, mail, ops, activity, env); config.go = Load + cross-section Validate
   apperr/     application error codes + *apperr.Error
   authn/      opaque tokens, OTP, throttle, recovery (password reset / e-mail verify), bearer
-              middleware, Identity, UserID(r) / UserIDFromContext(ctx)
+              middleware, Identity, UserID(r) / UserIDFromContext(ctx);
+              social/ = social login provider drivers (Google, GitHub)
   authz/      permission Catalog, Checker (Can/MustCan, super-admin bypass), Require → *Gate
   tenancy/    Scope, Filter (fails closed), Resolve/Exempt/InternalOnly middleware, From(r)
   testkit/    integration-test app + factories (User, Role, Tenant, SuperAdmin) + request builder
@@ -188,7 +189,7 @@ Rules of the layering (enforced by review and `route_permissions_integration_tes
 
 | Group | Middleware | Use for |
 |---|---|---|
-| Public | none | login/OTP, password reset, e-mail verify, public packages, gateway callbacks, `/api/health`, `/up` |
+| Public | none | login/OTP, social login, password reset, e-mail verify, public packages, gateway callbacks, `/api/health`, `/up` |
 | Authenticated (no tenancy) | `auth` | logout / logout-all (tenantless accounts must reach them) |
 | Authenticated + tenant-resolved | `auth` → `tenant.resolve` | tenant-scoped resources (users, branches, roles, settings, flags, activity, billing status) |
 | Authenticated + tenant-exempt | `auth` → `tenant.exempt` (+ `tenant.internal`) | global management (tenants, permissions, internal users/roles, packages, approvals) |
@@ -223,6 +224,13 @@ changes). Public pre-sign-in routes use `tenancy.Public` (`X-Tenant-Code`). Impe
 `auth()->id()`. Super-admins bypass permission checks. CLI/jobs/scheduled tasks are trusted and do
 not re-check permissions. Password reset and e-mail verification use single-use hashed tokens in
 the cache (`authn.Recovery`); responses never reveal whether an e-mail exists.
+Social login (`authn.Service.SocialLogin`) only swaps the password check for a provider check:
+a driver in `internal/authn/social` returns the provider-verified e-mail, then the password
+login's account checks and token apply. Add a provider as one file there (OIDC:
+`newOIDCProvider`, like `google.go`; code exchange: `exchangeCode`, like `github.go`), its
+`SOCIAL_<NAME>_*` settings in `config/social.go` and a case in `social.New`; never trust an e-mail
+the provider has not verified (`docs/guides/social-login.md`). Every login is an `auth.login`
+activity entry, reported through `authn.LoginAudit`.
 
 **Who made a request, outside the chain** — middleware that wraps authentication (access log,
 telemetry) cannot see context values added inside it. They read `httpx.RequestInfoFrom(ctx)`,
@@ -319,6 +327,9 @@ Keep this list accurate; add to it when you make a non-obvious choice (also upda
 - MCP tools are REST operations marked `x-mcp`, served through the `/api/v1` router (no MCP-only
   endpoints, no second authorization path). The API is its own OAuth server for the connector
   (CIMD or registered clients; no DCR). MCP tokens work only on `/mcp`, session tokens never do.
+- Social login signs in existing users by the provider-verified e-mail through the normal login
+  checks and token: stateless (the client runs the provider flow), no link table, no OTP step.
+  Logins (password and social) are recorded in the activity log via `authn.LoginAudit`.
 
 ## When a task is ambiguous
 

@@ -115,6 +115,15 @@ effective values with secrets masked.
 | `AUTH_EMAIL_VERIFY_URL` | `https://app.example.com/verify-email?token={token}` | *Optional.* |
 | `BCRYPT_ROUNDS` | `12` |  |
 
+## Social login
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `SOCIAL_PROVIDERS` | — | Sign in existing users by the e-mail Google or GitHub verified (docs/guides/social-login.md). e.g. google,github (empty = off) |
+| `SOCIAL_GOOGLE_CLIENT_IDS` | — | *Optional.* web, iOS and Android client ids an id_token may be issued to |
+| `SOCIAL_GITHUB_CLIENT_ID` | — | *Optional.* |
+| `SOCIAL_GITHUB_CLIENT_SECRET` | — | *Optional.* |
+
 ## Tenancy
 
 | Variable | Example | Notes |

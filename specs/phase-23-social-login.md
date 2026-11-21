@@ -1,249 +1,278 @@
 # Phase 23 — Social login (Google, Microsoft, Apple, GitHub, Facebook)
 
-**Status:** Draft
+**Status:** Accepted, built (2026-11-21; simplified to "verify, look up, issue")
 **Source:** project-owner request (2026-11-21): "as we introduce OAuth anyway, we should also add
 support for normal login OAuth, like user able to log in with their Google account or Facebook
 account".
-**Depends on:** Phase 2 (tokens, login rules), Phase 18 (account recovery), Phase 22 (the OAuth
-sign-in page, which gains the same buttons)
+**Depends on:** Phase 2 (tokens, login rules). Nothing else: no table, no tenancy change, no
+phase-22 change.
 
 ## Goal
 
 A user can sign in with an account they already have at Google, Microsoft, Apple, GitHub or
-Facebook instead of a password, and get the same API token a password login gives. It works for:
+Facebook instead of a password, and gets **exactly the token a password login gives**.
 
-- **web front ends**, with a redirect through the provider;
-- **mobile apps**, which already use the provider's own SDK (Google Sign-In, Sign in with Apple)
-  and send the API what the SDK returned;
-- **the MCP sign-in page** (phase 22), which gets "Continue with Google" and the others next to
-  the password form.
+## The idea in one paragraph
 
-Providers are switched on by configuration; each product picks its own. Adding another provider
-later is one small file.
+The provider only answers one question: *who is this person?* It gives us a verified e-mail. From
+there everything is ours: we find our user by that e-mail, run the same checks a password login
+runs (active, verified, throttle), and issue our normal token. Tenant, branch, roles and
+permissions all come from **our** user record, exactly as after a password login, so social login
+knows nothing about tenancy. The API stays stateless: no session, no stored provider tokens, no
+flow state on the server.
+
+```
+client ── does the provider part (SDK, or redirect + PKCE) ──▶ gets an id_token or a code
+client ── POST /api/v1/social/{provider}/login {id_token | code…, device}
+API    ── verify with the provider ─▶ verified e-mail
+       ── users.FindByEmail ─▶ same checks as POST /login ─▶ issue token
+       ◀── the normal login response (same shape as POST /login)
+```
+
+That replaces a "password check" with a "provider check"; nothing after it changes.
 
 ## Two different things called OAuth
 
 | | Phase 22 (built) | Phase 23 (this spec) |
 | --- | --- | --- |
 | Our role | the **authorization server**: we issue tokens to AI apps | a **client** of Google, Apple…: they vouch for who the user is |
-| Who signs in where | a user signs in **on our** page for an AI app | a user signs in **on Google's** page for our API |
 | Result | an MCP access token for `/mcp` | our normal session token (`id|secret`) |
 
-They share nothing but the vocabulary, plus one join: the phase-22 sign-in page can use phase-23
-providers.
-
-## Background (researched 2026-11-21)
-
-### Go libraries
-
-| Library | Who | Latest | What it does | Verdict |
-| --- | --- | --- | --- | --- |
-| [`golang.org/x/oauth2`](https://pkg.go.dev/golang.org/x/oauth2) | **the Go team** (golang.org/x is part of the Go project) | v0.38.0 | the OAuth 2.0 client: `Config.AuthCodeURL`, `Exchange`, PKCE (`GenerateVerifier`, `S256ChallengeOption`, `VerifierOption`), and `endpoints.Google`, `.Microsoft`, `.Apple`, `.GitHub`, `.Facebook`, `.LinkedIn`, `.Discord` and about 50 more | **use**: the closest thing to official support; already in `go.sum` (v0.35, indirect) |
-| [`github.com/coreos/go-oidc/v3`](https://pkg.go.dev/github.com/coreos/go-oidc/v3/oidc) | CoreOS / Red Hat | v3.21.0 (Sep 2026) | OpenID Connect on top of x/oauth2: discovery, JWKS caching, `id_token` verification (signature, `iss`, `aud`, `exp`, nonce) | **use** for Google, Microsoft and Apple, which speak OIDC |
-| [`github.com/markbates/goth`](https://github.com/markbates/goth) | community | v1.82.0 | 50+ providers behind one interface | **don't**: its README says it needs a new maintainer, and its `gothic` helper stores state in `gorilla/sessions` cookies, a second session system next to ours |
-
-So: **x/oauth2 for the flow, go-oidc to verify identity tokens, and a few lines per provider** for
-the non-OIDC ones (GitHub, Facebook read a profile API). No framework, nothing unmaintained.
-
-### Providers
-
-| Provider | Protocol | Identity comes from | Notes |
-| --- | --- | --- | --- |
-| **Google** | OIDC | `id_token` (`sub`, `email`, `email_verified`) | discovery at `accounts.google.com`; PKCE supported |
-| **Microsoft** (personal and work accounts) | OIDC | `id_token` (`sub` or `oid`, `email`) | tenant `common`; the issuer varies per directory, so verification checks the issuer's form, not one fixed value; `email` is not always verified, so only trust it with `xms_edov` or for linking by a signed-in user |
-| **Apple** | OIDC | `id_token` (`sub`, `email`, `email_verified`, maybe a private relay address) | the client secret is a short-lived **ES256 JWT** we sign (team id, key id, `.p8` key); name and email arrive **only on the first** sign-in; `response_mode=form_post` when asking for name/email, so the callback is a POST. To be confirmed against Apple's current docs (its pages 404'd during research) |
-| **GitHub** | OAuth 2.0 (not OIDC) | `GET api.github.com/user` and `/user/emails` (primary + verified) | PKCE S256 supported; the code lives 10 minutes |
-| **Facebook** | OAuth 2.0 (web; OIDC only for iOS Limited Login) | `GET graph.facebook.com/v27.0/me?fields=id,name,email` | `email` can be missing (phone sign-ups) or unconfirmed; versioned Graph API |
-
-Best practice (OIDC Core, RFC 9700): authorization code with **PKCE on every flow**, `state` and
-`nonce`, exact redirect URIs, `id_token` checked against the provider's JWKS (signature, `iss`,
-`aud` = our client id, `exp`, nonce), never tokens in a URL.
-
-### Our stack
-
-- `users.email` is unique across the whole system (`users_email_unique` on `lower(email)`, live
-  rows), so "this verified e-mail belongs to that user" is never ambiguous.
-- There is **no self sign-up**: admins create users, inside a tenant. Social login therefore signs
-  in **existing** users; it does not create them (see the decisions below).
-- `authn.Service` already has the account checks (`verifyBeforeLogin`: active, e-mail/phone
-  verified), lockout and the login activity; `completeLogin` issues the per-device token. Phase 22
-  added `SignIn` without a token for the MCP page. Social login reuses the same checks.
-- The cache holds short-lived state (OTP, recovery); the flow state (PKCE verifier, nonce) goes
-  there with a 10-minute TTL, exactly like the phase-22 sign-in flow.
+They share nothing but the vocabulary.
 
 ## Design
 
-### Linking: who is this?
+### Who does what
 
-A provider identity is `(provider, subject)`: Google's `sub`, GitHub's numeric id. It is linked to
-one user in a new table `social_accounts`. On sign-in:
+- **The client** (SPA, mobile app) talks to the provider. Mobile apps already use the provider SDK
+  (Google Sign-In, Sign in with Apple, Facebook SDK). A web front end uses the provider's JS
+  library (Google Identity Services, MSAL, Sign in with Apple JS) or a plain redirect with PKCE; it
+  keeps the `state` and the PKCE verifier itself and checks `state` on return.
+- **The API** only verifies what the client brings and maps it to a user. It keeps nothing between
+  requests.
 
-1. **Linked already** → that user.
-2. **Not linked, the provider says the e-mail is verified, and a user has that e-mail** → link it
-   and sign in, when `SOCIAL_AUTO_LINK=true` (default). The link is recorded in the activity log
-   and the user gets an e-mail ("Google was linked to your account").
-3. **Otherwise** → refused with `SOCIAL_ACCOUNT_NOT_LINKED`: "sign in with your password, then link
-   Google in your profile". Never link on an unverified e-mail: that is the classic account
-   takeover.
-
-Signed-in users manage their links: list, link (the same redirect flow, started while signed in),
-unlink (refused if it would leave an account with no way in, i.e. no password set and no other
-link).
-
-### Web: the redirect flow
+### The one endpoint
 
 ```
-SPA ── GET /api/v1/auth/{provider}/redirect?return_to=https://app.example.com/auth/done
-        └─ state + PKCE verifier + nonce in the cache ─▶ 302 to the provider
-provider ── GET|POST /api/v1/auth/{provider}/callback?code&state   (POST for Apple form_post)
-        └─ exchange code (PKCE) ─▶ verify id_token or read the profile ─▶ link rules ─▶ checks
-        └─ 302 to return_to?login_code=… (one-time, 60 s)  or  ?error=…
-SPA ── POST /api/v1/auth/social/exchange {login_code, device} ─▶ the normal login response (token)
+POST /api/v1/social/{provider}/login
+  OIDC providers (Google, Microsoft, Apple):
+    {"id_token": "…", "device": "web"}
+  Code providers (GitHub, Facebook web), or any provider when the client prefers the code:
+    {"code": "…", "code_verifier": "…", "redirect_uri": "…", "device": "web"}
+  Facebook mobile SDK:
+    {"access_token": "…", "device": "android"}
 ```
 
-- `return_to` must match `SOCIAL_RETURN_URLS` (exact origins) so the flow is never an open
-  redirect. The token itself never travels in a URL: the one-time `login_code` does, and it is
-  exchanged by a POST.
-- OTP: if `AUTH_OTP_ENABLED`, the exchange answers `OTP_REQUIRED` like `POST /login`, and the code
-  goes to `/verify-otp`. (Open question 3.)
+Per provider the API turns the input into an `Identity`:
 
-### Mobile: the token flow
-
-Native apps sign in with the provider's SDK and send the result:
-
-```
-POST /api/v1/auth/{provider}/token
-  Google, Microsoft, Apple: {"id_token": "…", "nonce": "…", "device": "ios"}
-  Facebook:                 {"access_token": "…", "device": "android"}
-```
-
-The `id_token` is verified with go-oidc against the provider's keys, with our **mobile** client
-ids as accepted audiences (`SOCIAL_GOOGLE_AUDIENCES`). A Facebook access token is checked with
-`debug_token` against our app id before its profile is read. Then the same link rules and checks,
-and the normal login response.
-
-### Providers in code
+| Provider | How it verifies | E-mail is trusted when |
+| --- | --- | --- |
+| Google | `id_token` checked with go-oidc (signature via JWKS, `iss`, `aud` ∈ our client ids, `exp`) | `email_verified` is true |
+| Microsoft | `id_token`, tenant `common` (issuer checked by form, the tenant id varies) | `xms_edov` is true (Microsoft's `email` is not otherwise verified) |
+| Apple | `id_token` | `email_verified` is true; a private-relay address only matches if the user has that address with us |
+| GitHub | exchange `code` (+ verifier) with our client secret, then `GET /user/emails` | the address is `primary` and `verified` |
+| Facebook | exchange `code`, or check `access_token` with `debug_token` against our app id, then `GET /me?fields=id,email` | Facebook returns an `email` at all (it returns only confirmed ones) |
 
 ```go
 // internal/authn/social
 type Provider interface {
-    Name() string                                  // "google"
-    AuthURL(state, verifier, nonce string) string  // redirect flow
-    Exchange(ctx, code, verifier, nonce string) (*Identity, error)
-    VerifyToken(ctx, TokenInput) (*Identity, error) // mobile flow
+    Name() string
+    Verify(ctx context.Context, in Input) (*Identity, error)
 }
 
 type Identity struct {
     Provider, Subject, Email string
     EmailVerified bool
-    Name, AvatarURL string
+    Name string
 }
 ```
 
-- `oidcProvider` covers Google, Microsoft and Apple (Apple adds its client-secret JWT and
-  form_post); `githubProvider` and `facebookProvider` read their profile APIs.
-- A registry built from config: a provider is on when its client id is set and it is listed in
-  `SOCIAL_PROVIDERS`. Adding LinkedIn or GitLab is one file plus `endpoints.LinkedIn`.
+### Adapters
 
-### Data
+Each provider is an adapter (a driver, in the repo's words) behind `Provider`; the handler and
+`authn` never know which one ran. Two building blocks cover almost every provider:
 
-- Migration: `social_accounts`: `id`, `user_id` (FK, cascade), `provider`, `subject`, `email`,
-  `email_verified`, `name`, `avatar_url`, `created_at`, `last_used_at`; unique `(provider,
-  subject)`; index on `user_id`. Provider tokens are **not** stored: we only need the identity.
-- No change to `users`: a user created by an admin still gets a password (or an invitation); social
-  sign-up is out of scope (decision 1).
+- `newOIDCProvider(name, displayName, issuer, keysURL, clientIDs)`: `id_token` verification with
+  go-oidc (keys fetched on first use, no network at startup; audience checked against every client
+  id). Google is one call to it. Microsoft or Apple later reuse it with their own issuer and
+  e-mail rule.
+- `exchangeCode(ctx, oauth2Config, displayName, proof)`: the x/oauth2 code exchange with the PKCE
+  verifier and redirect_uri the client used. GitHub is that plus a `GET /user/emails` reader.
+  Facebook, GitLab or LinkedIn later are the same helper with their own endpoint and profile
+  reader.
+
+`social.New(cfg)` builds the enabled providers from config at startup (`SOCIAL_PROVIDERS`);
+`config.loadSocial` (their settings) and `social.New` are the only places that list providers.
+
+### Adding a provider (the recipe this phase ships)
+
+1. `internal/authn/social/<name>.go`: build it on `newOIDCProvider` or `exchangeCode` (or
+   implement `Provider` directly for an odd one), with the rule for when the e-mail is trusted.
+2. Its settings in `config/social.go` (`SOCIAL_<NAME>_*`, checked in `loadSocial`) and a case in
+   `social.New`.
+3. A test against the shared fake provider (httptest discovery/JWKS, or a fake profile API).
+4. A section in `docs/guides/social-login.md` (where to create the app, which ids to list).
+
+The recipe also goes into `AGENTS.md` / a skill so it is followed the same way every time.
+
+### After the provider: our side, unchanged
+
+1. No verified e-mail → 403 `ACCOUNT_UNVERIFIED` (the existing code, with a provider message).
+   Never sign in on an unverified e-mail: that is the classic account takeover.
+2. `FindByEmail` (live users only; e-mail is unique system-wide). No user → 403 `SOCIAL_ACCOUNT_NOT_FOUND`
+   ("no account uses this e-mail; ask your administrator"). This is not account enumeration: a
+   caller can only test an address the provider has already proved is theirs.
+3. The password-login checks: active, e-mail/phone verified where configured
+   (`verifyBeforeLogin`), the per-IP throttle (failed attempts count; there is no e-mail to key the
+   account counter on before the provider answers).
+4. Issue the device token (`completeLogin`) and return the normal login response.
+
+Code changes in `authn`: one exported method,
+`Service.SocialLogin(ctx, provider, proof, device, ip) (*LoginResult, error)`, which calls the
+provider and then does 1–4 by reusing the existing private helpers, so the handler stays
+`Bind` → service → `respondLogin`. A provider rejecting the proof is 401 `INVALID_CREDENTIALS`; a
+provider that cannot be reached is 503 `SERVICE_UNAVAILABLE`; a provider that is not enabled is
+404.
+
+### Tenancy
+
+None. The token is a normal session token for our user; the authentication and tenancy middleware
+resolve tenant and branch from the user record on every request, as they do after a password
+login. A tenant user, a tenantless super admin and a developer sign in the same way.
+
+### What is deliberately not here
+
+| Dropped | Why it is safe to drop |
+| --- | --- |
+| `social_accounts` table, link/unlink endpoints | the verified e-mail is the link; nothing to store |
+| Server-side redirect, callback, `return_to` allowlist, one-time `login_code`, cached state/nonce | the client runs the provider flow; the API is one stateless POST. `redirect_uri` for code exchange is enforced by the provider against what we registered there |
+| Stored provider tokens | we only need the identity |
+| OTP after social login | the provider already proved who the user is (decision 3); `AUTH_OTP_ENABLED` stays a password-login setting |
+| Social sign-up | admins create users; social login signs in existing users only |
+
+Accepted trade-offs of e-mail matching:
+- If a user's e-mail with us differs from the one at the provider, social login does not work for
+  them (they use the password, or an admin aligns the e-mail).
+- Apple "Hide my e-mail" relay addresses will not match unless the user has that address with us.
+- Changing the e-mail in our system moves the social login with it; that is the intended behaviour.
+
+If any of these becomes a real problem, a later phase adds an optional `(provider, subject) → user`
+link table in front of step 2; the endpoint does not change.
+
+### Config
+
+```bash
+SOCIAL_PROVIDERS=google,github              # empty = off (the list is empty, login answers 404)
+SOCIAL_GOOGLE_CLIENT_IDS=web-id,ios-id,android-id   # accepted id_token audiences
+SOCIAL_GITHUB_CLIENT_ID= / _CLIENT_SECRET=
+```
+
+Providers added later follow the same shape (`SOCIAL_<NAME>_CLIENT_ID`, `_CLIENT_SECRET`, …).
+
+A listed provider without its credentials fails at startup.
 
 ### API
 
 | Endpoint | Who | Does |
 | --- | --- | --- |
-| `GET /api/v1/auth/providers` | public | the enabled providers (name, display name), for the login screen |
-| `GET /api/v1/auth/{provider}/redirect` | public | starts the web flow |
-| `GET\|POST /api/v1/auth/{provider}/callback` | public (provider) | finishes it, redirects to `return_to` |
-| `POST /api/v1/auth/social/exchange` | public | `login_code` → token |
-| `POST /api/v1/auth/{provider}/token` | public | mobile: `id_token` / `access_token` → token |
-| `GET /api/v1/user/social-accounts` | signed in | my links |
-| `GET /api/v1/user/social-accounts/{provider}/link` | signed in | starts linking (redirect flow bound to me) |
-| `DELETE /api/v1/user/social-accounts/{id}` | signed in | unlink (not the last way in) |
-
-The phase-22 sign-in page (`/oauth/authorize`) shows a button per enabled provider; the callback
-returns to the consent page instead of a front end.
-
-### Config
-
-```bash
-SOCIAL_PROVIDERS=google,github              # empty = off
-SOCIAL_RETURN_URLS=https://app.example.com  # allowed return_to origins (web flow)
-SOCIAL_AUTO_LINK=true                       # link on a provider-verified e-mail
-SOCIAL_GOOGLE_CLIENT_ID= / _CLIENT_SECRET= / _AUDIENCES=   # audiences: extra mobile client ids
-SOCIAL_MICROSOFT_CLIENT_ID= / _CLIENT_SECRET= / _TENANT=common
-SOCIAL_APPLE_CLIENT_ID= / _TEAM_ID= / _KEY_ID= / _PRIVATE_KEY_PATH=
-SOCIAL_GITHUB_CLIENT_ID= / _CLIENT_SECRET=
-SOCIAL_FACEBOOK_CLIENT_ID= / _CLIENT_SECRET=
-```
-
-The callback URL to register at each provider is `APP_URL/api/v1/auth/{provider}/callback`.
+| `GET /api/v1/social/providers` | public | enabled providers (name, display name) for the login screen; empty when off |
+| `POST /api/v1/social/{provider}/login` | public | provider proof → our token |
 
 ### Audit and security
 
-- Activity: `auth.social_login` (provider, linked or new link), `social_account.linked`,
-  `social_account.unlinked`. Failed attempts count toward the IP throttle.
-- `state` and nonce are single use; PKCE everywhere it is supported (all five for the code flow);
-  `id_token` checks as above; exact `return_to` origins; provider secrets and the Apple key never
-  logged (the redactor covers `code`, `id_token`, `access_token`).
-- Account checks are the same as password login: inactive users, unverified e-mail where required,
-  lockout. A social login does not mark our e-mail verified unless the provider said so.
+- Activity `auth.login` for every API login, password and social alike, with `method`
+  (`password`, `google`, `github`), success or failure (decision 2).
+- Redactor: add `code_verifier` to the sensitive keys (`id_token`, `access_token` are already
+  there). Not `code`: tenants and OTP forms use that key, and a provider code is single-use and
+  spent by the time it could be read. Provider secrets are never logged.
+- `id_token` checks as above; HTTPS-only provider calls with a short timeout.
+
+## Background (researched 2026-11-21)
+
+| Library | Verdict |
+| --- | --- |
+| `golang.org/x/oauth2` (Go team, v0.38) | **use** for the code exchange and `endpoints.*`; already indirect in `go.mod` |
+| `github.com/coreos/go-oidc/v3` (v3.21) | **use** to verify `id_token` (JWKS caching, `iss`/`aud`/`exp`) |
+| `github.com/markbates/goth` | **don't**: needs a maintainer, brings its own cookie sessions |
+
+Apple's code exchange needs a client secret that is a short-lived ES256 JWT we sign (team id, key
+id, `.p8`); the `id_token` input needs none. Confirm against Apple's current docs at build time.
+
+## Code style (how this phase is built)
+
+The code must read like the rest of the repo (AGENTS.md), not like an OAuth library:
+
+- **Layering as everywhere:** the auth handler does `h.Bind` → `authn.Service` → `respondLogin`,
+  nothing else. The rules (verified e-mail, user lookup, account checks, throttle, token) live in
+  `authn.Service.SocialLogin`, next to `Login`, reusing its private helpers. The provider call is a
+  collaborator of the service, like the OTP sender.
+- **Providers are drivers,** like cache, storage and billing drivers: one small interface in
+  `internal/authn/social`, one file per provider, a registry built from config. The package
+  imports only `config`, `apperr` and the two libraries; it knows nothing about users, tokens or
+  HTTP handlers.
+- **Optional collaborators are `WithX` options** (`authn.Service.WithSocial`, `WithAudit`); with
+  none set, social login is off and login activity is not written, so unit tests need nothing.
+- **Activity through an interface owned by the caller,** like `tenancy.ImpersonationAudit`:
+  `authn.LoginAudit`, implemented by `activity.Recorder`. No import from `authn` to a module.
+- **Errors are `*apperr.Error`,** existing codes first; a new code only where a client must tell
+  the case apart (`SOCIAL_ACCOUNT_NOT_FOUND`).
+- **Config is one file** (`internal/config/social.go`) with load-time validation, like `mcp.go`.
+- **Tests:** table-driven stdlib tests with fakes; provider HTTP against `httptest.Server`
+  stubs, as billing gateways are; the integration test with `testkit`.
+- No new framework, no reflection, no generic "auth manager". Comments say why, not what.
 
 ## Scope checklist
 
-- [ ] `internal/authn/social`: provider interface, OIDC provider (Google, Microsoft, Apple),
-      GitHub and Facebook providers, registry from config, Apple client-secret JWT.
-- [ ] Config (`SOCIAL_*`), `.env.example`, validation (a listed provider without credentials
-      fails at startup).
-- [ ] Migration `social_accounts`, sqlc queries, link rules in the auth service.
-- [ ] Endpoints above with OpenAPI; the providers list; the one-time `login_code`.
-- [ ] The phase-22 sign-in page buttons.
-- [ ] Activity entries and the "an account was linked" mail.
-- [ ] Tests: a fake OIDC provider (httptest with discovery and JWKS) for the redirect and token
-      flows; link rules (verified, unverified, auto-link off, unlink last way in); return_to
-      allowlist; state and nonce reuse; Apple form_post.
-- [ ] Docs: guide `docs/guides/social-login.md` with per-provider setup (where to create the app,
-      the callback URL, the scopes), and a tutorial step "Sign in with Google locally".
+- [x] `internal/authn/social`: `Provider`, `newOIDCProvider`, `exchangeCode`, the Google and
+      GitHub providers, `social.New` from config.
+- [x] `authn.Service.SocialLogin` (no OTP step).
+- [x] Config (`SOCIAL_PROVIDERS`, `SOCIAL_GOOGLE_*`, `SOCIAL_GITHUB_*`), `.env.example`, startup
+      validation.
+- [x] The two endpoints with OpenAPI; one new error code, `SOCIAL_ACCOUNT_NOT_FOUND` (403); the
+      rest reuse `ACCOUNT_UNVERIFIED`, `INVALID_CREDENTIALS`, `SERVICE_UNAVAILABLE`.
+- [x] Activity `auth.login` for password **and** social login (`method`); redactor keys.
+- [x] Tests: a fake OIDC provider (httptest serving the JWKS) — valid token, wrong `aud`,
+      expired, unverified e-mail, unknown e-mail, inactive user; a fake GitHub API for the code
+      input; provider off → 404; social login with `AUTH_OTP_ENABLED=true` still issues a token;
+      password login writes `auth.login`.
+- [x] Docs: `docs/guides/social-login.md` (Google and GitHub app setup, which client ids to list,
+      front-end snippets for Google Identity Services and the GitHub redirect, the "Adding a
+      provider" recipe); the recipe in `AGENTS.md`; activity-log, authentication and errors
+      guides; decisions 36–37.
 
 ## Out of scope
 
-- Social **sign-up** (creating users from a provider). Needs a decision on which tenant a new user
-  joins; a later spec, likely with tenant invitations.
-- Per-tenant provider settings (a tenant brings its own Google Workspace or Entra app) and
-  enterprise SSO (SAML).
-- Using the provider's tokens to call its APIs (Google Drive, GitHub repos).
-- The developer dashboard sign-in (it keeps the password login).
+- Social sign-up; per-tenant provider apps; enterprise SSO (SAML).
+- Provider buttons on the phase-22 MCP sign-in page: that page is server-rendered, so it would
+  need the server-side redirect flow this spec drops. A later phase, if wanted.
+- Calling provider APIs with the user's provider token.
+- The developer dashboard sign-in.
 
 ## Acceptance criteria
 
-- With `SOCIAL_PROVIDERS` empty, every social route answers 404 and the login screen list is empty.
-- Google (real, locally) signs in an existing user whose e-mail Google verified; the response is
-  the same shape as `POST /login`; the activity log has `auth.social_login`.
-- A user with no matching e-mail, or an unverified one, is refused with
-  `SOCIAL_ACCOUNT_NOT_LINKED`, and nothing is linked.
-- A signed-in user links GitHub, then signs in with it; unlinking the only way in is refused.
-- The mobile flow accepts an `id_token` for a configured mobile audience and refuses one for
-  another app, an expired one, and a replayed nonce.
-- `return_to` outside `SOCIAL_RETURN_URLS` is refused without redirecting; the token never appears
-  in a URL.
+- With `SOCIAL_PROVIDERS` empty, the providers list is empty and the login route answers 404.
+- A Google `id_token` (real, locally) for an existing user whose e-mail Google verified returns the
+  same response shape as `POST /login`, and the token works on every route a password token does.
+- A GitHub `code` for an existing user whose primary GitHub e-mail is verified does the same.
+- With `AUTH_OTP_ENABLED=true`, social login still returns a token directly (no `OTP_REQUIRED`).
+- Every password and social login, successful or not, leaves an `auth.login` activity entry with
+  its `method`.
+- Adding a third provider needs only a new adapter file, its config and a registry line.
+- A token for another app's client id, an expired one, or one with `email_verified=false` is
+  refused; an unknown e-mail gets `SOCIAL_ACCOUNT_NOT_FOUND`.
 - An inactive user is refused exactly as on password login.
-- The MCP sign-in page shows the enabled providers and completes consent after a Google sign-in.
+- A tenant user and a tenantless super admin both sign in, and their tenant context is the same as
+  after a password login.
+- The server stores nothing per attempt besides the throttle counter and the activity entry.
 
-## Open questions
+## Decisions (project owner, 2026-11-21)
 
-1. **Sign-up.** Proposed: no; social login is for existing users. Is there a product case for
-   "anyone can sign up with Google" (then: which tenant do they land in)?
-2. **Auto-link on a verified e-mail** (proposed: on, with an e-mail to the user), or always require
-   linking while signed in first?
-3. **OTP after a social login.** Proposed: skip it, as the provider already authenticated the user
-   (and Google, Microsoft and Apple usually did MFA). Or keep it when `AUTH_OTP_ENABLED`?
-4. **Which providers in the first PR.** Proposed: Google and GitHub first (simplest, easy to test
-   locally), then Microsoft, Apple and Facebook in a second PR, since Apple and Facebook need paid
-   or reviewed developer accounts to test.
-5. **Web redirect flow, mobile token flow, or both** in the first PR? Proposed: both for Google;
-   redirect only for GitHub.
+1. **Google and GitHub only.** This phase builds the pattern, not a catalogue: one OIDC provider
+   (Google, `id_token`) and one code-exchange provider (GitHub, `code`), so both adapter kinds
+   exist and are tested. Microsoft, Apple, Facebook and others are added by products that need
+   them, following the "Adding a provider" recipe; the tables above stay as reference for them.
+2. **Password login gets activity too.** `auth.login` is recorded for every API login, with
+   `method: password | google | github …`, success and failure, so the log tells one story.
+   (Today only the developer dashboard records sign-ins.)
+3. **No OTP after a social login.** The provider already proved who the user is. `AUTH_OTP_ENABLED`
+   keeps applying to password login only, unchanged.

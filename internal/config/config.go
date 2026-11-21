@@ -1,7 +1,8 @@
 // Package config loads the application settings from the environment (.env).
 // Like Laravel's config/*.php, each section lives in its own file: app.go,
-// database.go, cache.go, queue.go, auth.go, billing.go, storage.go, backup.go,
-// mail.go and ops.go. config.go holds Load and the cross-section Validate.
+// database.go, cache.go, queue.go, auth.go, social.go, billing.go, storage.go,
+// backup.go, mail.go and ops.go. config.go holds Load and the cross-section
+// Validate.
 package config
 
 import (
@@ -37,6 +38,7 @@ type Config struct {
 	Queue        Queue
 	Schedule     Schedule
 	Auth         Auth
+	Social       Social
 	Tenancy      Tenancy
 	Billing      Billing
 	Storage      Storage
@@ -137,6 +139,9 @@ func Load(envFile string) (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.loadAuth(); err != nil {
+		return nil, err
+	}
+	if err := cfg.loadSocial(); err != nil {
 		return nil, err
 	}
 	if err := cfg.loadTenancy(); err != nil {
