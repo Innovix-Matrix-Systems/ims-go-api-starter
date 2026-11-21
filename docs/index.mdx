@@ -24,10 +24,10 @@ import Terminal from '@components/Terminal.astro'
   title="from zero to a running API"
   lines={[
     { cmd: 'cp .env.example .env && make migrate seed' },
-    { out: 'goose: 26 migrations applied · River schema v8', tone: 'dim' },
-    { out: 'seeded 72 permissions, tenant "Default", admin + developer accounts', tone: 'ok' },
+    { out: 'goose: 27 migrations applied · River schema v8', tone: 'dim' },
+    { out: 'seeded 73 permissions, tenant "Default", admin + developer accounts', tone: 'ok' },
     { cmd: 'go run ./cmd/app gen module --name=product --fields="name:string,price:decimal"' },
-    { out: 'wrote migrations/00027_create_products.sql', tone: 'dim' },
+    { out: 'wrote migrations/00028_create_products.sql', tone: 'dim' },
     { out: 'wrote internal/modules/product/{model,repository,service,request,handler,routes}.go', tone: 'dim' },
     { out: 'Module "product" generated.', tone: 'ok' },
     { cmd: 'make dev' },
@@ -50,7 +50,7 @@ import Terminal from '@components/Terminal.astro'
   </Card>
   <Card title="Everything an API needs" icon="puzzle">
     Auth with OTP and recovery · billing with plan limits · settings · feature flags with rollout ·
-    activity log with a system audit log · public tenant routes · notifications · files on local/S3/R2/MinIO · import/export · backups · queue ·
+    activity log with a system audit log · public tenant routes · MCP server for AI agents (as a connector) · notifications · files on local/S3/R2/MinIO · import/export · backups · queue ·
     scheduler · RFC 9457 errors · OpenAPI.
   </Card>
   <Card title="A dashboard you'll actually use" icon="seti:html">

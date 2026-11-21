@@ -43,6 +43,10 @@ const (
 	ActionImpersonationDenied  = "impersonation.denied"
 )
 
+// MCPChangesKey holds, in an entry's changes, the MCP tool call that made
+// the change: {"source": "mcp", "tool": …, "client": …}.
+const MCPChangesKey = "_via"
+
 // Recorder writes activity entries. A nil *Recorder records nothing, so a
 // service works without one (unit tests, tools that do not need the log).
 type Recorder struct {
@@ -81,9 +85,19 @@ func (r *Recorder) insert(ctx context.Context, entry Entry, impersonatorID int64
 	if actorID == 0 {
 		actorID = authn.UserIDFromContext(ctx)
 	}
+	values := entry.Changes
+	// A change an AI agent made through an MCP tool says so: which tool,
+	// which client (phase 22).
+	if call, ok := httpx.MCPCallFrom(ctx); ok {
+		values = make(map[string]any, len(entry.Changes)+1)
+		for k, v := range entry.Changes {
+			values[k] = v
+		}
+		values[MCPChangesKey] = map[string]any{"source": "mcp", "tool": call.Tool, "client": call.Client}
+	}
 	changes := []byte("{}")
-	if len(entry.Changes) > 0 {
-		if encoded := r.redactor.AnyJSON(entry.Changes); encoded != nil {
+	if len(values) > 0 {
+		if encoded := r.redactor.AnyJSON(values); encoded != nil {
 			changes = encoded
 		}
 	}

@@ -60,8 +60,11 @@ const (
 	PermNotificationCreate  = "notification.create"
 	PermNotificationUpdate  = "notification.update"
 
-	PermActivityView       = "activity.view"
-	PermActivityViewAll    = "activity.view.all"
+	PermActivityView    = "activity.view"
+	PermActivityViewAll = "activity.view.all"
+
+	// OAuth clients registered by hand for the MCP connector (phase 22).
+	PermOAuthClientManage  = "oauth_client.manage"
 	PermNotificationDelete = "notification.delete"
 
 	PermDataProcessingViewAll = "data_processing_job.view.all"
@@ -181,6 +184,9 @@ var Catalog = []Permission{
 	{Name: PermActivityView, Group: "activity", Description: "Can view the activity log"},
 	{Name: PermActivityViewAll, Group: "activity", IsSystem: true, Description: "Can view every tenant's activity log and the system audit log"},
 	{Name: PermNotificationDelete, Group: "notification", IsSystem: true, Description: "Can delete notifications"},
+
+	// ── oauth_client ──────────────────────────────────────
+	{Name: PermOAuthClientManage, Group: "oauth_client", IsSystem: true, Description: "Can register and manage OAuth clients for the MCP connector"},
 
 	// ── setting ───────────────────────────────────────────
 	{Name: PermSettingUpdate, Group: "setting", Description: "Can change tenant setting values"},

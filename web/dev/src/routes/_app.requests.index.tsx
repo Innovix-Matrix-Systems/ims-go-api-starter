@@ -118,6 +118,14 @@ function RequestsPage() {
         cell: ({ row }) => (
           <span className="small muted">
             {row.original.user_id ?? '—'}
+            {row.original.route === '/mcp' && (
+              <>
+                {' '}
+                <span title="An AI agent called this through an MCP connector">
+                  <Chip tone="blue">MCP</Chip>
+                </span>
+              </>
+            )}
             {row.original.impersonator_id != null && (
               <>
                 {' '}

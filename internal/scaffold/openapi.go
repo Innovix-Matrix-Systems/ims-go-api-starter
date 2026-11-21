@@ -270,6 +270,7 @@ func renderOperation(b *strings.Builder, rs ResourceSpec, suffix, method string)
 		b.WriteString("      tags: [" + rs.Tag + "]\n")
 		b.WriteString("      summary: List " + strings.ToLower(rs.Tag) + " in the resolved tenant\n")
 		b.WriteString("      operationId: list" + rs.Tag + "\n")
+		b.WriteString("      " + mcpHint + "{tool: list_" + snakeCase(rs.Tag) + "}\n")
 		b.WriteString("      parameters:\n")
 		b.WriteString("        - {$ref: \"#/components/parameters/Page\"}\n")
 		b.WriteString("        - {$ref: \"#/components/parameters/PerPage\"}\n")
@@ -422,6 +423,8 @@ func SpliceRegions(data []byte, specs []ResourceSpec) ([]byte, error) {
 	}
 
 	res := RenderRegions(sorted)
+	// An operation someone exposed as an MCP tool keeps its x-mcp line.
+	res.Paths = keepMCPMarks(res.Paths, mcpMarks(strings.ReplaceAll(s, "\r\n", "\n")))
 	result := spliceRegion(s, markerPathsBegin, markerPathsEnd, pathsBeginLine(sorted), toNewlines(res.Paths, nl), nl)
 	result = spliceRegion(result, markerSchemasBegin, markerSchemasEnd, schemasBeginLine, toNewlines(res.Schemas, nl), nl)
 

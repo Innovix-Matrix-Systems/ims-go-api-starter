@@ -6,6 +6,40 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-11-21
+
+An MCP server that AI apps add as a connector, with a built-in OAuth 2.1 authorization server.
+
+**Upgrading from 0.1.2:** run `ims migrate` (migration `00027`), then `ims permission:sync` (new
+system permission `oauth_client.manage`). MCP is off until you set `MCP_ENABLED=true`.
+
+### Added
+
+- **MCP server as a connector.** With `MCP_ENABLED=true`, AI agents (claude.ai, Claude Desktop,
+  Claude Code, ChatGPT, Cursor, VS Code) add the API by its URL, `/mcp`. The user signs in on the
+  API's own page, approves read or read-and-change access (platform accounts also pick a tenant),
+  and the agent works as that user. Built in:
+  - an OAuth 2.1 authorization server: authorization code with PKCE S256, rotating refresh
+    tokens with reuse detection, RFC 8414 / RFC 9728 discovery, RFC 9207 `iss`, revocation;
+  - clients connect **without registration** through Client ID Metadata Documents (SSRF-guarded
+    fetch), or with a client an admin **registered by hand**: `/api/v1/oauth-client` (new system
+    permission `oauth_client.manage`) and `ims oauth:client:create|list|rotate|delete`;
+  - tools from the OpenAPI document: an operation marked `x-mcp` is a tool, served through the
+    `/api/v1` router so permissions, tenancy, plan limits, validation and the activity log apply
+    unchanged. Five to start: `whoami`, `list_branches`, `create_branch`, `list_users`,
+    `create_user`;
+  - `GET/DELETE /api/v1/user/connections` for a user's connections; activity entries written by a
+    tool carry `_via` (tool and client); `oauth.authorized` / `oauth.revoked` entries; an MCP chip
+    in the dashboard's request list; `ims_mcp_tool_calls_total`;
+  - `testkit.WithMCP()` and `app.Agent(t, user, testkit.AllowChanges())` to test a tool through
+    the real OAuth flow, next to its REST test (`agent.Call(...).OK(t)` / `.Refused(t, code)`).
+
+  MCP access tokens work only on `/mcp`, and session tokens never do. See `docs/guides/mcp.md`, and the
+  step-by-step tutorial `docs/tutorial/connect-an-ai-agent.mdx` (Claude Desktop, Claude Code and
+  OpenCode against a local API).
+- **Phase 23 spec (draft):** social login with Google, Microsoft, Apple, GitHub and Facebook
+  (`specs/phase-23-social-login.md`); not implemented yet.
+
 ## [0.1.2] - 2026-11-21
 
 Act as a user, a system audit log, public tenant routes, request telemetry that knows who made each
@@ -108,6 +142,7 @@ The first versioned release: the full starter, its developer dashboard and its d
   per-tenant lock every query runs on the locked transaction.
 - A failed backup run reports `destinations: []` instead of `null`.
 
-[Unreleased]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.2...v0.1.5
 [0.1.2]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/compare/v0.1.0...v0.1.2
 [0.1.0]: https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/releases/tag/v0.1.0

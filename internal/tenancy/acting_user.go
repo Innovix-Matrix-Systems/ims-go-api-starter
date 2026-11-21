@@ -20,6 +20,12 @@ import (
 // ActingUserHeader makes one request run as another user (phase 21).
 const ActingUserHeader = "X-Acting-User"
 
+// The acting headers a platform account sends to work inside one tenant.
+const (
+	ActingTenantHeader = "X-Acting-Tenant"
+	ActingBranchHeader = "X-Acting-Branch"
+)
+
 // ImpersonationWindow is how long one impersonation.started row covers a
 // caller acting as the same target.
 const ImpersonationWindow = 30 * time.Minute

@@ -115,3 +115,18 @@ numbered so code comments and reviews can refer to them. Each says **what** was 
     (and every tenant) needs `activity.view.all`. Act-as is written there: the start
     (fail-closed), every request, and refusals. Entries written while acting carry the
     impersonator; tenants see only `by_staff`.
+33. **MCP tools are REST operations.** An operation marked `x-mcp` in `api/openapi.yaml` is a tool,
+    and calling it serves that operation through the `/api/v1` router in-process, with the
+    identity in the context (never the token). There is no second authorization path: permissions,
+    tenancy, plan limits, validation, errors and the activity log are the REST call's. MCP-only
+    endpoints are not allowed; a new tool is a new REST operation first.
+34. **Our own OAuth server for the connector.** The API is its own OAuth 2.1 authorization server
+    (authorization code + PKCE S256, rotating refresh tokens) instead of requiring an external
+    identity provider, so the starter works as a Claude connector out of the box. Clients connect
+    with a Client ID Metadata Document (no registration) or a client an admin registered; Dynamic
+    Client Registration is deprecated by the MCP spec and not built. An external IdP stays possible:
+    the protected resource metadata can name any issuer.
+35. **MCP tokens are a separate kind.** An MCP access token is a personal access token with
+    `mcp:*` scopes and an audience, tied to its connection; only `/mcp` accepts it and
+    `authn.Authenticate` refuses it everywhere else, while `/mcp` refuses session tokens. A leaked
+    agent token can't call the REST API, and a leaked session can't drive an agent.

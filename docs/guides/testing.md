@@ -71,6 +71,41 @@ app.As(other).Patch(path, `{"name":"x"}`).Status(t, http.StatusNotFound)
 app.As(other).Delete(path).Status(t, http.StatusNotFound)
 ```
 
+### Testing an MCP tool
+
+When you mark an operation `x-mcp`, test it as a tool too. `app.Agent` connects an agent the way
+Claude would: it signs in on the authorization page, consents and redeems the code, so the test
+goes through the real OAuth flow, `/mcp` and the dispatcher:
+
+```go
+func TestProductTools(t *testing.T) {
+	app := testkit.New(t, testkit.WithMCP())        // MCP_ENABLED=true for this app
+	admin := app.User(t)
+	agent := app.Agent(t, admin, testkit.AllowChanges())
+
+	var product struct{ Name string `json:"name"` }
+	agent.Call(t, "create_product", map[string]any{"body": map[string]any{"name": "Tea"}}).OK(t).Data(t, &product)
+	agent.Call(t, "create_product", map[string]any{"body": map[string]any{}}).Refused(t, "VALIDATION_FAILED")
+
+	other := app.User(t, testkit.InTenant(app.Tenant(t, "Tenant B")))
+	var seen []struct{ Name string `json:"name"` }
+	app.Agent(t, other).Call(t, "list_products", nil).OK(t).Data(t, &seen) // tenant B sees none of A's
+}
+```
+
+| Helper | Gives you |
+| --- | --- |
+| `testkit.WithMCP()` | an option for `New`: the MCP server on |
+| `app.Agent(t, user, opts...)` | an agent signed in as `user`; read-only by default |
+| `testkit.AllowChanges()`, `testkit.WorkIn(tenantID)` | tick "Allow changes"; the tenant a platform account picks |
+| `agent.Call(t, tool, args)` | calls a tool; `args` is a map or nil |
+| `.OK(t)`, `.Refused(t, code)`, `.Data(t, &v)` | asserts success / a refusal with that `error_code`; decodes `data` |
+| `agent.Tools(t)`, `agent.Send(method, params)` | the tool names; a raw JSON-RPC call for transport checks (401, 403) |
+| `agent.AccessToken`, `agent.RefreshToken`, `app.ClientID(t)` | for token-endpoint tests |
+
+`internal/modules/branches/testkit_example_test.go` has a complete example, and
+`internal/app/mcp_integration_test.go` covers the connector itself.
+
 ## How test databases work
 
 `dbtest` gives **every test package its own Postgres schema** (named after the package directory)

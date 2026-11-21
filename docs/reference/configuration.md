@@ -211,6 +211,20 @@ effective values with secrets masked.
 | `DEV_DASHBOARD_MAX_BODY_BYTES` | `65536` | *Optional.* |
 | `DEV_DASHBOARD_REDACT_KEYS` | — | *Optional.* extra sensitive keys (comma-separated) |
 | `DEV_DASHBOARD_STORE` | `database` | *Optional.* |
+
+## MCP server (AI agents as connectors)
+
+| Variable | Example | Notes |
+| --- | --- | --- |
+| `MCP_ENABLED` | `false` | /mcp + /oauth/* + OAuth well-known docs; APP_URL must be the public https URL |
+| `MCP_ACCESS_TOKEN_TTL` | `1h` | *Optional.* |
+| `MCP_REFRESH_TOKEN_TTL` | `720h` | *Optional.* sliding: every refresh issues a new one |
+| `MCP_OAUTH_CIMD_ENABLED` | `true` | *Optional.* any client connects with no registration (Client ID Metadata Document) |
+| `MCP_OAUTH_ALLOWED_CLIENT_HOSTS` | — | *Optional.* limit CIMD clients to these hosts, e.g. claude.ai (empty = any) |
+| `MCP_OAUTH_SECRET_GRACE` | `24h` | *Optional.* a rotated client secret keeps working this long |
+| `MCP_MAX_REQUEST_BYTES` | `1048576` | *Optional.* |
+| `MCP_MAX_RESULT_BYTES` | `262144` | *Optional.* |
+| `MCP_RATE_LIMIT` | `120` | *Optional.* tool calls per minute per token |
 | `BACKUP_ENABLED` | `false` | Database backups scheduler + dashboard triggers; CLI always available |
 | `BACKUP_NAME` | — | default: APP_NAME |
 | `BACKUP_DIR` | `backups` | relative paths resolve under APP_STORAGE_DIR |

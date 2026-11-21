@@ -89,6 +89,11 @@ decimal bool date datetime json`; `?` = optional.
 11. **OpenAPI** — `go run ./cmd/app gen openapi --module=<name>` for generated regions, or
     hand-write outside the `BEGIN/END GENERATED` markers. `make openapi-check` must report
     "no route drift". Dashboard types: `cd web/dev && npm run openapi:gen`.
+    To expose an operation to AI agents, uncomment the generated `# x-mcp:` line (or add
+    `x-mcp: {tool: <snake_name>}`); regeneration keeps it. Only when asked: tools inherit the
+    route's permission and tenancy, and a DELETE must be marked `destructive: true`. Test the
+    tool next to the REST test: `testkit.New(t, testkit.WithMCP())`, `app.Agent(t, user,
+    testkit.AllowChanges()).Call(t, "list_x", nil).OK(t)` (see `docs/guides/testing.md`).
 12. **Tests** — service unit tests with fakes; an integration test with `testkit` in
     `package <name>_test`, including cross-tenant isolation (read, update, delete denied):
 

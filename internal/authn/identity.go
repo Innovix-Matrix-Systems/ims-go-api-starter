@@ -6,6 +6,7 @@ package authn
 import (
 	"context"
 	"net/http"
+	"time"
 )
 
 // Identity is the authenticated caller established by the bearer middleware.
@@ -24,6 +25,32 @@ type Identity struct {
 	// ImpersonatorID and ImpersonatorName are the person really calling.
 	ImpersonatorID   int64
 	ImpersonatorName string
+
+	// Scopes are set only for an MCP access token (mcp:read, mcp:write);
+	// Audience is the resource it was issued for and OAuthGrantID the
+	// connection it belongs to. Session tokens leave all three empty.
+	Scopes       []string
+	Audience     string
+	OAuthGrantID int64
+	// ExpiresAt is when the token expires (zero = never).
+	ExpiresAt time.Time
+}
+
+// IsMCP reports whether the identity came from an MCP access token. Such
+// tokens are accepted only on /mcp; Authenticate refuses them elsewhere.
+func (i *Identity) IsMCP() bool { return i != nil && len(i.Scopes) > 0 }
+
+// HasScope reports whether an MCP token carries scope.
+func (i *Identity) HasScope(scope string) bool {
+	if i == nil {
+		return false
+	}
+	for _, s := range i.Scopes {
+		if s == scope {
+			return true
+		}
+	}
+	return false
 }
 
 // Impersonated reports whether this identity is acted as by someone else.
@@ -61,7 +88,22 @@ type UserLookup interface {
 
 type contextKey string
 
-const identityKey contextKey = "authn_identity"
+const (
+	identityKey   contextKey = "authn_identity"
+	dispatchedKey contextKey = "authn_dispatched"
+)
+
+// Dispatched marks ctx as an in-process sub-request made for an MCP tool call
+// on behalf of identity. Authenticate then uses that identity instead of
+// reading Authorization: the MCP token never travels with the sub-request.
+func Dispatched(ctx context.Context, identity *Identity) context.Context {
+	return context.WithValue(ctx, dispatchedKey, identity)
+}
+
+func dispatchedIdentity(ctx context.Context) (*Identity, bool) {
+	identity, ok := ctx.Value(dispatchedKey).(*Identity)
+	return identity, ok && identity != nil
+}
 
 // WithIdentity stores the authenticated identity in the context.
 func WithIdentity(ctx context.Context, identity *Identity) context.Context {

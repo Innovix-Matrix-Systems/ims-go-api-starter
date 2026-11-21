@@ -79,7 +79,10 @@ export default defineConfig({
         },
         {
           label: 'Tutorial',
-          items: [{ slug: 'tutorial/first-module', badge: { text: '30 min', variant: 'tip' } }],
+          items: [
+            { slug: 'tutorial/first-module', badge: { text: '30 min', variant: 'tip' } },
+            { slug: 'tutorial/connect-an-ai-agent', badge: { text: '15 min', variant: 'tip' } },
+          ],
         },
         {
           label: 'Building the API',
@@ -103,6 +106,7 @@ export default defineConfig({
             'guides/queue-and-scheduler',
             'guides/files-and-storage',
             'guides/activity-log',
+            'guides/mcp',
             'guides/notifications',
             'guides/import-export',
             'guides/mail-and-i18n',

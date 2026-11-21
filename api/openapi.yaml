@@ -53,6 +53,12 @@ tags:
     description: Developer dashboard identity and (later) telemetry/queue admin API.
   - name: Ops
     description: Liveness, health, docs and metrics.
+  - name: MCP
+    description: |
+      The MCP server AI agents connect to as a connector (`/mcp`), the OAuth 2.1
+      authorization server that signs them in, the user's connections and the
+      clients an admin registers by hand. Mounted when `MCP_ENABLED`; otherwise 404.
+      An operation marked `x-mcp` is also an MCP tool (see docs/guides/mcp.md).
 
 security:
   - bearerAuth: []
@@ -423,6 +429,385 @@ paths:
         "401": *unauthorized
         "422": *validationFailed
 
+  /mcp:
+    post:
+      tags: [MCP]
+      summary: MCP endpoint (Streamable HTTP, stateless)
+      description: |
+        JSON-RPC over HTTP for MCP clients. Takes an MCP access token from the
+        OAuth flow below, never a session token. Without one it answers 401 with
+        `WWW-Authenticate: Bearer resource_metadata="…"`; a write tool called
+        with a read-only token answers 403 `insufficient_scope`.
+      operationId: mcpCall
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, description: A JSON-RPC 2.0 message or batch.}
+      responses:
+        "200":
+          description: The JSON-RPC response.
+          content:
+            application/json:
+              schema: {type: object}
+        "401": {description: No valid MCP access token.}
+        "403": {description: "Insufficient scope, or a disallowed Origin."}
+        "404": *notFound
+        "429": *tooManyRequests
+    get:
+      tags: [MCP]
+      summary: Not used (stateless server)
+      operationId: mcpStream
+      security: []
+      responses:
+        "404": *notFound
+        "405": {description: The server is stateless and keeps no stream.}
+    delete:
+      tags: [MCP]
+      summary: Not used (stateless server)
+      operationId: mcpEndSession
+      security: []
+      responses:
+        "404": *notFound
+        "405": {description: The server is stateless and has no session.}
+
+  /.well-known/oauth-protected-resource:
+    get:
+      tags: [MCP]
+      summary: Protected resource metadata for /mcp (RFC 9728)
+      operationId: oauthProtectedResource
+      security: []
+      responses:
+        "200":
+          description: Which authorization server issues tokens for /mcp.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProtectedResourceMetadata"}
+        "404": *notFound
+
+  /.well-known/oauth-protected-resource/mcp:
+    get:
+      tags: [MCP]
+      summary: Protected resource metadata for /mcp, path form (RFC 9728)
+      operationId: oauthProtectedResourceMCP
+      security: []
+      responses:
+        "200":
+          description: Which authorization server issues tokens for /mcp.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProtectedResourceMetadata"}
+        "404": *notFound
+
+  /.well-known/oauth-authorization-server:
+    get:
+      tags: [MCP]
+      summary: Authorization server metadata (RFC 8414)
+      operationId: oauthServerMetadata
+      security: []
+      responses:
+        "200":
+          description: Endpoints and capabilities, including Client ID Metadata Document support.
+          content:
+            application/json:
+              schema: {type: object}
+        "404": *notFound
+
+  /oauth/authorize:
+    get:
+      tags: [MCP]
+      summary: Start authorization (sign-in page)
+      description: |
+        Authorization code with PKCE S256. `client_id` is an https URL (a Client ID
+        Metadata Document: no registration) or a registered client's id. A bad
+        client or redirect URI shows an error page and never redirects.
+      operationId: oauthAuthorize
+      security: []
+      parameters:
+        - {name: client_id, in: query, required: true, schema: {type: string}}
+        - {name: redirect_uri, in: query, schema: {type: string}}
+        - {name: response_type, in: query, required: true, schema: {type: string, enum: [code]}}
+        - {name: code_challenge, in: query, required: true, schema: {type: string}}
+        - {name: code_challenge_method, in: query, required: true, schema: {type: string, enum: [S256]}}
+        - {name: state, in: query, schema: {type: string}}
+        - {name: scope, in: query, schema: {type: string, example: "mcp:read mcp:write"}}
+        - {name: resource, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: The sign-in page.
+          content:
+            text/html:
+              schema: {type: string}
+        "302": {description: "Back to the client with an error (invalid scope, missing PKCE)."}
+        "400":
+          description: The client or redirect URI is not acceptable (error page).
+          content:
+            text/html:
+              schema: {type: string}
+        "404": *notFound
+
+  /oauth/authorize/login:
+    post:
+      tags: [MCP]
+      summary: Sign-in form (password, then OTP when required)
+      operationId: oauthAuthorizeLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf]
+              properties:
+                csrf: {type: string}
+                email: {type: string}
+                password: {type: string}
+                code: {type: string, description: The OTP on the second step.}
+      responses:
+        "200":
+          description: The OTP or consent page.
+          content:
+            text/html:
+              schema: {type: string}
+        "401":
+          description: The sign-in page again, with the problem.
+          content:
+            text/html:
+              schema: {type: string}
+        "404": *notFound
+
+  /oauth/authorize/consent:
+    post:
+      tags: [MCP]
+      summary: Consent form (Allow or Deny)
+      operationId: oauthAuthorizeConsent
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [csrf, decision]
+              properties:
+                csrf: {type: string}
+                decision: {type: string, enum: [allow, deny]}
+                allow_write: {type: string, enum: ["1"]}
+                tenant_id: {type: integer, format: int64, description: "Platform accounts only; 0 means no tenant."}
+      responses:
+        "302": {description: "Back to the client with code, state and iss, or error=access_denied."}
+        "400":
+          description: The sign-in expired or the form is not valid (error page).
+          content:
+            text/html:
+              schema: {type: string}
+        "404": *notFound
+
+  /oauth/token:
+    post:
+      tags: [MCP]
+      summary: Token endpoint (authorization_code, refresh_token)
+      description: |
+        Public clients send `client_id`; confidential registered clients
+        authenticate with HTTP Basic or `client_secret`. Refresh tokens rotate on
+        every use; a reused one revokes the connection.
+      operationId: oauthToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type: {type: string, enum: [authorization_code, refresh_token]}
+                code: {type: string}
+                redirect_uri: {type: string}
+                code_verifier: {type: string}
+                refresh_token: {type: string}
+                resource: {type: string}
+                client_id: {type: string}
+                client_secret: {type: string}
+      responses:
+        "200":
+          description: Tokens.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthTokenResponse"}
+        "400":
+          description: An OAuth error (invalid_grant, invalid_request and so on).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthError"}
+        "401":
+          description: invalid_client.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthError"}
+        "404": *notFound
+
+  /oauth/revoke:
+    post:
+      tags: [MCP]
+      summary: Token revocation (RFC 7009)
+      operationId: oauthRevoke
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: {type: string}
+                client_id: {type: string}
+                client_secret: {type: string}
+      responses:
+        "200": {description: "Revoked (also for unknown tokens)."}
+        "401":
+          description: invalid_client.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthError"}
+        "404": *notFound
+
+  /api/v1/user/connections:
+    get:
+      tags: [MCP]
+      summary: List my MCP connections
+      operationId: listMyConnections
+      responses:
+        "200":
+          description: The caller's connections in force.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: {$ref: "#/components/schemas/MCPConnection"}
+        "401": *unauthorized
+
+  /api/v1/user/connections/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+    delete:
+      tags: [MCP]
+      summary: Disconnect one of my MCP connections
+      operationId: deleteMyConnection
+      responses:
+        "204": {description: "Disconnected; the agent loses access."}
+        "401": *unauthorized
+        "404": *notFound
+
+  /api/v1/oauth-client:
+    get:
+      tags: [MCP]
+      summary: List registered OAuth clients
+      operationId: listOAuthClients
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - $ref: "#/components/parameters/Search"
+      responses:
+        "200":
+          description: Paginated clients.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthClientPageEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+    post:
+      tags: [MCP]
+      summary: Register an OAuth client
+      description: A confidential client's `client_secret` is in this response only.
+      operationId: createOAuthClient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OAuthClientRequest"}
+      responses:
+        "201":
+          description: The registered client.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthClientEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "422": *validationFailed
+
+  /api/v1/oauth-client/{id}:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+    get:
+      tags: [MCP]
+      summary: Get a registered OAuth client
+      operationId: getOAuthClient
+      responses:
+        "200":
+          description: The client.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthClientEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+    put:
+      tags: [MCP]
+      summary: Update a registered OAuth client
+      description: Deactivating it revokes every connection made with it.
+      operationId: updateOAuthClient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OAuthClientRequest"}
+      responses:
+        "200":
+          description: The client.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthClientEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "422": *validationFailed
+    delete:
+      tags: [MCP]
+      summary: Delete a registered OAuth client
+      description: Revokes every connection made with it.
+      operationId: deleteOAuthClient
+      responses:
+        "204": {description: Deleted.}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+
+  /api/v1/oauth-client/{id}/rotate-secret:
+    parameters:
+      - $ref: "#/components/parameters/PathID"
+    post:
+      tags: [MCP]
+      summary: Rotate a confidential client's secret
+      description: The old secret keeps working for `MCP_OAUTH_SECRET_GRACE`.
+      operationId: rotateOAuthClientSecret
+      responses:
+        "200":
+          description: The client with its new `client_secret` (shown once).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OAuthClientEnvelope"}
+        "401": *unauthorized
+        "403": *forbidden
+        "404": *notFound
+        "409": *conflict
+
   /api/v1/user:
     parameters:
       - {$ref: "#/components/parameters/ActingTenant"}
@@ -432,6 +817,7 @@ paths:
       tags: [Users]
       summary: List users
       operationId: listUsers
+      x-mcp: {tool: list_users}
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PerPage"
@@ -452,6 +838,7 @@ paths:
       tags: [Users]
       summary: Create a user in the resolved tenant
       operationId: createUser
+      x-mcp: {tool: create_user}
       requestBody:
         required: true
         content:
@@ -478,6 +865,7 @@ paths:
       tags: [Users]
       summary: Get the authenticated user's profile
       operationId: getUserProfile
+      x-mcp: {tool: whoami, title: Who am I, description: "The signed-in user: name, e-mail, tenant, branch and roles. Call it first."}
       responses:
         "200":
           description: The caller's user record.
@@ -1151,6 +1539,7 @@ paths:
       tags: [Branches]
       summary: List branches in the resolved tenant
       operationId: listBranches
+      x-mcp: {tool: list_branches}
       parameters:
         - $ref: "#/components/parameters/Page"
         - $ref: "#/components/parameters/PerPage"
@@ -1168,6 +1557,7 @@ paths:
       tags: [Branches]
       summary: Create a branch
       operationId: createBranch
+      x-mcp: {tool: create_branch}
       requestBody:
         required: true
         content:
@@ -4606,6 +4996,88 @@ components:
     InternalServerError: *internalError
 
   schemas:
+    ProtectedResourceMetadata:
+      type: object
+      required: [resource, authorization_servers]
+      properties:
+        resource: {type: string, example: "https://api.example.com/mcp"}
+        authorization_servers: {type: array, items: {type: string}}
+        scopes_supported: {type: array, items: {type: string}}
+        bearer_methods_supported: {type: array, items: {type: string}}
+
+    OAuthTokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, refresh_token, scope]
+      properties:
+        access_token: {type: string}
+        token_type: {type: string, enum: [Bearer]}
+        expires_in: {type: integer}
+        refresh_token: {type: string}
+        scope: {type: string, example: "mcp:read mcp:write"}
+
+    OAuthError:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string, example: invalid_grant}
+        error_description: {type: string}
+
+    MCPConnection:
+      type: object
+      required: [id, client_id, client_name, scopes, created_at]
+      properties:
+        id: {type: integer, format: int64}
+        client_id: {type: string, example: "https://claude.ai/oauth/claude-code-client-metadata"}
+        client_name: {type: string, example: Claude Code}
+        scopes: {type: array, items: {type: string}}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        branch_id: {type: integer, format: int64, nullable: true}
+        created_at: {type: string, format: date-time}
+        last_used_at: {type: string, format: date-time, nullable: true}
+
+    OAuthClient:
+      type: object
+      required: [id, client_id, name, type, redirect_uris, scopes, is_active, created_at, updated_at]
+      properties:
+        id: {type: integer, format: int64}
+        client_id: {type: string, example: ims_3f9a0c1d2e4b5a6978f0e1d2c3b4a596}
+        client_secret: {type: string, description: Only when just created or rotated.}
+        name: {type: string}
+        type: {type: string, enum: [public, confidential]}
+        redirect_uris: {type: array, items: {type: string}}
+        scopes: {type: array, items: {type: string, enum: ["mcp:read", "mcp:write"]}}
+        tenant_id: {type: integer, format: int64, nullable: true}
+        is_active: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
+    OAuthClientEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: {$ref: "#/components/schemas/OAuthClient"}
+
+    OAuthClientPageEnvelope:
+      type: object
+      required: [data, links, meta]
+      properties:
+        data:
+          type: array
+          items: {$ref: "#/components/schemas/OAuthClient"}
+        links: {$ref: "#/components/schemas/PaginationLinks"}
+        meta: {$ref: "#/components/schemas/PaginationMeta"}
+
+    OAuthClientRequest:
+      type: object
+      required: [name, redirect_uris]
+      properties:
+        name: {type: string, maxLength: 255}
+        type: {type: string, enum: [public, confidential], description: Create only; default public.}
+        redirect_uris: {type: array, minItems: 1, maxItems: 20, items: {type: string}}
+        scopes: {type: array, items: {type: string, enum: ["mcp:read", "mcp:write"]}}
+        tenant_id: {type: integer, format: int64, nullable: true, description: Only this tenant's users may connect.}
+        is_active: {type: boolean}
+
     Problem:
       type: object
       required: [type, title, status]

@@ -95,6 +95,12 @@ exactly like artisan commands and queued jobs. Services stay permission-free. Wh
 The module's `RegisterRoutes` is mounted into a route group in `internal/app/routes.go`; the group
 decides authentication and tenancy (see [How it works](../getting-started/how-it-works.mdx#route-groups)).
 
+### Exposing an operation to AI agents
+
+Add `x-mcp: {tool: list_products}` to the operation in `api/openapi.yaml` and it becomes a
+tool on the MCP server, served through this router with the same gates. No Go code. See
+[MCP server](./mcp.md#tools-come-from-the-openapi-document).
+
 ## Pagination
 
 Management lists use **page-based** pagination:

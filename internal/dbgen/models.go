@@ -268,6 +268,57 @@ type NotificationTarget struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
+type OauthClient struct {
+	ID                      int64              `json:"id"`
+	ClientID                string             `json:"client_id"`
+	Name                    string             `json:"name"`
+	Type                    string             `json:"type"`
+	SecretHash              *string            `json:"secret_hash"`
+	PreviousSecretHash      *string            `json:"previous_secret_hash"`
+	PreviousSecretExpiresAt pgtype.Timestamptz `json:"previous_secret_expires_at"`
+	RedirectUris            []string           `json:"redirect_uris"`
+	Scopes                  []string           `json:"scopes"`
+	TenantID                *int64             `json:"tenant_id"`
+	IsActive                bool               `json:"is_active"`
+	CreatedBy               *int64             `json:"created_by"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
+type OauthCode struct {
+	CodeHash      string             `json:"code_hash"`
+	GrantID       int64              `json:"grant_id"`
+	RedirectUri   string             `json:"redirect_uri"`
+	CodeChallenge string             `json:"code_challenge"`
+	Resource      string             `json:"resource"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	UsedAt        pgtype.Timestamptz `json:"used_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type OauthGrant struct {
+	ID          int64              `json:"id"`
+	UserID      int64              `json:"user_id"`
+	ClientID    string             `json:"client_id"`
+	ClientName  string             `json:"client_name"`
+	RedirectUri string             `json:"redirect_uri"`
+	Scopes      []string           `json:"scopes"`
+	TenantID    *int64             `json:"tenant_id"`
+	BranchID    *int64             `json:"branch_id"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+}
+
+type OauthRefreshToken struct {
+	ID        int64              `json:"id"`
+	TokenHash string             `json:"token_hash"`
+	GrantID   int64              `json:"grant_id"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	RotatedAt pgtype.Timestamptz `json:"rotated_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Package struct {
 	ID           int64              `json:"id"`
 	Name         string             `json:"name"`
@@ -351,6 +402,7 @@ type PersonalAccessToken struct {
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	OauthGrantID  *int64             `json:"oauth_grant_id"`
 }
 
 type Role struct {

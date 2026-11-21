@@ -12,6 +12,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authz"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/config"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/mcp"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/access"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/auth"
@@ -24,6 +25,7 @@ import (
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/files"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/identity"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/notifications"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/oauth"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/settings"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/system"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/tenants"
@@ -77,6 +79,12 @@ type Dependencies struct {
 	Settings      *settings.Handler
 	Flags         *featureflags.Handler
 	Dev           *dev.Handler
+	// OAuth is the authorization server behind the MCP connector, and
+	// MCPTools the tools built from the OpenAPI document (phase 22).
+	OAuth        *oauth.Handler
+	OAuthService *oauth.Service
+	MCPTools     []mcp.Tool
+	MCPLimiter   ratelimit.Limiter
 	// routes is the built router, read by the dashboard's route inspector.
 	routes chi.Routes
 	DevUI  *webui.Handler
@@ -149,6 +157,19 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 	throttle := authn.NewThrottle(store, cfg.Auth.LoginMaxAttempts, cfg.Auth.LoginDecay)
 	authService := authn.NewService(identityRepo, authenticator, otpService, throttle, cfg.Auth)
 	userService := platform.Identity
+
+	// MCP connector: the authorization server and the tool catalog.
+	oauthService := platform.OAuthService()
+	oauthPages, err := oauth.NewPages(oauthService, authService, identityRepo, store, cfg.App.Name, "", logger)
+	if err != nil {
+		platformCleanup()
+		return nil, nil, err
+	}
+	mcpTools, err := mcpCatalog()
+	if err != nil {
+		platformCleanup()
+		return nil, nil, err
+	}
 
 	// Handlers and modules
 	systemModule := system.NewModule(
@@ -229,7 +250,11 @@ func NewDependencies(cfg *config.Config, logger *slog.Logger) (*Dependencies, fu
 			Commands: dev.NewCommandService(queries, logger, devCommands(platform, permissionService, healthRegistry)...),
 			Kit:      kit,
 		}),
-		DevUI: devUI,
+		DevUI:        devUI,
+		OAuth:        oauth.NewHandler(oauthService, oauthPages, checker, kit),
+		OAuthService: oauthService,
+		MCPTools:     mcpTools,
+		MCPLimiter:   ratelimit.NewCacheLimiter(store, cfg.MCP.RateLimit, time.Minute),
 		Billing: billing.NewHandler(
 			platform.BillingPackages,
 			platform.BillingSubs,

@@ -172,6 +172,9 @@ func AccessLog(logger *slog.Logger) func(http.Handler) http.Handler {
 			if info.TenantID != 0 {
 				attrs = append(attrs, "tenant_id", info.TenantID)
 			}
+			if info.MCPTool != "" {
+				attrs = append(attrs, "via", "mcp", "mcp_tool", info.MCPTool)
+			}
 			switch {
 			case rec.Status >= 500:
 				logger.Error("http request", attrs...)

@@ -48,6 +48,7 @@ type Config struct {
 	Security     Security
 	DevDashboard DevDashboard
 	Activity     Activity
+	MCP          MCP
 }
 
 // IsProduction reports whether the application runs in production.
@@ -166,6 +167,9 @@ func Load(envFile string) (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.loadActivity(); err != nil {
+		return nil, err
+	}
+	if err := cfg.loadMCP(); err != nil {
 		return nil, err
 	}
 	if err := cfg.loadSecurity(); err != nil {

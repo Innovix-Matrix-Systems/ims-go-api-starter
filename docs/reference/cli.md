@@ -39,6 +39,10 @@ a built binary runs them as `ims <command>`. Global flags work with every comman
 | [`migrate`](#migrate) | Apply all pending database migrations |
 | [`migrate:rollback`](#migraterollback) | Roll back the most recent migrations |
 | [`migrate:status`](#migratestatus) | Show migration status |
+| [`oauth:client:create`](#oauthclientcreate) | Register an OAuth client for the MCP connector |
+| [`oauth:client:delete`](#oauthclientdelete) | Delete an OAuth client and revoke every connection made with it |
+| [`oauth:client:list`](#oauthclientlist) | List the OAuth clients registered for the MCP connector |
+| [`oauth:client:rotate`](#oauthclientrotate) | Give a confidential OAuth client a new secret (the old one works for MCP_OAUTH_SECRET_GRACE) |
 | [`openapi:check`](#openapicheck) | Validate the OpenAPI document and check for route drift |
 | [`permission:sync`](#permissionsync) | Sync the permission catalog into the database |
 | [`queue:stats`](#queuestats) | Show queue depths and failed counts |
@@ -287,6 +291,53 @@ Show migration status.
 
 ```bash
 ims migrate:status
+```
+
+### oauth:client:create
+
+Register an OAuth client for the MCP connector.
+
+```bash
+ims oauth:client:create [flags]
+```
+
+Examples:
+
+```bash
+ims oauth:client:create --name "Ops agent" --redirect https://agent.example.com/callback --confidential
+ims oauth:client:create --name "Local tool" --redirect http://localhost/callback
+```
+
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--confidential` | — | give the client a secret (server-side clients) |
+| `--name` | — | name shown on the consent page (required) |
+| `--read-only` | — | never grant mcp:write |
+| `--redirect` | — | redirect URI (repeat for more; https, or http on localhost) |
+| `--tenant` | `0` | only this tenant's users may connect |
+
+### oauth:client:delete
+
+Delete an OAuth client and revoke every connection made with it.
+
+```bash
+ims oauth:client:delete <id>
+```
+
+### oauth:client:list
+
+List the OAuth clients registered for the MCP connector.
+
+```bash
+ims oauth:client:list
+```
+
+### oauth:client:rotate
+
+Give a confidential OAuth client a new secret (the old one works for MCP_OAUTH_SECRET_GRACE).
+
+```bash
+ims oauth:client:rotate <id>
 ```
 
 ### openapi:check

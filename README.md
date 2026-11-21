@@ -1,16 +1,25 @@
 # IMS Go API Starter
 
-![Version](https://img.shields.io/badge/version-0.1.2-ff5c1a)
-[![Docs](https://img.shields.io/badge/docs-ims--go--api--starter.innovixmatrixsystem.com-ff5c1a)](https://ims-go-api-starter.innovixmatrixsystem.com)
+[![CI](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/ci.yml/badge.svg)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/ci.yml)
+[![Docs deploy](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/docs-deploy.yml/badge.svg)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/actions/workflows/docs-deploy.yml)
+![Version](https://img.shields.io/badge/version-0.1.5-ff5c1a)
+[![Docs](https://img.shields.io/badge/docs-website-ff5c1a)](https://ims-go-api-starter.innovixmatrixsystem.com)
+[![Use this template](https://img.shields.io/badge/use%20this-template-2ea44f?logo=github)](https://github.com/Innovix-Matrix-Systems/ims-go-api-starter/generate)
+<br>
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16%2B-4169E1?logo=postgresql&logoColor=white)
+![OpenAPI](https://img.shields.io/badge/OpenAPI-3.0-6BA539?logo=openapiinitiative&logoColor=white)
+![MCP](https://img.shields.io/badge/MCP-connector-8A2BE2)
+![OAuth](https://img.shields.io/badge/OAuth-2.1-EB5424)
+![Docker](https://img.shields.io/badge/Docker-ready-2496ED?logo=docker&logoColor=white)
+![CGO free](https://img.shields.io/badge/CGO-free-00ADD8)
 
 **Laravel's developer experience, Go's performance.** A multi-tenant API starter that ships as
 **one CGO-free binary**: it serves the API, runs migrations, queue workers and the scheduler, and
 embeds a Telescope-style **developer dashboard**. No containers required, Docker-ready when you want it.
 
-**📖 Documentation: [ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com)**: quick start, a step-by-step tutorial,
-guides for every feature, the dashboard tour, operations runbooks and the design decisions.
+**📖 Documentation: [ims-go-api-starter.innovixmatrixsystem.com](https://ims-go-api-starter.innovixmatrixsystem.com)**: quick start, tutorials,
+a guide for every feature, the dashboard tour, operations runbooks and the design decisions.
 
 | Developer dashboard (`/dev`) | API reference (`/docs`) |
 | --- | --- |
@@ -21,18 +30,31 @@ guides for every feature, the dashboard tour, operations runbooks and the design
 - **Reads like Laravel.** Thin handlers (`h.Bind`, `h.Data`), permissions on routes
   (`r.With(h.can("product.create"))`), services, repositories, one config file per section — and
   `ims gen module` scaffolds the whole stack.
-- **Multi-tenant and safe by default.** Tenant + branch isolation in SQL (fails closed), RBAC,
-  staff acting as a tenant or as a user (every request audited), per-tenant plan limits, and a
-  test that fails any route without a permission.
-- **Everything an API needs.** Auth with OTP, password reset and e-mail verification · billing
-  with feature limits (bKash, cash, bank) · settings · feature flags with percentage rollout ·
-  activity log with a system audit log · public tenant routes · notifications · files on local/S3/R2/MinIO · import/export · backups ·
-  River queue · cron scheduler · RFC 9457 errors · OpenAPI.
-- **A dashboard you will actually use.** Requests, logs, exceptions, queue, one-click commands,
-  an inspector (health, routes, roles, config), tenants, settings, flags, files, sessions and an audit log —
-  Ctrl+K to anything.
+- **Multi-tenant and safe by default.** Tenant + branch isolation in SQL (fails closed), and a test
+  that fails any route without a permission.
+- **AI-ready.** An MCP server that Claude, ChatGPT, Cursor or OpenCode add as a connector, with its
+  own OAuth 2.1 server; tools are your REST operations, under the same permissions.
 - **Fast feedback.** Type-safe SQL (sqlc), integration tests in ~10 lines (`testkit`), hot reload,
   and AI-agent skills (`.agents/skills`) that know the codebase.
+
+## Features
+
+| Area | What you get | Guide |
+| --- | --- | --- |
+| Auth | Login with OTP, password reset, e-mail verification, sessions, personal access tokens, lockout | [Authentication](docs/guides/authentication.md) |
+| Access | RBAC with a permission catalog, staff acting as a tenant or as a user (audited) | [Permissions](docs/guides/permissions.md) |
+| Tenancy | Tenants and branches, isolation in SQL, public tenant routes | [Tenancy](docs/guides/tenancy.md) |
+| AI agents | MCP server as a connector, OAuth 2.1 (PKCE, CIMD or registered clients), tools from OpenAPI `x-mcp` | [MCP](docs/guides/mcp.md) |
+| Billing | Plans with feature limits, bKash, cash and bank payments | [Billing](docs/guides/billing.md) |
+| Product | Settings, feature flags with percentage rollout, notifications, import/export | [Settings](docs/guides/settings.md) · [Flags](docs/guides/feature-flags.md) |
+| Audit | Activity log, system audit log, request telemetry | [Activity log](docs/guides/activity-log.md) |
+| Files | Local, S3, R2 or MinIO storage | [Files](docs/guides/files-and-storage.md) |
+| Background | River queue, cron scheduler, backups | [Queue](docs/guides/queue-and-scheduler.md) · [Backups](docs/operations/backups.md) |
+| Mail & i18n | Templated mail, English and Bangla out of the box | [Mail and i18n](docs/guides/mail-and-i18n.md) |
+| API | RFC 9457 errors, validation, OpenAPI 3 with a contract check, `/docs` reference | [Errors](docs/guides/validation-and-errors.md) |
+| Operations | Health probes, Prometheus metrics, structured logs, systemd or Docker deploy, rollback | [Observability](docs/guides/health-and-observability.md) · [Deploy](docs/operations/deploy.md) |
+| Dashboard | Requests, logs, exceptions, queue, one-click commands, inspector, tenants, flags, files, audit — Ctrl+K | [Local development](docs/operations/local-development.md) |
+| Tooling | `ims gen module`, `make rename`, sqlc, `testkit`, a CLI for every task | [Modules](docs/guides/modules.md) · [Testing](docs/guides/testing.md) |
 
 ## Quick start
 
@@ -107,6 +129,7 @@ The pages live in [`docs/`](docs/README.md) and are published as that site (Astr
 | --- | --- |
 | [Quick start](docs/getting-started/quick-start.mdx) · [How it works](docs/getting-started/how-it-works.mdx) | Run it, then understand the one rule every request follows |
 | [Tutorial: your first module](docs/tutorial/first-module.mdx) | Build a products module step by step |
+| [Tutorial: connect an AI agent](docs/tutorial/connect-an-ai-agent.mdx) | Claude Desktop, Claude Code or OpenCode against your local API |
 | [Guides](docs/guides/modules.md) | Modules, handlers, database, tenancy, auth, testing, billing, queue, storage, … |
 | [Operations](docs/operations/deploy.md) · [Docker](docs/operations/docker.md) | Local development, deploy (systemd or Docker), migrations, backups, rollback, releases |
 | [Design decisions](docs/architecture/decisions.md) | What we chose, and why |
@@ -115,13 +138,6 @@ The pages live in [`docs/`](docs/README.md) and are published as that site (Astr
 Requires PostgreSQL 16+, Go 1.26.11+ and Node.js 20.19+ (dashboard). Every setting lives in `.env`
 (documented in `.env.example`; `ims config:show` prints the effective values with secrets masked).
 
-## Who's behind it
+## License
 
-Built and maintained by **[Innovix Matrix System](https://innovixmatrixsystem.com)**, a software
-studio in Dhaka, Bangladesh. We run our own products on it. More open-source starters:
-[PocketBase BaaS](https://github.com/Innovix-Matrix-Systems/ims-pocketbase-baas-starter) ·
-[NestJS API](https://github.com/Innovix-Matrix-Systems/ims-nest-api-starter) ·
-[Laravel API](https://github.com/Innovix-Matrix-Systems/ims-laravel-api-starter) ·
-[Laravel admin](https://github.com/Innovix-Matrix-Systems/ims-laravel-admin-starter).
-Need a team to build on it? Write to **[hello@innovixmatrixsystem.com](mailto:hello@innovixmatrixsystem.com)**.
-Questions about the starter: [support@innovixmatrixsystem.com](mailto:support@innovixmatrixsystem.com).
+This project is licensed under the [MIT License](LICENSE.md).
