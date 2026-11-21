@@ -208,7 +208,9 @@ func (s *Service) SocialProviders() []social.Provider {
 //
 // Failed attempts count against the IP only: there is no account to key the
 // per-account counter on until the provider has answered, and a provider's
-// proof cannot be guessed like a password.
+// proof cannot be guessed like a password. A failure on our side or the
+// provider's (5xx) does not count, so an outage cannot lock out an office
+// behind one IP.
 func (s *Service) SocialLogin(ctx context.Context, provider string, proof social.Proof, device, ip string) (result *LoginResult, err error) {
 	p, ok := s.social.Get(provider)
 	if !ok {
@@ -220,31 +222,39 @@ func (s *Service) SocialLogin(ctx context.Context, provider string, proof social
 	if err := s.checkThrottle(ctx, ipThrottleKey(ip)); err != nil {
 		return nil, err
 	}
-	identity, err := p.Verify(ctx, proof)
+	record, email, err := s.socialUser(ctx, p, proof)
 	if err != nil {
-		_ = s.throttle.Hit(ctx, ipThrottleKey(ip))
+		if apperr.StatusFor(apperr.CodeOf(err)) < 500 {
+			_ = s.throttle.Hit(ctx, ipThrottleKey(ip))
+		}
 		return nil, err
-	}
-	email = identity.Email
-	// Never sign in on an address the provider has not verified: anyone can
-	// open an account there with someone else's address.
-	if email == "" || !identity.EmailVerified {
-		_ = s.throttle.Hit(ctx, ipThrottleKey(ip))
-		return nil, apperr.New(apperr.AccountUnverified, p.DisplayName()+" has not verified the e-mail address of this account.")
-	}
-
-	record, err := s.users.FindByEmail(ctx, email)
-	if err != nil && !apperr.Is(err, apperr.ResourceNotFound) {
-		return nil, err
-	}
-	if record == nil {
-		_ = s.throttle.Hit(ctx, ipThrottleKey(ip))
-		return nil, apperr.New(apperr.SocialAccountNotFound, "No account uses this e-mail address. Ask your administrator for access.")
 	}
 	if err := s.verifyBeforeLogin(record); err != nil {
 		return nil, err
 	}
 	return s.completeLogin(ctx, record, device, email, ip)
+}
+
+// socialUser asks the provider who signed in and finds our user with that
+// address. It returns the address even when no user has it, for the log.
+func (s *Service) socialUser(ctx context.Context, p social.Provider, proof social.Proof) (*UserRecord, string, error) {
+	identity, err := p.Verify(ctx, proof)
+	if err != nil {
+		return nil, "", err
+	}
+	// Never sign in on an address the provider has not verified: anyone can
+	// open an account there with someone else's address.
+	if identity.Email == "" || !identity.EmailVerified {
+		return nil, identity.Email, apperr.New(apperr.AccountUnverified, p.DisplayName()+" has not verified the e-mail address of this account.")
+	}
+	record, err := s.users.FindByEmail(ctx, identity.Email)
+	if err != nil && !apperr.Is(err, apperr.ResourceNotFound) {
+		return nil, identity.Email, err
+	}
+	if record == nil {
+		return nil, identity.Email, apperr.New(apperr.SocialAccountNotFound, "No account uses this e-mail address. Ask your administrator for access.")
+	}
+	return record, identity.Email, nil
 }
 
 // recordLogin reports a finished attempt: a token issued, or an error. An

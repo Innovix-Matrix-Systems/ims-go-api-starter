@@ -101,8 +101,8 @@ Each provider is an adapter (a driver, in the repo's words) behind `Provider`; t
   Facebook, GitLab or LinkedIn later are the same helper with their own endpoint and profile
   reader.
 
-`social.New(cfg)` builds the enabled providers from config at startup (`SOCIAL_PROVIDERS`).
-Nothing else in the code lists providers.
+`social.New(cfg)` builds the enabled providers from config at startup (`SOCIAL_PROVIDERS`);
+`config.loadSocial` (their settings) and `social.New` are the only places that list providers.
 
 ### Adding a provider (the recipe this phase ships)
 

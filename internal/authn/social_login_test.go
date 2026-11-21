@@ -89,6 +89,19 @@ func TestSocialLoginFailuresCountAgainstTheIP(t *testing.T) {
 	}
 }
 
+func TestSocialLoginProviderOutageDoesNotLockTheIP(t *testing.T) {
+	cfg := testCfg() // LoginMaxAttempts: 3
+	service, _, _, _ := testService(t, nil, cfg)
+	service.WithSocial(social.NewRegistry(&fakeProvider{err: apperr.New(apperr.ServiceUnavailable, "GitHub is down")}))
+
+	for range cfg.LoginMaxAttempts + 2 {
+		_, err := service.SocialLogin(context.Background(), "google", social.Proof{}, "web", "10.0.0.1")
+		if !apperr.Is(err, apperr.ServiceUnavailable) {
+			t.Fatalf("err = %v, want SERVICE_UNAVAILABLE, never a lockout", err)
+		}
+	}
+}
+
 func TestLoginAudit(t *testing.T) {
 	record := &UserRecord{ID: 7, Email: "user@example.com", Password: hashedPassword(t, "secret123"), IsActive: true, EmailVerified: true}
 

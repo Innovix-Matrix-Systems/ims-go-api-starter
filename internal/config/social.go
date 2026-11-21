@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -43,7 +44,10 @@ func (c *Config) loadSocial() error {
 
 	// A listed provider without its credentials would only fail at the first
 	// sign-in; refuse to start instead.
-	for _, provider := range cfg.Providers {
+	for i, provider := range cfg.Providers {
+		if slices.Contains(cfg.Providers[:i], provider) {
+			return fmt.Errorf("SOCIAL_PROVIDERS lists %q twice", provider)
+		}
 		switch provider {
 		case "google":
 			if len(cfg.Google.ClientIDs) == 0 {

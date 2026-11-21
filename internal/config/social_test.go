@@ -27,6 +27,9 @@ func TestLoadSocial(t *testing.T) {
 			env:     map[string]string{"SOCIAL_PROVIDERS": "github", "SOCIAL_GITHUB_CLIENT_ID": "id"},
 			wantErr: "SOCIAL_GITHUB_CLIENT_SECRET"},
 		{name: "unknown provider", env: map[string]string{"SOCIAL_PROVIDERS": "myspace"}, wantErr: "not supported"},
+		{name: "listed twice",
+			env:     map[string]string{"SOCIAL_PROVIDERS": "google,Google", "SOCIAL_GOOGLE_CLIENT_IDS": "web-id"},
+			wantErr: "twice"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
