@@ -36,7 +36,7 @@ Every spec lists the exact Laravel files to consult for its phase.
 | 19 | [phase-19-simplicity-audit-testkit.md](phase-19-simplicity-audit-testkit.md) | Done — handler helpers, config split, activity log, testkit, flag rollout, storage disks |
 | 20 | [phase-20-dev-dashboard-finish.md](phase-20-dev-dashboard-finish.md) | Done — inspector, commands, form kit, settings view, dev service layer, tests on testkit |
 | 21 | [phase-21-impersonation-public-tenant.md](phase-21-impersonation-public-tenant.md) | **Done** (2026-11-21) — act-as-user impersonation (`X-Acting-User`), system audit log (`activity.view.all`), public tenant resolution (`X-Tenant-Code`) |
-| 22 | [phase-22-mcp-server.md](phase-22-mcp-server.md) | Draft — MCP server at `/mcp`: OpenAPI-marked tools dispatched through the router, MCP tokens, OAuth 2.1 later |
+| 22 | [phase-22-mcp-server.md](phase-22-mcp-server.md) | Accepted (rev 3) — MCP server as a connector: `/mcp`, built-in OAuth 2.1 with CIMD (no registration) and manually registered clients, tools dispatched through the router, five basic tools |
 
 Remediation phases 12–17 are derived from [docs/codebase-review.md](../docs/codebase-review.md)
 (the full-codebase review at commit `1f55eeb`); each spec lists the finding IDs it resolves.
