@@ -205,6 +205,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/social/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the enabled social login providers
+         * @description The providers SOCIAL_PROVIDERS enables, in display order, for the login screen. Empty when social login is off.
+         */
+        get: operations["authSocialProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/social/{provider}/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with a social provider
+         * @description The client signs in at the provider and sends what it got: an `id_token` for Google, the authorization `code` (with its `code_verifier` and `redirect_uri`) for GitHub. The API verifies it with the provider, finds the user with that verified e-mail address and answers like `POST /login`, always with a token (no OTP step). Refused with 403 `ACCOUNT_UNVERIFIED` when the provider has not verified the address, 403 `SOCIAL_ACCOUNT_NOT_FOUND` when no user has it, and 404 for a provider that is not enabled.
+         */
+        post: operations["authSocialLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/forgot-password": {
         parameters: {
             query?: never;
@@ -4541,6 +4581,35 @@ export interface components {
         };
         /**
          * @example {
+         *       "id_token": "eyJhbGciOiJSUzI1NiIs...",
+         *       "device": "web"
+         *     }
+         */
+        SocialLoginRequest: {
+            /** @description OpenID Connect providers (Google). */
+            id_token?: string;
+            /** @description Code providers (GitHub): the code from the provider's redirect. */
+            code?: string;
+            /** @description The PKCE verifier the client used. */
+            code_verifier?: string;
+            /**
+             * Format: uri
+             * @description The redirect URI the client used.
+             */
+            redirect_uri?: string;
+            device: string;
+        };
+        SocialProvider: {
+            /** @example google */
+            name: string;
+            /** @example Google */
+            display_name: string;
+        };
+        SocialProviderListEnvelope: {
+            data: components["schemas"]["SocialProvider"][];
+        };
+        /**
+         * @example {
          *       "data": {
          *         "user": {
          *           "id": 1,
@@ -6950,6 +7019,107 @@ export interface operations {
             429: {
                 headers: {
                     "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    authSocialProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The enabled providers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SocialProviderListEnvelope"];
+                };
+            };
+        };
+    };
+    authSocialLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SocialLoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Login result with an issued token. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LoginEnvelope"];
+                };
+            };
+            /** @description Missing, invalid or expired bearer token. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Authenticated but not permitted, or tenant context missing. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Resource not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Validation failed; `errors` carries field messages. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Rate limit exceeded; see `retry_after`. */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description A dependency or gateway is unavailable. */
+            503: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {
