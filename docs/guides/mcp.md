@@ -128,6 +128,10 @@ The starter exposes five tools, enough to prove reads, writes, tenancy and audit
 `list_branches`, `create_branch`, `list_users`, `create_user`. Which operations a product exposes
 is its own choice.
 
+Test a tool next to its REST test with `testkit`: `app.Agent(t, user, testkit.AllowChanges())`
+then `agent.Call(t, "list_products", nil).OK(t)`. See
+[Testing an MCP tool](./testing.md#testing-an-mcp-tool).
+
 ## How a tool call runs
 
 A tool does not call a service. It serves the matching operation **through the `/api/v1` router,

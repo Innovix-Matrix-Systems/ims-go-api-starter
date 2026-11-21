@@ -2,17 +2,12 @@ package oauth
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
-	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/mcp"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/modules/activity"
-	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/database"
 )
 
 // Client types a registered client can have.
@@ -34,7 +29,7 @@ type ClientInput struct {
 // RegisteredClient is a registered client with its secret, which is only
 // ever present right after it was created or rotated.
 type RegisteredClient struct {
-	dbgen.OauthClient
+	ClientRecord
 	Secret string
 }
 
@@ -85,95 +80,71 @@ func (s *Service) CreateClient(ctx context.Context, actorID int64, in ClientInpu
 	if err != nil {
 		return nil, apperr.Wrap(apperr.InternalServerError, "generate client id", err)
 	}
-	clientID := RegisteredPrefix + id[:32]
 
-	var secret string
-	var secretHash *string
+	var secret, secretHash string
 	if in.Type == TypeConfidential {
 		if secret, err = randomToken(); err != nil {
 			return nil, apperr.Wrap(apperr.InternalServerError, "generate client secret", err)
 		}
-		secretHash = ptr(hashSecret(secret))
+		secretHash = hashSecret(secret)
 	}
-	row, err := s.queries.CreateOAuthClient(ctx, dbgen.CreateOAuthClientParams{
-		ClientID:     clientID,
-		Name:         in.Name,
-		Type:         in.Type,
-		SecretHash:   secretHash,
-		RedirectUris: in.RedirectURIs,
-		Scopes:       in.Scopes,
-		TenantID:     optional(in.TenantID),
-		IsActive:     true,
-		CreatedBy:    optional(actorID),
+	client, err := s.repo.CreateClient(ctx, NewClient{
+		ClientID: RegisteredPrefix + id[:32], Name: in.Name, Type: in.Type, SecretHash: secretHash,
+		RedirectURIs: in.RedirectURIs, Scopes: in.Scopes, TenantID: in.TenantID, CreatedBy: actorID,
 	})
 	if err != nil {
-		return nil, database.MapError("oauth.create_client", err)
+		return nil, err
 	}
-	s.recordClient(ctx, actorID, ActionClientCreated, row)
-	return &RegisteredClient{OauthClient: row, Secret: secret}, nil
+	s.recordClient(ctx, actorID, ActionClientCreated, *client)
+	return &RegisteredClient{ClientRecord: *client, Secret: secret}, nil
 }
 
 // ListClients pages through registered clients.
-func (s *Service) ListClients(ctx context.Context, search string, limit, offset int32) ([]dbgen.OauthClient, int64, error) {
-	var filter *string
-	if search = strings.TrimSpace(search); search != "" {
-		filter = &search
-	}
-	rows, err := s.queries.ListOAuthClients(ctx, dbgen.ListOAuthClientsParams{Search: filter, RowLimit: limit, RowOffset: offset})
+func (s *Service) ListClients(ctx context.Context, search string, limit, offset int32) ([]ClientRecord, int64, error) {
+	clients, err := s.repo.ListClients(ctx, search, limit, offset)
 	if err != nil {
-		return nil, 0, database.MapError("oauth.list_clients", err)
+		return nil, 0, err
 	}
-	total, err := s.queries.CountOAuthClients(ctx, filter)
+	total, err := s.repo.CountClients(ctx, search)
 	if err != nil {
-		return nil, 0, database.MapError("oauth.count_clients", err)
+		return nil, 0, err
 	}
-	return rows, total, nil
+	return clients, total, nil
 }
 
 // GetClient returns one registered client.
-func (s *Service) GetClient(ctx context.Context, id int64) (*dbgen.OauthClient, error) {
-	row, err := s.queries.GetOAuthClient(ctx, id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, apperr.New(apperr.ResourceNotFound, "The OAuth client was not found.")
-	}
-	if err != nil {
-		return nil, database.MapError("oauth.get_client", err)
-	}
-	return &row, nil
+func (s *Service) GetClient(ctx context.Context, id int64) (*ClientRecord, error) {
+	return s.repo.GetClient(ctx, id)
 }
 
 // UpdateClient changes a registered client. Deactivating it revokes every
 // connection made with it.
-func (s *Service) UpdateClient(ctx context.Context, actorID, id int64, in ClientInput) (*dbgen.OauthClient, error) {
-	current, err := s.GetClient(ctx, id)
+func (s *Service) UpdateClient(ctx context.Context, actorID, id int64, in ClientInput) (*ClientRecord, error) {
+	current, err := s.repo.GetClient(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if err := in.normalise(false); err != nil {
 		return nil, err
 	}
-	row, err := s.queries.UpdateOAuthClient(ctx, dbgen.UpdateOAuthClientParams{
-		ID:           id,
-		Name:         in.Name,
-		RedirectUris: in.RedirectURIs,
-		Scopes:       in.Scopes,
-		TenantID:     optional(in.TenantID),
-		IsActive:     in.IsActive,
+	client, err := s.repo.UpdateClient(ctx, ClientUpdate{
+		ID: id, Name: in.Name, RedirectURIs: in.RedirectURIs, Scopes: in.Scopes,
+		TenantID: in.TenantID, IsActive: in.IsActive,
 	})
 	if err != nil {
-		return nil, database.MapError("oauth.update_client", err)
+		return nil, err
 	}
-	if current.IsActive && !row.IsActive {
-		s.revokeClientGrants(ctx, row.ClientID)
+	if current.IsActive && !client.IsActive {
+		s.revokeClientGrants(ctx, client.ClientID)
 	}
-	s.recordClient(ctx, actorID, ActionClientUpdated, row)
-	return &row, nil
+	s.recordClient(ctx, actorID, ActionClientUpdated, *client)
+	return client, nil
 }
 
 // RotateSecret gives a confidential client a new secret; the old one keeps
 // working for the grace period.
 func (s *Service) RotateSecret(ctx context.Context, actorID, id int64) (*RegisteredClient, error) {
-	current, err := s.GetClient(ctx, id)
+	current, err := s.repo.GetClient(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -184,49 +155,44 @@ func (s *Service) RotateSecret(ctx context.Context, actorID, id int64) (*Registe
 	if err != nil {
 		return nil, apperr.Wrap(apperr.InternalServerError, "generate client secret", err)
 	}
-	row, err := s.queries.RotateOAuthClientSecret(ctx, dbgen.RotateOAuthClientSecretParams{
-		ID:                id,
-		SecretHash:        ptr(hashSecret(secret)),
-		PreviousExpiresAt: timestamptz(s.now().Add(s.settings.SecretGrace)),
-	})
+	client, err := s.repo.RotateClientSecret(ctx, id, hashSecret(secret), s.now().Add(s.settings.SecretGrace))
 	if err != nil {
-		return nil, database.MapError("oauth.rotate_secret", err)
+		return nil, err
 	}
-	s.recordClient(ctx, actorID, ActionClientSecretRotated, row)
-	return &RegisteredClient{OauthClient: row, Secret: secret}, nil
+	s.recordClient(ctx, actorID, ActionClientSecretRotated, *client)
+	return &RegisteredClient{ClientRecord: *client, Secret: secret}, nil
 }
 
 // DeleteClient removes a registered client and revokes its connections.
 func (s *Service) DeleteClient(ctx context.Context, actorID, id int64) error {
-	current, err := s.GetClient(ctx, id)
+	current, err := s.repo.GetClient(ctx, id)
 	if err != nil {
 		return err
 	}
 	s.revokeClientGrants(ctx, current.ClientID)
-	if _, err := s.queries.DeleteOAuthClient(ctx, id); err != nil {
-		return database.MapError("oauth.delete_client", err)
+	if err := s.repo.DeleteClient(ctx, id); err != nil {
+		return err
 	}
 	s.recordClient(ctx, actorID, ActionClientDeleted, *current)
 	return nil
 }
 
 func (s *Service) revokeClientGrants(ctx context.Context, clientID string) {
-	ids, err := s.queries.RevokeClientOAuthGrants(ctx, clientID)
-	if err == nil {
-		s.dropGrantTokens(ctx, ids)
+	if ids, err := s.repo.RevokeClientGrants(ctx, clientID); err == nil {
+		_ = s.repo.DropGrantTokens(ctx, ids)
 	}
 }
 
 // recordClient writes a system audit entry; secrets never go in it.
-func (s *Service) recordClient(ctx context.Context, actorID int64, action string, row dbgen.OauthClient) {
+func (s *Service) recordClient(ctx context.Context, actorID int64, action string, client ClientRecord) {
 	changes := map[string]any{
-		"client_id": row.ClientID, "name": row.Name, "type": row.Type,
-		"redirect_uris": row.RedirectUris, "scopes": row.Scopes, "is_active": row.IsActive,
+		"client_id": client.ClientID, "name": client.Name, "type": client.Type,
+		"redirect_uris": client.RedirectURIs, "scopes": client.Scopes, "is_active": client.IsActive,
 	}
-	if row.TenantID != nil {
-		changes["tenant_id"] = *row.TenantID
+	if client.TenantID != 0 {
+		changes["tenant_id"] = client.TenantID
 	}
 	s.activity.Record(ctx, activity.Entry{
-		ActorID: actorID, Action: action, Subject: "oauth_client", SubjectID: row.ID, Changes: changes,
+		ActorID: actorID, Action: action, Subject: "oauth_client", SubjectID: client.ID, Changes: changes,
 	})
 }

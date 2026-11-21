@@ -57,13 +57,16 @@ func (p *Platform) OAuthService() *oauth.Service {
 	cfg := p.Config
 	queries := p.Tx.Queries()
 	issuer := strings.TrimRight(cfg.App.URL, "/")
-	return oauth.NewService(queries, p.Tx,
-		oauth.NewClients(queries, p.Cache, cfg.MCP.CIMDEnabled, cfg.MCP.AllowedClientHosts),
-		p.Authenticator, p.IdentityRepo, p.Activity, oauth.Settings{
+	repo := oauth.NewRepository(queries)
+	return oauth.NewService(repo,
+		oauth.NewClients(repo, p.Cache, cfg.MCP.CIMDEnabled, cfg.MCP.AllowedClientHosts),
+		p.Authenticator, p.IdentityRepo, oauth.Settings{
 			Issuer:          issuer,
 			Resource:        issuer + mcp.Path,
 			AccessTokenTTL:  cfg.MCP.AccessTokenTTL,
 			RefreshTokenTTL: cfg.MCP.RefreshTokenTTL,
 			SecretGrace:     cfg.MCP.SecretGrace,
-		})
+		}).
+		WithTx(p.Tx).
+		WithActivity(p.Activity)
 }

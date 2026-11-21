@@ -18,9 +18,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
-	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
+	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/cache"
 )
 
@@ -58,7 +56,7 @@ func clientError(err error) bool {
 
 // Clients resolves client_ids.
 type Clients struct {
-	queries      *dbgen.Queries
+	repo         Repository
 	cache        cache.Store
 	cimd         bool
 	allowedHosts []string
@@ -79,8 +77,8 @@ const (
 )
 
 // NewClients creates the resolver.
-func NewClients(queries *dbgen.Queries, store cache.Store, cimd bool, allowedHosts []string) *Clients {
-	c := &Clients{queries: queries, cache: store, cimd: cimd, allowedHosts: allowedHosts}
+func NewClients(repo Repository, store cache.Store, cimd bool, allowedHosts []string) *Clients {
+	c := &Clients{repo: repo, cache: store, cimd: cimd, allowedHosts: allowedHosts}
 	c.http = &http.Client{
 		Timeout: cimdTimeout,
 		// A metadata document must be served at its own URL.
@@ -109,40 +107,36 @@ func (c *Clients) Resolve(ctx context.Context, clientID string) (*Client, error)
 		}
 		return c.metadataDocument(ctx, clientID)
 	case strings.HasPrefix(clientID, RegisteredPrefix):
-		row, err := c.queries.GetOAuthClientByClientID(ctx, clientID)
-		if errors.Is(err, pgx.ErrNoRows) {
+		record, err := c.repo.FindClient(ctx, clientID)
+		if apperr.Is(err, apperr.ResourceNotFound) {
 			return nil, errClient{"This client is not registered."}
 		}
 		if err != nil {
 			return nil, err
 		}
-		if !row.IsActive {
+		if !record.IsActive {
 			return nil, errClient{"This client has been deactivated."}
 		}
-		return registered(row), nil
+		return registered(*record), nil
 	default:
 		return nil, errClient{"The client_id is not valid."}
 	}
 }
 
-func registered(row dbgen.OauthClient) *Client {
+func registered(record ClientRecord) *Client {
 	client := &Client{
-		ID:           row.ClientID,
-		Name:         row.Name,
-		RedirectURIs: row.RedirectUris,
+		ID:           record.ClientID,
+		Name:         record.Name,
+		RedirectURIs: record.RedirectURIs,
 		Registered:   true,
-		Confidential: row.Type == "confidential",
-		MaxScopes:    row.Scopes,
+		Confidential: record.Type == TypeConfidential,
+		MaxScopes:    record.Scopes,
+		TenantID:     record.TenantID,
+		secretHash:   record.SecretHash,
 	}
-	if row.TenantID != nil {
-		client.TenantID = *row.TenantID
-	}
-	if row.SecretHash != nil {
-		client.secretHash = *row.SecretHash
-	}
-	if row.PreviousSecretHash != nil && row.PreviousSecretExpiresAt.Valid {
-		client.previousSecretHash = *row.PreviousSecretHash
-		client.previousExpires = row.PreviousSecretExpiresAt.Time
+	if record.PreviousSecretHash != "" && record.PreviousSecretExpiresAt != nil {
+		client.previousSecretHash = record.PreviousSecretHash
+		client.previousExpires = *record.PreviousSecretExpiresAt
 	}
 	return client
 }

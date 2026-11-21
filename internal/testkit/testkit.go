@@ -53,6 +53,8 @@ type App struct {
 
 	plan  int64 // unlimited package every testkit tenant is subscribed to
 	super *User
+
+	mcpClient string // the client App.Agent connects with (registered once)
 }
 
 // New migrates (once per package), empties the application tables, seeds
@@ -69,6 +71,9 @@ func New(t *testing.T, options ...Option) *App {
 	t.Setenv("APP_ENV_FILE", "")
 	t.Setenv("BCRYPT_ROUNDS", "4")
 	t.Setenv("AUTH_DEFAULT_PASSWORD", Password)
+	if settings.mcp {
+		t.Setenv("MCP_ENABLED", "true")
+	}
 
 	cfg, err := config.Load("")
 	if err != nil {
@@ -106,6 +111,7 @@ type Option func(*newSettings)
 
 type newSettings struct {
 	logger *slog.Logger
+	mcp    bool
 }
 
 // WithLogger sends application logs to logger (default: discarded), e.g. to

@@ -285,6 +285,10 @@ Billing management belongs in the product's admin app, not the developer dashboa
   (`package x_test`): `app := testkit.New(t)`, `app.User(t, testkit.Role(...), testkit.InTenant(...))`,
   `app.As(user).Post(path, body).Status(t, 201).Data(t, &v)`. Tests skip without
   `DATABASE_TEST_DSN`. `dbtest.Queries/Pool/Clean` remain for repository-level tests.
+- MCP tools: `testkit.New(t, testkit.WithMCP())`, then `app.Agent(t, user, testkit.AllowChanges())`
+  signs in through the real OAuth flow; `agent.Call(t, "create_x", args).OK(t).Data(t, &v)` or
+  `.Refused(t, "INSUFFICIENT_PERMISSIONS")`. Test a tool next to its REST test, isolation included
+  (`internal/modules/branches/testkit_example_test.go`).
 - `internal/app/route_permissions_integration_test.go` asserts every protected route answers 403 to
   a user without permissions — new routes must be protected or allowlisted there.
 - Cache drivers share the `cachetest` contract suite; gateway HTTP is tested against
@@ -312,6 +316,9 @@ Keep this list accurate; add to it when you make a non-obvious choice (also upda
   tenant routes (`tenancy.Public`) do enforce it.
 - Act as a user per request (`X-Acting-User`), not with login-as tokens; act-as is written to the
   system audit log (start is fail-closed, every request is logged).
+- MCP tools are REST operations marked `x-mcp`, served through the `/api/v1` router (no MCP-only
+  endpoints, no second authorization path). The API is its own OAuth server for the connector
+  (CIMD or registered clients; no DCR). MCP tokens work only on `/mcp`, session tokens never do.
 
 ## When a task is ambiguous
 

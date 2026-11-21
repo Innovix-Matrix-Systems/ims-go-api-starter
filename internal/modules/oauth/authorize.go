@@ -13,7 +13,6 @@ import (
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
-	dbgen "github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/dbgen"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/mcp"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/cache"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/platform/httpx"
@@ -76,7 +75,7 @@ func NewPages(service *Service, signIn *authn.Service, users authn.UserLookup, s
 	}
 	return &Pages{
 		service: service, signIn: signIn, users: users, cache: store, product: product,
-		resetURL: resetURL, secure: strings.HasPrefix(service.settings.Issuer, "https://"),
+		resetURL: resetURL, secure: strings.HasPrefix(service.Settings().Issuer, "https://"),
 		logger: logger, pages: pages,
 	}, nil
 }
@@ -99,7 +98,7 @@ type view struct {
 	LoopbackOnly  bool
 	OfferWrite    bool
 	PickTenant    bool
-	Tenants       []dbgen.ListOAuthConsentTenantsRow
+	Tenants       []ConsentTenant
 }
 
 // T translates for the page's locale.
@@ -144,7 +143,7 @@ func pageHeaders(w http.ResponseWriter) {
 // Authorize is GET /oauth/authorize: check the request, then show sign-in.
 func (p *Pages) Authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	client, err := p.service.clients.Resolve(r.Context(), q.Get("client_id"))
+	client, err := p.service.ResolveClient(r.Context(), q.Get("client_id"))
 	if err != nil {
 		if clientError(err) {
 			p.fail(w, r, http.StatusBadRequest, err.Error())
@@ -176,7 +175,7 @@ func (p *Pages) Authorize(w http.ResponseWriter, r *http.Request) {
 		back("invalid_request", "PKCE with code_challenge_method=S256 is required.")
 		return
 	}
-	resource := p.service.settings.Resource
+	resource := p.service.Settings().Resource
 	if raw := q.Get("resource"); raw != "" && canonical(raw) != resource {
 		back("invalid_target", "This server issues tokens only for "+resource+".")
 		return
@@ -328,7 +327,7 @@ func (p *Pages) Consent(w http.ResponseWriter, r *http.Request) {
 	}
 	if user.TenantID == 0 {
 		if tenantID, _ := strconv.ParseInt(r.PostFormValue("tenant_id"), 10, 64); tenantID > 0 {
-			if !p.tenantPickable(r.Context(), tenantID) {
+			if !p.service.TenantPickable(r.Context(), tenantID) {
 				p.fail(w, r, http.StatusBadRequest, "That tenant can't be picked.")
 				return
 			}
@@ -347,19 +346,6 @@ func (p *Pages) Consent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.redirect(w, r, f.RedirectURI, url.Values{"code": {code}, "state": {f.State}})
-}
-
-func (p *Pages) tenantPickable(ctx context.Context, tenantID int64) bool {
-	tenants, err := p.service.ConsentTenants(ctx)
-	if err != nil {
-		return false
-	}
-	for _, t := range tenants {
-		if t.ID == tenantID {
-			return true
-		}
-	}
-	return false
 }
 
 // loadFlow finds the browser's authorization in progress and checks the
@@ -383,7 +369,7 @@ func (p *Pages) loadFlow(w http.ResponseWriter, r *http.Request) (string, flow, 
 		p.fail(w, r, http.StatusForbidden, "The form could not be verified. Go back to the app and connect again.")
 		return "", flow{}, nil, false
 	}
-	client, err := p.service.clients.Resolve(r.Context(), f.ClientID)
+	client, err := p.service.ResolveClient(r.Context(), f.ClientID)
 	if err != nil || !client.RedirectAllowed(f.RedirectURI) {
 		p.fail(w, r, http.StatusBadRequest, "This app can no longer connect.")
 		return "", flow{}, nil, false
@@ -415,7 +401,7 @@ func (p *Pages) redirect(w http.ResponseWriter, r *http.Request, redirectURI str
 			query.Set(key, values[0])
 		}
 	}
-	query.Set("iss", p.service.settings.Issuer)
+	query.Set("iss", p.service.Settings().Issuer)
 	target.RawQuery = query.Encode()
 	pageHeaders(w)
 	http.Redirect(w, r, target.String(), http.StatusFound)

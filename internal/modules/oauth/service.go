@@ -6,6 +6,10 @@
 // Clients identify themselves with a Client ID Metadata Document (no
 // registration) or are registered by an admin. One grant type
 // (authorization code with PKCE S256), refresh tokens rotated on every use.
+//
+// Layering as everywhere: handler.go, token_handler.go and authorize.go are
+// HTTP; service.go and clients_admin.go hold the rules and own transactions;
+// repository.go is the only code that reads or writes through dbgen.
 package oauth
 
 import (
@@ -14,15 +18,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/apperr"
 	"github.com/Innovix-Matrix-Systems/ims-go-api-starter/internal/authn"
@@ -55,7 +55,7 @@ type Settings struct {
 
 // Service is the authorization server's logic.
 type Service struct {
-	queries  *dbgen.Queries
+	repo     Repository
 	tx       *database.TxManager
 	clients  *Clients
 	auth     authn.Authenticator
@@ -66,17 +66,67 @@ type Service struct {
 }
 
 // NewService creates the service.
-func NewService(queries *dbgen.Queries, tx *database.TxManager, clients *Clients, auth authn.Authenticator,
-	users authn.UserLookup, recorder *activity.Recorder, settings Settings) *Service {
-	return &Service{queries: queries, tx: tx, clients: clients, auth: auth, users: users,
-		activity: recorder, settings: settings, now: time.Now}
+func NewService(repo Repository, clients *Clients, auth authn.Authenticator, users authn.UserLookup, settings Settings) *Service {
+	return &Service{repo: repo, clients: clients, auth: auth, users: users, settings: settings, now: time.Now}
 }
 
-// Clients is the client resolver.
-func (s *Service) Clients() *Clients { return s.clients }
+// WithTx makes multi-row writes (a grant with its code, a token pair)
+// atomic.
+func (s *Service) WithTx(tx *database.TxManager) *Service {
+	s.tx = tx
+	return s
+}
+
+// WithActivity records connections and client changes in the activity log.
+func (s *Service) WithActivity(recorder *activity.Recorder) *Service {
+	s.activity = recorder
+	return s
+}
 
 // Settings returns the service's settings.
 func (s *Service) Settings() Settings { return s.settings }
+
+// ResolveClient returns the client for client_id (CIMD or registered).
+func (s *Service) ResolveClient(ctx context.Context, clientID string) (*Client, error) {
+	return s.clients.Resolve(ctx, clientID)
+}
+
+// inTx runs fn on one transaction, or on the plain repository when the
+// service has no transaction manager (unit tests).
+func (s *Service) inTx(ctx context.Context, fn func(repo Repository) error) error {
+	if s.tx == nil {
+		return fn(s.repo)
+	}
+	return s.tx.WithTx(ctx, func(q *dbgen.Queries) error { return fn(NewRepository(q)) })
+}
+
+// ── Discovery ──────────────────────────────────────────────────────
+
+// Metadata is the RFC 8414 authorization server metadata. Claude uses the
+// client's metadata document (no registration) only when both
+// client_id_metadata_document_supported and "none" are advertised.
+func (s *Service) Metadata() map[string]any {
+	issuer := s.settings.Issuer
+	methods := []string{"none", "client_secret_basic", "client_secret_post"}
+	doc := map[string]any{
+		"issuer":                                         issuer,
+		"authorization_endpoint":                         issuer + AuthorizePath,
+		"token_endpoint":                                 issuer + TokenPath,
+		"revocation_endpoint":                            issuer + RevokePath,
+		"response_types_supported":                       []string{"code"},
+		"response_modes_supported":                       []string{"query"},
+		"grant_types_supported":                          []string{"authorization_code", "refresh_token"},
+		"code_challenge_methods_supported":               []string{"S256"},
+		"token_endpoint_auth_methods_supported":          methods,
+		"revocation_endpoint_auth_methods_supported":     methods,
+		"scopes_supported":                               []string{mcp.ScopeRead, mcp.ScopeWrite},
+		"authorization_response_iss_parameter_supported": true,
+	}
+	if s.clients.cimd {
+		doc["client_id_metadata_document_supported"] = true
+	}
+	return doc
+}
 
 // ── Authorization ──────────────────────────────────────────────────
 
@@ -99,32 +149,23 @@ func (s *Service) Approve(ctx context.Context, a Approval) (string, error) {
 	if err != nil {
 		return "", apperr.Wrap(apperr.InternalServerError, "generate authorization code", err)
 	}
-	var grant dbgen.OauthGrant
-	err = s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
+	var grant *Grant
+	err = s.inTx(ctx, func(repo Repository) error {
 		var err error
-		grant, err = q.CreateOAuthGrant(ctx, dbgen.CreateOAuthGrantParams{
-			UserID:      a.UserID,
-			ClientID:    a.Client.ID,
-			ClientName:  a.Client.Name,
-			RedirectUri: a.RedirectURI,
-			Scopes:      a.Scopes,
-			TenantID:    optional(a.TenantID),
-			BranchID:    optional(a.BranchID),
+		grant, err = repo.CreateGrant(ctx, NewGrant{
+			UserID: a.UserID, ClientID: a.Client.ID, ClientName: a.Client.Name, RedirectURI: a.RedirectURI,
+			Scopes: a.Scopes, TenantID: a.TenantID, BranchID: a.BranchID,
 		})
 		if err != nil {
 			return err
 		}
-		return q.CreateOAuthCode(ctx, dbgen.CreateOAuthCodeParams{
-			CodeHash:      hashSecret(code),
-			GrantID:       grant.ID,
-			RedirectUri:   a.RedirectURI,
-			CodeChallenge: a.CodeChallenge,
-			Resource:      a.Resource,
-			ExpiresAt:     timestamptz(s.now().Add(codeTTL)),
+		return repo.CreateCode(ctx, NewCode{
+			CodeHash: hashSecret(code), GrantID: grant.ID, RedirectURI: a.RedirectURI,
+			CodeChallenge: a.CodeChallenge, Resource: a.Resource, ExpiresAt: s.now().Add(codeTTL),
 		})
 	})
 	if err != nil {
-		return "", database.MapError("oauth.approve", err)
+		return "", err
 	}
 
 	// A tenant user's connection is in their tenant's log; a platform
@@ -174,40 +215,71 @@ func (e *Error) Error() string { return e.Code + ": " + e.Description }
 
 func oauthErr(code, description string) *Error { return &Error{Code: code, Description: description} }
 
+// Token handles a token request by grant type.
+func (s *Service) Token(ctx context.Context, req TokenRequest) (*TokenResponse, error) {
+	switch req.GrantType {
+	case "authorization_code":
+		return s.Exchange(ctx, req)
+	case "refresh_token":
+		return s.Refresh(ctx, req)
+	default:
+		return nil, oauthErr("unsupported_grant_type", "Use authorization_code or refresh_token.")
+	}
+}
+
+// AuthenticateClient finds the client of a token request: a confidential
+// registered client must present its secret, a public one must not.
+func (s *Service) AuthenticateClient(ctx context.Context, clientID, secret string) (*Client, *Error) {
+	if clientID == "" {
+		return nil, oauthErr("invalid_client", "client_id is required.")
+	}
+	client, err := s.clients.Resolve(ctx, clientID)
+	if err != nil {
+		return nil, oauthErr("invalid_client", err.Error())
+	}
+	switch {
+	case client.Confidential && !client.CheckSecret(secret, s.now()):
+		return nil, oauthErr("invalid_client", "The client secret is not valid.")
+	case !client.Confidential && secret != "":
+		return nil, oauthErr("invalid_client", "A public client has no secret.")
+	}
+	return client, nil
+}
+
 // Exchange redeems an authorization code. A code presented a second time
 // revokes the grant it made (OAuth 2.1 §4.1.3).
 func (s *Service) Exchange(ctx context.Context, req TokenRequest) (*TokenResponse, error) {
 	if req.Code == "" || req.CodeVerifier == "" {
 		return nil, oauthErr("invalid_request", "code and code_verifier are required.")
 	}
-	row, err := s.queries.UseOAuthCode(ctx, hashSecret(req.Code))
-	if errors.Is(err, pgx.ErrNoRows) {
+	use, err := s.repo.UseCode(ctx, hashSecret(req.Code))
+	if apperr.Is(err, apperr.ResourceNotFound) {
 		return nil, oauthErr("invalid_grant", "The authorization code is not valid.")
 	}
 	if err != nil {
-		return nil, database.MapError("oauth.use_code", err)
+		return nil, err
 	}
-	if row.FirstUsedAt.Valid {
-		s.revokeGrant(ctx, row.GrantID, "code_reused")
+	if use.Reused {
+		s.revokeGrant(ctx, use.GrantID, "code_reused")
 		return nil, oauthErr("invalid_grant", "The authorization code was already used.")
 	}
-	if s.now().After(row.ExpiresAt.Time) {
+	if s.now().After(use.ExpiresAt) {
 		return nil, oauthErr("invalid_grant", "The authorization code has expired.")
 	}
-	grant, err := s.queries.GetOAuthGrant(ctx, row.GrantID)
+	grant, err := s.repo.GetGrant(ctx, use.GrantID)
 	if err != nil {
-		return nil, database.MapError("oauth.get_grant", err)
+		return nil, err
 	}
 	switch {
-	case grant.RevokedAt.Valid:
+	case grant.Revoked():
 		return nil, oauthErr("invalid_grant", "The authorization was revoked.")
 	case grant.ClientID != req.Client.ID:
 		return nil, oauthErr("invalid_grant", "The code was issued to another client.")
-	case req.RedirectURI != row.RedirectUri:
+	case req.RedirectURI != use.RedirectURI:
 		return nil, oauthErr("invalid_grant", "redirect_uri does not match the authorization request.")
-	case !pkceMatches(req.CodeVerifier, row.CodeChallenge):
+	case !pkceMatches(req.CodeVerifier, use.CodeChallenge):
 		return nil, oauthErr("invalid_grant", "code_verifier does not match the code_challenge.")
-	case req.Resource != "" && canonical(req.Resource) != row.Resource:
+	case req.Resource != "" && canonical(req.Resource) != use.Resource:
 		return nil, oauthErr("invalid_target", "resource does not match the authorization request.")
 	}
 	return s.issue(ctx, grant)
@@ -222,25 +294,25 @@ func (s *Service) Refresh(ctx context.Context, req TokenRequest) (*TokenResponse
 	if req.Resource != "" && canonical(req.Resource) != s.settings.Resource {
 		return nil, oauthErr("invalid_target", "This server issues tokens only for "+s.settings.Resource+".")
 	}
-	row, err := s.queries.RotateOAuthRefreshToken(ctx, hashSecret(req.RefreshToken))
-	if errors.Is(err, pgx.ErrNoRows) {
+	use, err := s.repo.RotateRefreshToken(ctx, hashSecret(req.RefreshToken))
+	if apperr.Is(err, apperr.ResourceNotFound) {
 		return nil, oauthErr("invalid_grant", "The refresh token is not valid.")
 	}
 	if err != nil {
-		return nil, database.MapError("oauth.rotate_refresh", err)
+		return nil, err
 	}
-	if row.FirstRotatedAt.Valid {
-		s.revokeGrant(ctx, row.GrantID, "refresh_token_reused")
+	if use.Reused {
+		s.revokeGrant(ctx, use.GrantID, "refresh_token_reused")
 		return nil, oauthErr("invalid_grant", "The refresh token was already used.")
 	}
-	if s.now().After(row.ExpiresAt.Time) {
+	if s.now().After(use.ExpiresAt) {
 		return nil, oauthErr("invalid_grant", "The refresh token has expired.")
 	}
-	grant, err := s.queries.GetOAuthGrant(ctx, row.GrantID)
+	grant, err := s.repo.GetGrant(ctx, use.GrantID)
 	if err != nil {
-		return nil, database.MapError("oauth.get_grant", err)
+		return nil, err
 	}
-	if grant.RevokedAt.Valid {
+	if grant.Revoked() {
 		return nil, oauthErr("invalid_grant", "The authorization was revoked.")
 	}
 	if grant.ClientID != req.Client.ID {
@@ -251,7 +323,7 @@ func (s *Service) Refresh(ctx context.Context, req TokenRequest) (*TokenResponse
 
 // issue mints an access token (a personal access token tied to the grant)
 // and a refresh token.
-func (s *Service) issue(ctx context.Context, grant dbgen.OauthGrant) (*TokenResponse, error) {
+func (s *Service) issue(ctx context.Context, grant *Grant) (*TokenResponse, error) {
 	user, err := s.users.FindByID(ctx, grant.UserID)
 	if err != nil || !user.IsActive {
 		s.revokeGrant(ctx, grant.ID, "user_inactive")
@@ -266,31 +338,25 @@ func (s *Service) issue(ctx context.Context, grant dbgen.OauthGrant) (*TokenResp
 	if err != nil {
 		return nil, apperr.Wrap(apperr.InternalServerError, "generate token", err)
 	}
-	expires := s.now().Add(s.settings.AccessTokenTTL)
 
 	var tokenID int64
-	err = s.tx.WithTx(ctx, func(q *dbgen.Queries) error {
-		row, err := q.CreateOAuthAccessToken(ctx, dbgen.CreateOAuthAccessTokenParams{
+	err = s.inTx(ctx, func(repo Repository) error {
+		var err error
+		tokenID, err = repo.CreateAccessToken(ctx, NewAccessToken{
 			UserID:    grant.UserID,
+			GrantID:   grant.ID,
 			Device:    "mcp:" + strconv.FormatInt(grant.ID, 10),
-			Token:     hashSecret(secret),
-			Abilities: ptr(authn.EncodeAbilities(grant.Scopes, s.settings.Resource)),
-			ExpiresAt: timestamptz(expires),
-			GrantID:   &grant.ID,
+			TokenHash: hashSecret(secret),
+			Abilities: authn.EncodeAbilities(grant.Scopes, s.settings.Resource),
+			ExpiresAt: s.now().Add(s.settings.AccessTokenTTL),
 		})
 		if err != nil {
 			return err
 		}
-		tokenID = row.ID
-		_, err = q.CreateOAuthRefreshToken(ctx, dbgen.CreateOAuthRefreshTokenParams{
-			TokenHash: hashSecret(refresh),
-			GrantID:   grant.ID,
-			ExpiresAt: timestamptz(s.now().Add(s.settings.RefreshTokenTTL)),
-		})
-		return err
+		return repo.CreateRefreshToken(ctx, grant.ID, hashSecret(refresh), s.now().Add(s.settings.RefreshTokenTTL))
 	})
 	if err != nil {
-		return nil, database.MapError("oauth.issue", err)
+		return nil, err
 	}
 	return &TokenResponse{
 		AccessToken:  fmt.Sprintf("%d|%s", tokenID, secret),
@@ -302,7 +368,7 @@ func (s *Service) issue(ctx context.Context, grant dbgen.OauthGrant) (*TokenResp
 }
 
 // Revoke is RFC 7009: an access token is deleted; a refresh token revokes
-// its whole grant. Unknown tokens are not an error.
+// its whole grant. Unknown tokens and other clients' tokens are ignored.
 func (s *Service) Revoke(ctx context.Context, client *Client, token string) {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -311,17 +377,17 @@ func (s *Service) Revoke(ctx context.Context, client *Client, token string) {
 	if strings.Contains(token, "|") {
 		identity, err := s.auth.Verify(ctx, token)
 		if err == nil && identity.OAuthGrantID != 0 {
-			if grant, err := s.queries.GetOAuthGrant(ctx, identity.OAuthGrantID); err == nil && grant.ClientID == client.ID {
-				_, _ = s.queries.DeleteOAuthGrantTokens(ctx, []int64{grant.ID})
+			if grant, err := s.repo.GetGrant(ctx, identity.OAuthGrantID); err == nil && grant.ClientID == client.ID {
+				_ = s.repo.DropGrantTokens(ctx, []int64{grant.ID})
 			}
 		}
 		return
 	}
-	row, err := s.queries.RotateOAuthRefreshToken(ctx, hashSecret(token))
+	use, err := s.repo.RotateRefreshToken(ctx, hashSecret(token))
 	if err != nil {
 		return
 	}
-	if grant, err := s.queries.GetOAuthGrant(ctx, row.GrantID); err == nil && grant.ClientID == client.ID {
+	if grant, err := s.repo.GetGrant(ctx, use.GrantID); err == nil && grant.ClientID == client.ID {
 		s.revokeGrant(ctx, grant.ID, "client_revoked")
 	}
 }
@@ -343,105 +409,89 @@ func (s *Service) VerifyMCP(ctx context.Context, raw string) (*mcp.Connection, t
 	if !identity.IsActive || identity.ExpiresAt.IsZero() {
 		return nil, time.Time{}, fmt.Errorf("%w: inactive account or token without expiry", mcp.ErrInvalidToken)
 	}
-	grant, err := s.queries.GetOAuthGrant(ctx, identity.OAuthGrantID)
-	if err != nil || grant.RevokedAt.Valid {
+	grant, err := s.repo.GetGrant(ctx, identity.OAuthGrantID)
+	if err != nil || grant.Revoked() {
 		return nil, time.Time{}, fmt.Errorf("%w: connection revoked", mcp.ErrInvalidToken)
 	}
-	_ = s.queries.TouchOAuthGrant(ctx, grant.ID)
+	_ = s.repo.TouchGrant(ctx, grant.ID)
 
-	conn := &mcp.Connection{Identity: identity, Client: grant.ClientName}
-	if grant.TenantID != nil {
-		conn.TenantID = *grant.TenantID
-	}
-	if grant.BranchID != nil {
-		conn.BranchID = *grant.BranchID
-	}
-	return conn, identity.ExpiresAt, nil
+	return &mcp.Connection{
+		Identity: identity, Client: grant.ClientName, TenantID: grant.TenantID, BranchID: grant.BranchID,
+	}, identity.ExpiresAt, nil
 }
 
 // ── Connections (the user's grants) ────────────────────────────────
 
 // Connections lists the user's grants in force.
-func (s *Service) Connections(ctx context.Context, userID int64) ([]dbgen.OauthGrant, error) {
-	grants, err := s.queries.ListUserOAuthGrants(ctx, userID)
-	if err != nil {
-		return nil, database.MapError("oauth.list_grants", err)
-	}
-	return grants, nil
+func (s *Service) Connections(ctx context.Context, userID int64) ([]Grant, error) {
+	return s.repo.ListUserGrants(ctx, userID)
 }
 
 // Disconnect revokes one of the user's grants.
 func (s *Service) Disconnect(ctx context.Context, userID, grantID int64) error {
-	grant, err := s.queries.GetOAuthGrant(ctx, grantID)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (grant.UserID != userID || grant.RevokedAt.Valid)) {
-		return apperr.New(apperr.ResourceNotFound, "The connection was not found.")
+	grant, err := s.repo.GetGrant(ctx, grantID)
+	if err != nil && !apperr.Is(err, apperr.ResourceNotFound) {
+		return err
 	}
-	if err != nil {
-		return database.MapError("oauth.get_grant", err)
+	if err != nil || grant.UserID != userID || grant.Revoked() {
+		return apperr.New(apperr.ResourceNotFound, "The connection was not found.")
 	}
 	s.revokeGrant(ctx, grantID, "user")
 	return nil
 }
 
+// revokeGrant revokes a grant, drops its tokens and records it. Already
+// revoked grants only lose any tokens left.
 func (s *Service) revokeGrant(ctx context.Context, grantID int64, reason string) {
-	grant, err := s.queries.RevokeOAuthGrant(ctx, grantID)
+	grant, err := s.repo.RevokeGrant(ctx, grantID)
+	_ = s.repo.DropGrantTokens(ctx, []int64{grantID})
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			_, _ = s.queries.DeleteOAuthGrantTokens(ctx, []int64{grantID})
-		}
 		return
 	}
-	s.dropGrantTokens(ctx, []int64{grantID})
 	s.activity.Record(ctx, activity.Entry{
-		TenantID: grantTenant(ctx, s.users, grant), ActorID: grant.UserID, Action: ActionRevoked,
+		TenantID: s.userTenant(ctx, grant.UserID), ActorID: grant.UserID, Action: ActionRevoked,
 		Subject: "oauth_grant", SubjectID: grant.ID,
 		Changes: map[string]any{"client_id": grant.ClientID, "client_name": grant.ClientName, "reason": reason},
 	})
 }
 
-func (s *Service) dropGrantTokens(ctx context.Context, ids []int64) {
-	if len(ids) == 0 {
-		return
-	}
-	_, _ = s.queries.DeleteOAuthGrantRefreshTokens(ctx, ids)
-	_, _ = s.queries.DeleteOAuthGrantTokens(ctx, ids)
-}
-
-// grantTenant is where a grant's activity goes: the user's tenant, or the
-// system log for a platform account.
-func grantTenant(ctx context.Context, users authn.UserLookup, grant dbgen.OauthGrant) int64 {
-	if user, err := users.FindByID(ctx, grant.UserID); err == nil {
+// userTenant is where a grant's activity goes: the user's tenant, or the
+// system log (0) for a platform account.
+func (s *Service) userTenant(ctx context.Context, userID int64) int64 {
+	if user, err := s.users.FindByID(ctx, userID); err == nil {
 		return user.TenantID
 	}
 	return 0
 }
 
 // ConsentTenants are the tenants a platform account can pick.
-func (s *Service) ConsentTenants(ctx context.Context) ([]dbgen.ListOAuthConsentTenantsRow, error) {
-	rows, err := s.queries.ListOAuthConsentTenants(ctx)
+func (s *Service) ConsentTenants(ctx context.Context) ([]ConsentTenant, error) {
+	return s.repo.ConsentTenants(ctx)
+}
+
+// TenantPickable reports whether a platform account may pick tenantID.
+func (s *Service) TenantPickable(ctx context.Context, tenantID int64) bool {
+	tenants, err := s.repo.ConsentTenants(ctx)
 	if err != nil {
-		return nil, database.MapError("oauth.consent_tenants", err)
+		return false
 	}
-	return rows, nil
+	return slices.ContainsFunc(tenants, func(t ConsentTenant) bool { return t.ID == tenantID })
 }
 
 // FirstBranch is the branch a connection works in when a platform account
 // picked a tenant.
 func (s *Service) FirstBranch(ctx context.Context, tenantID int64) (int64, error) {
-	row, err := s.queries.FirstBranchOfTenant(ctx, tenantID)
-	if errors.Is(err, pgx.ErrNoRows) {
+	id, err := s.repo.FirstBranch(ctx, tenantID)
+	if apperr.Is(err, apperr.ResourceNotFound) {
 		return 0, apperr.New(apperr.ResourceNotFound, "The tenant has no branch.")
 	}
-	if err != nil {
-		return 0, database.MapError("oauth.first_branch", err)
-	}
-	return row.ID, nil
+	return id, err
 }
 
 // ── helpers ────────────────────────────────────────────────────────
 
-// GrantScopes is what a grant gets: the requested scopes the user allowed,
-// capped by a registered client's maximum.
+// GrantScopes is what a grant gets: read, plus write when the user allowed
+// changes, capped by a registered client's maximum.
 func GrantScopes(client *Client, allowWrite bool) []string {
 	scopes := []string{mcp.ScopeRead}
 	if allowWrite {
@@ -471,14 +521,3 @@ func randomToken() (string, error) {
 	}
 	return hex.EncodeToString(buf), nil
 }
-
-func optional(v int64) *int64 {
-	if v == 0 {
-		return nil
-	}
-	return &v
-}
-
-func ptr[T any](v T) *T { return &v }
-
-func timestamptz(t time.Time) pgtype.Timestamptz { return pgtype.Timestamptz{Time: t, Valid: true} }

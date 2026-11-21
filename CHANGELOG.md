@@ -25,6 +25,9 @@ All notable changes to this project are documented here. The format follows
     tool carry `_via` (tool and client); `oauth.authorized` / `oauth.revoked` entries; an MCP chip
     in the dashboard's request list; `ims_mcp_tool_calls_total`.
 
+  - `testkit.WithMCP()` and `app.Agent(t, user, testkit.AllowChanges())` to test a tool through
+    the real OAuth flow, next to its REST test (`agent.Call(...).OK(t)` / `.Refused(t, code)`).
+
   MCP access tokens work only on `/mcp`, and session tokens never do. Run `ims migrate`
   (`00027`) and `ims permission:sync`. See `docs/guides/mcp.md`, and the
   step-by-step tutorial `docs/tutorial/connect-an-ai-agent.mdx` (Claude Desktop, Claude Code and

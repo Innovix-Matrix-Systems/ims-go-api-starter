@@ -58,7 +58,7 @@ func newOAuthClientCreateCommand(state *State) *cobra.Command {
 					fmt.Fprintln(out, "Store the secret now: it is not shown again.")
 				}
 				fmt.Fprintf(out, "type:          %s\nscopes:        %s\nredirect_uris: %s\n",
-					created.Type, strings.Join(created.Scopes, " "), strings.Join(created.RedirectUris, ", "))
+					created.Type, strings.Join(created.Scopes, " "), strings.Join(created.RedirectURIs, ", "))
 				return nil
 			})
 		},
