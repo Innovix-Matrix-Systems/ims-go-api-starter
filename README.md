@@ -138,17 +138,6 @@ The pages live in [`docs/`](docs/README.md) and are published as that site (Astr
 Requires PostgreSQL 16+, Go 1.26.11+ and Node.js 20.19+ (dashboard). Every setting lives in `.env`
 (documented in `.env.example`; `ims config:show` prints the effective values with secrets masked).
 
-## Who's behind it
-
-Built and maintained by **[Innovix Matrix System](https://innovixmatrixsystem.com)**, a software
-studio in Dhaka, Bangladesh. We run our own products on it. More open-source starters:
-[PocketBase BaaS](https://github.com/Innovix-Matrix-Systems/ims-pocketbase-baas-starter) ·
-[NestJS API](https://github.com/Innovix-Matrix-Systems/ims-nest-api-starter) ·
-[Laravel API](https://github.com/Innovix-Matrix-Systems/ims-laravel-api-starter) ·
-[Laravel admin](https://github.com/Innovix-Matrix-Systems/ims-laravel-admin-starter).
-Need a team to build on it? Write to **[hello@innovixmatrixsystem.com](mailto:hello@innovixmatrixsystem.com)**.
-Questions about the starter: [support@innovixmatrixsystem.com](mailto:support@innovixmatrixsystem.com).
-
 ## License
 
 This project is licensed under the [MIT License](LICENSE.md).
